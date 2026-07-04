@@ -4,7 +4,7 @@ import { BLANK, BLUE, charCode, clamp, GREEN, ORANGE, RED, WHITE, YELLOW } from 
 export function quotaBar(window: QuotaWindow, now: Date, width: number, stale = false, showPacing = true): number[] {
   const remainingRatio = clamp(window.remainingRatio);
   const quotaBlocks = remainingRatio > 0
-    ? Math.max(1, Math.round(remainingRatio * width))
+    ? Math.ceil(remainingRatio * width)
     : 0;
   const fill = showPacing ? pacingColor(window, now) : GREEN;
   const bar = [

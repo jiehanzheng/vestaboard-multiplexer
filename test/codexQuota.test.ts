@@ -437,7 +437,7 @@ test("renders white marker without quota fill when quota is empty but time remai
   assert.deepEqual(message.characters?.[0], [31, 8, 0, 0, 0, 69, 0, 0, 0, 0, 0, 0, 0, 36, 54]);
 });
 
-test("renders a minimum Note quota block for nonzero quota below one rounded cell", () => {
+test("renders one Note quota block when quota reaches into the first bucket", () => {
   const message = formatQuota(
     {
       fiveHour: {
@@ -455,6 +455,26 @@ test("renders a minimum Note quota block for nonzero quota below one rounded cel
   );
 
   assert.deepEqual(message.characters?.[0], [31, 8, RED, 0, 0, WHITE, 0, 0, 0, 0, 0, 0, 0, 30, 54]);
+});
+
+test("renders two Note quota blocks when quota reaches into the second bucket", () => {
+  const message = formatQuota(
+    {
+      fiveHour: {
+        remainingRatio: 0.11,
+        resetAt: new Date("2026-06-19T03:00:00-07:00"),
+        durationMins: 300
+      },
+      weekly: {
+        remainingRatio: 1,
+        resetAt: new Date("2026-06-24T14:19:00-07:00"),
+        durationMins: 10_080
+      }
+    },
+    { timeZone: "America/Los_Angeles", now: new Date("2026-06-19T00:00:00-07:00"), showPacing: false }
+  );
+
+  assert.equal(message.text.split("\n")[0], "5HGG        11%");
 });
 
 test("renders only green quota blocks when pacing is hidden", () => {
@@ -512,11 +532,11 @@ test("renders Flagship quota as six 22-column rows with centered 20-column bars"
   assert.equal(rows[0], "CODEX REMAINING  RESET");
   assert.equal(rows[1], "5H    77%        20:25");
   assert.equal(rows[2][0], " ");
-  assert.equal(rows[2].slice(1, 21), "GGGGGGGGGGGGGGG     ");
+  assert.equal(rows[2].slice(1, 21), "GGGGGGGGGGGGGGGG    ");
   assert.equal(rows[2][21], " ");
   assert.equal(rows[3], "WEEK  6%   06/24 14:19");
   assert.equal(rows[4][0], " ");
-  assert.equal(rows[4].slice(1, 21), "G                   ");
+  assert.equal(rows[4].slice(1, 21), "GG                  ");
   assert.equal(rows[4][21], " ");
   assert.equal(rows[5], "                      ");
   assert.equal(rows[0].indexOf("REMAINING"), 6);
@@ -613,7 +633,7 @@ test("renders Flagship marker-only bar when the marker covers the only quota cel
   assert.equal(message.characters?.[4][8], 69);
 });
 
-test("renders a minimum Flagship quota block for nonzero quota below one rounded cell", () => {
+test("renders one Flagship quota block when quota reaches into the first bucket", () => {
   const message = formatQuota(
     {
       fiveHour: { remainingRatio: 0.02, resetAt: new Date("2026-06-19T02:00:00-07:00"), durationMins: 300 },
@@ -624,6 +644,19 @@ test("renders a minimum Flagship quota block for nonzero quota below one rounded
   const rows = message.text.split("\n");
 
   assert.equal(rows[2].slice(1, 21), "R      W            ");
+});
+
+test("renders two Flagship quota blocks when quota reaches into the second bucket", () => {
+  const message = formatQuota(
+    {
+      fiveHour: { remainingRatio: 0.06, resetAt: new Date("2026-06-19T03:00:00-07:00"), durationMins: 300 },
+      weekly: { remainingRatio: 0, resetAt: new Date("2026-06-19T02:00:00-07:00"), durationMins: 300 }
+    },
+    { board: "flagship", timeZone: "America/Los_Angeles", now: new Date("2026-06-19T00:00:00-07:00"), showPacing: false }
+  );
+  const rows = message.text.split("\n");
+
+  assert.equal(rows[2].slice(1, 21), "GG                  ");
 });
 
 test("demo mode drops five-hour quota by one percentage point", () => {
@@ -650,7 +683,7 @@ test("demo mode accumulates repeated drops", () => {
   const message = formatQuota(snapshot, { timeZone: "America/Los_Angeles", now: new Date("2026-06-19T00:00:00-07:00") });
 
   assert.equal(snapshot.fiveHour?.remainingRatio, 0.74);
-  assert.equal(message.text.split("\n")[0], "5HGGGGGWG   74%");
+  assert.equal(message.text.split("\n")[0], "5HGGGGGWGG  74%");
 });
 
 test("auto-start model selection skips spark and prefers the last nano model", () => {
