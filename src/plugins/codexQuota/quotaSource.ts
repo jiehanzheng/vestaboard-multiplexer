@@ -1,10 +1,8 @@
-import { withCodexAppServer, type RateLimitBucket, type RateLimitsResult, type RateWindow } from "./appServer.js";
+import { withCodexAppServer, type RateLimitsResult, type RateWindow } from "./appServer.js";
 import { CodexAutoStartSidecar, type AutoStartQuotaConfig } from "./autoStartSidecar.js";
+import { FIVE_HOUR_MINS, WEEK_MINS } from "./quotaWindow.js";
 import { QuotaWindowHistory } from "./quotaWindowHistory.js";
 import type { QuotaPollOptions, QuotaPoller, QuotaPollResult, QuotaSnapshot, QuotaWindow } from "./types.js";
-
-const FIVE_HOUR_MINS = 300;
-const WEEKLY_MINS = 10_080;
 
 export function createCodexQuotaPoller(autoStartConfig: AutoStartQuotaConfig, history = new QuotaWindowHistory()): QuotaPoller {
   const autoStartSidecar = new CodexAutoStartSidecar(autoStartConfig, history);
@@ -23,27 +21,33 @@ export async function readRateLimits(): Promise<RateLimitsResult> {
 }
 
 export function quotaFromRateLimits(result: RateLimitsResult): QuotaSnapshot {
-  const windows = bucketsInPreferenceOrder(result).flatMap((bucket) => [bucket.primary, bucket.secondary].filter(isRateWindow));
-  const snapshot = {
-    fiveHour: windows.find((window) => window.windowDurationMins === FIVE_HOUR_MINS),
-    weekly: windows.find((window) => window.windowDurationMins === WEEKLY_MINS)
-  };
-
-  if (!snapshot.fiveHour && !snapshot.weekly) {
-    throw new Error("Codex rateLimits result must include a 5H or weekly quota window.");
-  }
-
   return {
-    fiveHour: snapshot.fiveHour ? quotaWindow(snapshot.fiveHour) : undefined,
-    weekly: snapshot.weekly ? quotaWindow(snapshot.weekly) : undefined
+    windows: [
+      quotaWindow("primary", result.rateLimits?.primary),
+      quotaWindow("secondary", result.rateLimits?.secondary)
+    ]
+      .filter((window): window is QuotaWindow => window !== undefined)
+      .sort(compareQuotaWindows)
   };
 }
 
 export async function readFixtureQuota(): Promise<QuotaSnapshot> {
   const now = new Date();
   return {
-    fiveHour: { remainingRatio: 0.76, resetAt: new Date(now.getTime() + FIVE_HOUR_MINS * 60_000), durationMins: FIVE_HOUR_MINS },
-    weekly: { remainingRatio: 0.44, resetAt: nextMonday(now), durationMins: WEEKLY_MINS }
+    windows: [
+      {
+        id: "primary",
+        remainingRatio: 0.76,
+        resetAt: new Date(now.getTime() + FIVE_HOUR_MINS * 60_000),
+        durationMins: FIVE_HOUR_MINS
+      },
+      {
+        id: "secondary",
+        remainingRatio: 0.44,
+        resetAt: nextMonday(now),
+        durationMins: WEEK_MINS
+      }
+    ]
   };
 }
 
@@ -83,27 +87,36 @@ function resetCreditsAvailableCount(result: RateLimitsResult): number | undefine
   return typeof availableCount === "number" && Number.isFinite(availableCount) ? availableCount : undefined;
 }
 
-function bucketsInPreferenceOrder(result: RateLimitsResult): RateLimitBucket[] {
-  return [
-    result.rateLimits,
-    ...Object.values(result.rateLimitsByLimitId ?? {})
-  ].filter((bucket): bucket is RateLimitBucket => bucket !== null && bucket !== undefined);
-}
-
-function isRateWindow(window: RateWindow | null | undefined): window is RateWindow {
-  return window !== null && window !== undefined;
-}
-
-function quotaWindow(window: RateWindow): QuotaWindow {
-  if (!Number.isFinite(window.usedPercent) || !Number.isFinite(window.resetsAt) || !Number.isFinite(window.windowDurationMins)) {
-    throw new Error("Codex rate limit window contains invalid numeric fields.");
+function quotaWindow(id: string, window: RateWindow | null | undefined): QuotaWindow | undefined {
+  if (!window || !Number.isFinite(window.usedPercent)) {
+    return undefined;
   }
 
   return {
+    id,
     remainingRatio: clamp((100 - window.usedPercent) / 100),
-    resetAt: new Date(window.resetsAt * 1000),
-    durationMins: window.windowDurationMins
+    durationMins: positiveFinite(window.windowDurationMins),
+    resetAt: unixDate(window.resetsAt)
   };
+}
+
+function compareQuotaWindows(left: QuotaWindow, right: QuotaWindow): number {
+  if (left.durationMins === undefined) return right.durationMins === undefined ? 0 : 1;
+  if (right.durationMins === undefined) return -1;
+  return left.durationMins - right.durationMins;
+}
+
+function positiveFinite(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function unixDate(value: number | null | undefined): Date | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  const date = new Date(value * 1000);
+  return Number.isFinite(date.getTime()) ? date : undefined;
 }
 
 function nextMonday(date: Date): Date {

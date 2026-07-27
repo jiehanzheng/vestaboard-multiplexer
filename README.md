@@ -44,7 +44,7 @@ On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` bann
 
 ### Codex
 
-The Codex plugin reads `account/rateLimits/read` from `codex app-server` and renders the 5-hour and weekly quota windows for Vestaboard Note and Flagship.
+The Codex plugin reads the aggregate percentage windows from `account/rateLimits/read` and renders up to two duration-labeled quota rows for Vestaboard Note and Flagship.
 
 | Configuration | Screenshot | What it means |
 | --- | --- | --- |
@@ -63,11 +63,11 @@ WKGGGGWG    60%
 
 `G`, `Y`, `O`, `R`, and `W` in dry-run output stand for Vestaboard green, yellow, orange, red, and white block character codes. The actual API payload sends `characters`, not plain text. Percentages are remaining quota, derived from `100 - usedPercent`. Full quota renders as `100` on Note so the row still fits, and as `100%` on Flagship where the larger usage field has room. Quota blocks use reached buckets: any nonzero quota renders at least one quota block, each Note block represents quota reaching into another 10% bucket, and each Flagship block represents quota reaching into another 5% bucket. The white time marker can still cover a quota block when both land on the same cell. The white marker moves in equal remaining-time buckets: on Note, each 5-hour cell represents 30 minutes.
 
-On Note, the status lane is the third physical row. It normally shows reset timing: 5-hour reset time, weekly reset date, and weekly reset time. Current-cycle statuses, fetch failures, missing quota windows, reset availability, and auto-start ping notices temporarily replace reset timing; expired statuses are pruned on later ticks.
+On Note, the status lane is the third physical row. It normally shows available reset timing, using times for short windows and dates for long windows when both do not fit. Current-cycle statuses, fetch failures, reset availability, and auto-start ping notices temporarily replace reset timing; expired statuses are pruned on later ticks. Unused rows and unavailable reset fields stay blank.
 
-On Vestaboard Flagship, the same quota data renders as a 6-row by 22-column layout. Reset timing moves into the 5-hour and weekly rows, the progress bars expand to 20 centered cells, and the final row stays blank unless the shared status lane has an active status such as `RESET AVAILABLE`, `AUTO PING FAIL`, `MISS WK`, `TIMEOUT`, or `FETCH FAIL`.
+On Vestaboard Flagship, the same quota data renders as a 6-row by 22-column layout. Reset timing moves into each quota row, the progress bars expand to 20 centered cells, and the final row stays blank unless the shared status lane has an active status such as `RESET AVAILABLE`, `AUTO PING FAIL`, `TIMEOUT`, or `FETCH FAIL`.
 
-If Codex is temporarily unavailable after a successful read, the plugin can reuse cached quota ingredients and mark the board with a short status-lane message instead of throwing away the display.
+If Codex is temporarily unavailable after a successful read, the plugin can reuse the complete last successful snapshot and mark the board with a short status-lane message instead of throwing away the display.
 
 #### Codex Login
 
@@ -90,7 +90,7 @@ If the host login directory is somewhere else, set `CODEX_HOST_DIR` in `.env` to
 | --- | --- |
 | `CODEX_QUOTA_SOURCE` | Use `fixture` for offline formatting checks.<br><br>Default: `app-server` |
 | `CODEX_QUOTA_PRIORITY` | Plugin priority: `low`, `normal`, `high`, `urgent`, or a number.<br><br>Default: `normal` |
-| `CODEX_QUOTA_ERROR_PRIORITY` | Priority used when the plugin can only render an error or incomplete quota.<br><br>Default: `low` |
+| `CODEX_QUOTA_ERROR_PRIORITY` | Priority used when the plugin can only render an error or cached quota.<br><br>Default: `low` |
 | `CODEX_QUOTA_TIME_ZONE` | Time zone used for reset labels.<br><br>Default: local process timezone |
 | `CODEX_QUOTA_SHOW_PACING` | `on` overlays red/blue pacing blocks; `off` shows only green quota blocks and blanks.<br><br>Default: `on` |
 | `CODEX_HOST_DIR` | Host Codex config directory mounted into Docker at `/home/node/.codex`.<br><br>Default: `${HOME}/.codex` |
@@ -100,7 +100,7 @@ If the host login directory is somewhere else, set `CODEX_HOST_DIR` in `.env` to
 
 When auto-start is enabled, the plugin lists visible Codex models, skips `-spark` models, prefers the last `-nano` model, then the last `-mini` model, then the last remaining model. It sends a read-only ephemeral prompt: `Reply exactly: ok. Do not inspect files or run commands.` A running process auto-starts at most once per reset timestamp and never pings more than once every 30 minutes unless forced by demo mode.
 
-When the weekly quota row is exhausted at 0% and `account/rateLimits/read` reports reset credits are available, the status lane shows `RESET AVAILABLE`. The plugin only displays that read-only account status; it does not invoke a reset.
+When any displayed quota row is exhausted at 0% and `account/rateLimits/read` reports reset credits are available, the status lane shows `RESET AVAILABLE`. The plugin only displays that read-only account status; it does not invoke a reset.
 
 #### Demo Mode
 

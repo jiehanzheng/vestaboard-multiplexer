@@ -1,7 +1,7 @@
 import type { Priority, VestaboardMessage } from "../../orchestrator.js";
 import { priorityValue } from "../../priority.js";
 import { sanitizeDisplayText } from "./display/index.js";
-import type { Logger, QuotaRowName, QuotaSnapshot, QuotaWindow } from "./types.js";
+import type { Logger, QuotaSnapshot, QuotaWindow } from "./types.js";
 
 export const REFRESH_STATUS_MESSAGE_TTL_MS = 5 * 60_000;
 export const TRANSIENT_STATUS_MESSAGE_TTL_MS = 1_000;
@@ -10,8 +10,8 @@ const STATUS_MESSAGE_PRIORITY = "high";
 const STATUS_MESSAGE_PRIORITY_VALUE = priorityValue(STATUS_MESSAGE_PRIORITY);
 
 interface QuotaCacheState {
-  hasFiveHour: boolean;
-  hasWeekly: boolean;
+  hasSnapshot: boolean;
+  windowCount: number;
   updatedAt?: string;
 }
 
@@ -44,70 +44,27 @@ export class StatusMessageStack {
   }
 }
 
-export class QuotaIngredientCache {
-  private cached: { fiveHour?: QuotaWindow; weekly?: QuotaWindow; updatedAt?: Date } = {};
+export class QuotaSnapshotCache {
+  private cached: { snapshot: QuotaSnapshot; updatedAt: Date } | undefined;
 
-  update(snapshot: QuotaSnapshot): void {
-    if (snapshot.fiveHour) {
-      this.cached.fiveHour = cloneQuotaWindow(snapshot.fiveHour);
-    }
-
-    if (snapshot.weekly) {
-      this.cached.weekly = cloneQuotaWindow(snapshot.weekly);
-    }
-
-    if (snapshot.fiveHour || snapshot.weekly) {
-      this.cached.updatedAt = new Date();
-    }
-  }
-
-  merge(snapshot: QuotaSnapshot = {}): QuotaSnapshot {
-    return {
-      fiveHour: snapshot.fiveHour ? cloneQuotaWindow(snapshot.fiveHour) : cloneOptionalQuotaWindow(this.cached.fiveHour),
-      weekly: snapshot.weekly ? cloneQuotaWindow(snapshot.weekly) : cloneOptionalQuotaWindow(this.cached.weekly)
+  update(snapshot: QuotaSnapshot, now = new Date()): void {
+    this.cached = {
+      snapshot: cloneQuotaSnapshot(snapshot),
+      updatedAt: new Date(now)
     };
   }
 
-  snapshot(): QuotaSnapshot {
-    return this.merge();
-  }
-
-  hasAny(): boolean {
-    return this.cached.fiveHour !== undefined || this.cached.weekly !== undefined;
+  snapshot(): QuotaSnapshot | undefined {
+    return this.cached ? cloneQuotaSnapshot(this.cached.snapshot) : undefined;
   }
 
   state(): QuotaCacheState {
     return {
-      hasFiveHour: this.cached.fiveHour !== undefined,
-      hasWeekly: this.cached.weekly !== undefined,
-      updatedAt: this.cached.updatedAt?.toISOString()
+      hasSnapshot: this.cached !== undefined,
+      windowCount: this.cached?.snapshot.windows.length ?? 0,
+      updatedAt: this.cached?.updatedAt.toISOString()
     };
   }
-}
-
-export function missingQuotaWindows(snapshot: QuotaSnapshot): QuotaRowName[] {
-  return [
-    snapshot.fiveHour ? undefined : "5H",
-    snapshot.weekly ? undefined : "WK"
-  ].filter((window): window is QuotaRowName => window !== undefined);
-}
-
-export function cachedRowsUsedFor(missingWindows: QuotaRowName[], freshQuota: QuotaSnapshot, displayQuota: QuotaSnapshot): QuotaRowName[] {
-  return missingWindows.filter((window) => {
-    if (window === "5H") return freshQuota.fiveHour === undefined && displayQuota.fiveHour !== undefined;
-    return freshQuota.weekly === undefined && displayQuota.weekly !== undefined;
-  });
-}
-
-export function cachedRowsPresentIn(snapshot: QuotaSnapshot): QuotaRowName[] {
-  return [
-    snapshot.fiveHour ? "5H" : undefined,
-    snapshot.weekly ? "WK" : undefined
-  ].filter((window): window is QuotaRowName => window !== undefined);
-}
-
-export function missingStatus(missingWindows: QuotaRowName[]): string {
-  return `MISS ${missingWindows.join(" ")}`;
 }
 
 export function errorStatus(error: unknown): string {
@@ -136,20 +93,6 @@ export function logQuotaReadFailure(
   });
 }
 
-export function logIncompleteQuota(
-  logger: Logger | undefined,
-  missingWindows: QuotaRowName[],
-  usedCachedWindows: QuotaRowName[],
-  errorPriority: Priority
-): void {
-  logger?.warn("Codex quota ingredients incomplete.", {
-    missingWindows,
-    usedCachedWindows,
-    fallbackPriority: String(errorPriority),
-    boardStatus: missingStatus(missingWindows)
-  });
-}
-
 export function logAutoStartFailure(logger: Logger | undefined, error: unknown): void {
   logger?.warn("Codex quota auto-start failed after quota read.", {
     reason: summarizeFailure(error),
@@ -163,15 +106,18 @@ export function bumpStatusPriority(priority: Priority): Priority {
   return priorityValue(priority) >= STATUS_MESSAGE_PRIORITY_VALUE ? priority : STATUS_MESSAGE_PRIORITY;
 }
 
-function cloneOptionalQuotaWindow(window: QuotaWindow | undefined): QuotaWindow | undefined {
-  return window ? cloneQuotaWindow(window) : undefined;
+function cloneQuotaSnapshot(snapshot: QuotaSnapshot): QuotaSnapshot {
+  return {
+    windows: snapshot.windows.map(cloneQuotaWindow)
+  };
 }
 
 function cloneQuotaWindow(window: QuotaWindow): QuotaWindow {
   return {
+    id: window.id,
     remainingRatio: window.remainingRatio,
-    resetAt: new Date(window.resetAt),
-    durationMins: window.durationMins
+    durationMins: window.durationMins,
+    resetAt: window.resetAt ? new Date(window.resetAt) : undefined
   };
 }
 

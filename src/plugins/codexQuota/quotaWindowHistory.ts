@@ -1,15 +1,14 @@
-import type { QuotaRowName, QuotaSnapshot, QuotaWindow } from "./types.js";
+import { FIVE_HOUR_MINS, hasQuotaWindowReset, quotaWindowLabel, WEEK_MINS } from "./quotaWindow.js";
+import type { QuotaSnapshot, QuotaWindow } from "./types.js";
 
 export interface AutoStartQuotaConfig {
   fiveHour: boolean;
   weekly: boolean;
 }
 
-export type QuotaWindowId = "fiveHour" | "weekly";
-
 export interface AutoStartWindowCandidate {
-  id: QuotaWindowId;
-  row: QuotaRowName;
+  id: string;
+  row: string;
   resetAtMs: number;
 }
 
@@ -18,33 +17,46 @@ export type AutoStartPingPlan =
   | { type: "ping"; trigger: "force"; windows: [] }
   | { type: "ping"; trigger: "unused-quota"; windows: AutoStartWindowCandidate[] };
 
-export type ResetVisibility = Record<QuotaWindowId, boolean>;
+export type ResetVisibility = Record<string, boolean>;
 
 const AUTO_START_PING_COOLDOWN_MS = 30 * 60_000;
 
 interface WindowHistoryEntry {
-  lastSeenResetAtMs?: number;
-  stableResetAtMs?: number;
-  pingAttemptedResetAtMs?: number;
+  resetObservationCounts: Map<number, number>;
+  pingAttemptedResetAtMs: Set<number>;
 }
 
 export class QuotaWindowHistory {
-  private readonly windows: Record<QuotaWindowId, WindowHistoryEntry> = {
-    fiveHour: {},
-    weekly: {}
-  };
+  private readonly windows = new Map<string, WindowHistoryEntry>();
   private lastPingAttemptAtMs: number | undefined;
 
   recordFreshSnapshot(snapshot: QuotaSnapshot): void {
-    this.recordFreshWindow("fiveHour", snapshot.fiveHour);
-    this.recordFreshWindow("weekly", snapshot.weekly);
+    const resetsByWindow = new Map<string, Set<number>>();
+    for (const window of snapshot.windows) {
+      if (!hasQuotaWindowReset(window)) {
+        continue;
+      }
+
+      const id = historyIdentity(window);
+      const resets = resetsByWindow.get(id) ?? new Set<number>();
+      resets.add(window.resetAt.getTime());
+      resetsByWindow.set(id, resets);
+    }
+
+    for (const [id, resets] of resetsByWindow) {
+      const entry = this.historyEntry(id);
+      entry.resetObservationCounts = new Map([...resets].map((resetAtMs) => [
+        resetAtMs,
+        Math.min(2, (entry.resetObservationCounts.get(resetAtMs) ?? 0) + 1)
+      ]));
+    }
   }
 
   resetVisibilityFor(snapshot: QuotaSnapshot): ResetVisibility {
-    return {
-      fiveHour: this.shouldShowReset("fiveHour", snapshot.fiveHour),
-      weekly: this.shouldShowReset("weekly", snapshot.weekly)
-    };
+    return Object.fromEntries(snapshot.windows.map((window) => [
+      window.id,
+      this.shouldShowReset(window, historyIdentity(window))
+    ]));
   }
 
   planAutoStart(snapshot: QuotaSnapshot, config: AutoStartQuotaConfig, options: { force: boolean; now: Date }): AutoStartPingPlan {
@@ -69,28 +81,18 @@ export class QuotaWindowHistory {
     }
 
     for (const window of plan.windows) {
-      this.windows[window.id].pingAttemptedResetAtMs = window.resetAtMs;
+      this.historyEntry(window.id).pingAttemptedResetAtMs.add(window.resetAtMs);
     }
   }
 
-  private recordFreshWindow(id: QuotaWindowId, window: QuotaWindow | undefined): void {
-    if (!window) {
-      return;
-    }
-
-    const entry = this.windows[id];
-    const resetAtMs = window.resetAt.getTime();
-    entry.stableResetAtMs = entry.lastSeenResetAtMs === resetAtMs ? resetAtMs : undefined;
-    entry.lastSeenResetAtMs = resetAtMs;
-  }
-
-  private shouldShowReset(id: QuotaWindowId, window: QuotaWindow | undefined): boolean {
-    if (!window) {
+  private shouldShowReset(window: QuotaWindow, id: string): boolean {
+    if (!hasQuotaWindowReset(window)) {
       return false;
     }
 
     const resetAtMs = window.resetAt.getTime();
-    return clamp(window.remainingRatio) < 1 || this.windows[id].stableResetAtMs === resetAtMs;
+    return clamp(window.remainingRatio) < 1
+      || (this.historyEntry(id).resetObservationCounts.get(resetAtMs) ?? 0) >= 2;
   }
 
   private isInCooldown(now: Date): boolean {
@@ -99,29 +101,48 @@ export class QuotaWindowHistory {
   }
 
   private autoStartCandidates(snapshot: QuotaSnapshot, config: AutoStartQuotaConfig): AutoStartWindowCandidate[] {
-    return [
-      this.autoStartCandidate("fiveHour", "5H", config.fiveHour, snapshot.fiveHour),
-      this.autoStartCandidate("weekly", "WK", config.weekly, snapshot.weekly)
-    ].filter((window): window is AutoStartWindowCandidate => window !== undefined);
+    const planned = new Set<string>();
+    return snapshot.windows.flatMap((window, index) => {
+      const enabled = window.durationMins === FIVE_HOUR_MINS
+        ? config.fiveHour
+        : window.durationMins === WEEK_MINS && config.weekly;
+      if (!enabled || !hasQuotaWindowReset(window) || clamp(window.remainingRatio) < 1) {
+        return [];
+      }
+
+      const id = historyIdentity(window);
+      const resetAtMs = window.resetAt.getTime();
+      const candidateKey = `${id}@${resetAtMs}`;
+      if (this.historyEntry(id).pingAttemptedResetAtMs.has(resetAtMs) || planned.has(candidateKey)) {
+        return [];
+      }
+
+      planned.add(candidateKey);
+      return [{ id, row: quotaWindowLabel(window, index), resetAtMs }];
+    });
   }
 
-  private autoStartCandidate(
-    id: QuotaWindowId,
-    row: QuotaRowName,
-    enabled: boolean,
-    window: QuotaWindow | undefined
-  ): AutoStartWindowCandidate | undefined {
-    if (!enabled || !isUnusedQuotaWindow(window)) {
-      return undefined;
+  private historyEntry(id: string): WindowHistoryEntry {
+    const existing = this.windows.get(id);
+    if (existing) {
+      return existing;
     }
 
-    const resetAtMs = window.resetAt.getTime();
-    return this.windows[id].pingAttemptedResetAtMs === resetAtMs ? undefined : { id, row, resetAtMs };
+    const entry: WindowHistoryEntry = {
+      resetObservationCounts: new Map(),
+      pingAttemptedResetAtMs: new Set()
+    };
+    this.windows.set(id, entry);
+    return entry;
   }
 }
 
-function isUnusedQuotaWindow(window: QuotaWindow | undefined): window is QuotaWindow {
-  return window !== undefined && clamp(window.remainingRatio) >= 1;
+function historyIdentity(window: QuotaWindow): string {
+  // Known durations survive source-slot and collision-count changes. Per-reset
+  // history within that identity keeps simultaneous reset cycles independent.
+  return window.durationMins !== undefined && Number.isFinite(window.durationMins) && window.durationMins > 0
+    ? `duration:${window.durationMins}`
+    : `slot:${window.id}`;
 }
 
 function clamp(value: number): number {

@@ -1,6 +1,7 @@
 import type { VestaboardMessage } from "../../../orchestrator.js";
 import type { ResetVisibility } from "../quotaWindowHistory.js";
-import type { QuotaRowName, QuotaSnapshot, QuotaWindow } from "../types.js";
+import { hasQuotaWindowTiming, isLongQuotaWindow, quotaWindowLabel } from "../quotaWindow.js";
+import type { QuotaSnapshot, QuotaWindow } from "../types.js";
 import { barTextChar, quotaBar } from "./bars.js";
 import {
   BLANK,
@@ -26,58 +27,44 @@ export function formatFlagshipQuota(
     timeZone,
     now,
     statusMessage,
-    staleRows,
+    staleWindowIds,
     showPacing,
     resetVisibility
   }: {
     timeZone?: string;
     now: Date;
     statusMessage?: string;
-    staleRows: QuotaRowName[];
+    staleWindowIds: string[];
     showPacing: boolean;
     resetVisibility: ResetVisibility;
   }
 ): VestaboardMessage {
-  const fiveHour = flagshipWindow("5H", snapshot.fiveHour, {
+  const windows = [0, 1].map((index) => flagshipWindow(snapshot.windows[index], index, {
     now,
     timeZone,
-    stale: staleRows.includes("5H"),
+    stale: snapshot.windows[index] ? staleWindowIds.includes(snapshot.windows[index].id) : false,
     showPacing,
-    showReset: resetVisibility.fiveHour
-  });
-  const weekly = flagshipWindow("WK", snapshot.weekly, {
-    now,
-    timeZone,
-    stale: staleRows.includes("WK"),
-    showPacing,
-    showReset: resetVisibility.weekly
-  });
+    showReset: snapshot.windows[index] ? resetVisibility[snapshot.windows[index].id] === true : false
+  }));
   const rows = [
     flagshipHeaderRow(),
-    flagshipQuotaTextRow("5H", fiveHour.percent, fiveHour.reset),
-    ` ${fiveHour.barText} `,
-    flagshipQuotaTextRow("WEEK", weekly.percent, weekly.reset),
-    ` ${weekly.barText} `,
+    windows[0].text,
+    ` ${windows[0].barText} `,
+    windows[1].text,
+    ` ${windows[1].barText} `,
     padFlagshipRow(statusMessage ? sanitizeDisplayText(statusMessage) : "")
   ];
 
   return {
     text: rows.join("\n"),
-    characters: rows.map((row, index) => {
-      if (index === 3) {
-        return encodeFlagshipRow(row);
-      }
-
-      if (index === 2) {
-        return [BLANK, ...fiveHour.barCharacters, BLANK];
-      }
-
-      if (index === 4) {
-        return [BLANK, ...weekly.barCharacters, BLANK];
-      }
-
-      return encodeFlagshipRow(row);
-    })
+    characters: [
+      encodeFlagshipRow(rows[0]),
+      encodeFlagshipRow(rows[1]),
+      [BLANK, ...windows[0].barCharacters, BLANK],
+      encodeFlagshipRow(rows[3]),
+      [BLANK, ...windows[1].barCharacters, BLANK],
+      encodeFlagshipRow(rows[5])
+    ]
   };
 }
 
@@ -122,8 +109,8 @@ function fixedFlagshipRow(parts: Array<{ start: number; text: string }>): string
 }
 
 function flagshipWindow(
-  row: QuotaRowName,
   window: QuotaWindow | undefined,
+  index: number,
   options: {
     now: Date;
     timeZone?: string;
@@ -131,33 +118,35 @@ function flagshipWindow(
     showPacing: boolean;
     showReset: boolean;
   }
-): { percent: string; barText: string; barCharacters: number[]; reset: string } {
+): { text: string; barText: string; barCharacters: number[] } {
   if (!window) {
     return {
-      percent: "--%",
+      text: " ".repeat(FLAGSHIP_COLUMNS),
       barText: " ".repeat(FLAGSHIP_BAR_WIDTH),
-      barCharacters: Array(FLAGSHIP_BAR_WIDTH).fill(BLANK),
-      reset: row === "5H" ? "--:--" : "--/-- --:--"
+      barCharacters: Array(FLAGSHIP_BAR_WIDTH).fill(BLANK)
     };
   }
 
   const barCharacters = quotaBar(window, options.now, FLAGSHIP_BAR_WIDTH, options.stale, options.showPacing);
   return {
-    percent: flagshipPercentLabel(window.remainingRatio),
+    text: flagshipQuotaTextRow(
+      quotaWindowLabel(window, index),
+      flagshipPercentLabel(window.remainingRatio),
+      resetLabel(window, options.showReset, options.timeZone)
+    ),
     barText: barCharacters.map(barTextChar).join(""),
-    barCharacters,
-    reset: resetLabel(row, window, options.showReset, options.timeZone)
+    barCharacters
   };
 }
 
-function resetLabel(row: QuotaRowName, window: QuotaWindow, showReset: boolean, timeZone?: string): string {
-  if (!showReset) {
-    return row === "5H" ? "--:--" : "--/-- --:--";
+function resetLabel(window: QuotaWindow, showReset: boolean, timeZone?: string): string {
+  if (!showReset || !hasQuotaWindowTiming(window)) {
+    return "";
   }
 
-  return row === "5H"
-    ? hhmmWithColon(window.resetAt, timeZone)
-    : `${mmdd(window.resetAt, timeZone)} ${hhmmWithColon(window.resetAt, timeZone)}`;
+  return isLongQuotaWindow(window)
+    ? `${mmdd(window.resetAt, timeZone)} ${hhmmWithColon(window.resetAt, timeZone)}`
+    : hhmmWithColon(window.resetAt, timeZone);
 }
 
 function flagshipMessage(rows: string[]): VestaboardMessage {
