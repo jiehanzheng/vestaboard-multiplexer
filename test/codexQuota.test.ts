@@ -477,6 +477,31 @@ test("quota window history keeps simultaneous equal-duration observations indepe
   assert.deepEqual(distinctHistory.resetVisibilityFor(distinct), { primary: true, secondary: true });
 });
 
+test("quota window history preserves observations when equal-duration collisions appear or disappear", () => {
+  const resetAt = new Date("2026-06-19T06:00:00-07:00");
+  const single = {
+    windows: [{ id: "primary", remainingRatio: 1, durationMins: 360, resetAt }]
+  };
+  const collision = {
+    windows: [
+      { id: "primary", remainingRatio: 1, durationMins: 360, resetAt },
+      { id: "secondary", remainingRatio: 1, durationMins: 360, resetAt }
+    ]
+  };
+
+  const singleToCollision = new QuotaWindowHistory();
+  singleToCollision.recordFreshSnapshot(single);
+  assert.deepEqual(singleToCollision.resetVisibilityFor(single), { primary: false });
+  singleToCollision.recordFreshSnapshot(collision);
+  assert.deepEqual(singleToCollision.resetVisibilityFor(collision), { primary: true, secondary: true });
+
+  const collisionToSingle = new QuotaWindowHistory();
+  collisionToSingle.recordFreshSnapshot(collision);
+  assert.deepEqual(collisionToSingle.resetVisibilityFor(collision), { primary: false, secondary: false });
+  collisionToSingle.recordFreshSnapshot(single);
+  assert.deepEqual(collisionToSingle.resetVisibilityFor(single), { primary: true });
+});
+
 test("formats two short resets as times and two long resets as dates on Note", () => {
   const short = formatQuota({
     windows: [
@@ -1003,6 +1028,37 @@ test("auto-start planner records attempted windows and allows a newer reset time
     trigger: "unused-quota",
     windows: [{ id: "duration:300", row: "5H", resetAtMs: new Date("2026-06-19T14:44:00.000Z").getTime() }]
   });
+});
+
+test("auto-start planner preserves attempts when equal-duration collisions appear or disappear", () => {
+  const resetAt = new Date("2026-06-19T05:00:00-07:00");
+  const single = {
+    windows: [{ id: "primary", remainingRatio: 1, durationMins: 300, resetAt }]
+  };
+  const collision = {
+    windows: [
+      { id: "primary", remainingRatio: 1, durationMins: 300, resetAt },
+      { id: "secondary", remainingRatio: 1, durationMins: 300, resetAt }
+    ]
+  };
+  const config = { fiveHour: true, weekly: false };
+  const firstNow = new Date("2026-06-19T00:00:00-07:00");
+  const afterCooldown = new Date("2026-06-19T00:31:00-07:00");
+
+  for (const [firstSnapshot, nextSnapshot] of [[single, collision], [collision, single]]) {
+    const history = new QuotaWindowHistory();
+    const first = history.planAutoStart(firstSnapshot, config, { force: false, now: firstNow });
+    assert.equal(first.type, "ping");
+    assert.equal(first.type === "ping" ? first.windows.length : 0, 1);
+    if (first.type === "ping") {
+      history.recordPingAttempt(first, firstNow);
+    }
+
+    assert.deepEqual(history.planAutoStart(nextSnapshot, config, { force: false, now: afterCooldown }), {
+      type: "skip",
+      reason: "no-eligible-window"
+    });
+  }
 });
 
 test("auto-start planner applies cooldown after ping attempts", () => {
