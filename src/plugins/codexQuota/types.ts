@@ -2,14 +2,14 @@ import type { Priority } from "../../orchestrator.js";
 import type { VestaboardBoardProvider } from "../../vestaboardTypes.js";
 
 export interface QuotaSnapshot {
-  fiveHour?: QuotaWindow;
-  weekly?: QuotaWindow;
+  windows: QuotaWindow[];
 }
 
 export interface QuotaWindow {
+  id: string;
   remainingRatio: number;
-  resetAt: Date;
-  durationMins: number;
+  durationMins?: number;
+  resetAt?: Date;
 }
 
 export interface QuotaPollOptions {
@@ -25,7 +25,6 @@ export interface QuotaPollResult {
 }
 
 export type QuotaPoller = (options?: QuotaPollOptions) => Promise<QuotaPollResult>;
-export type QuotaRowName = "5H" | "WK";
 export type Logger = Pick<Console, "warn">;
 
 export interface CodexQuotaPluginOptions {

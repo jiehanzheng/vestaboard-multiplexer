@@ -1,4 +1,5 @@
 import type { QuotaSnapshot, QuotaWindow } from "./types.js";
+import { FIVE_HOUR_MINS } from "./quotaWindow.js";
 
 export type CodexQuotaDemoMode = "drop-1-pct" | "force-auto-start";
 
@@ -8,16 +9,19 @@ export interface CodexQuotaDemoState {
 }
 
 export function applyCodexQuotaDemo(snapshot: QuotaSnapshot, demo: CodexQuotaDemoState | undefined): QuotaSnapshot {
-  if (!demo || !snapshot.fiveHour) {
+  if (!demo) {
+    return snapshot;
+  }
+
+  const fiveHourIndex = snapshot.windows.findIndex((window) => window.durationMins === FIVE_HOUR_MINS);
+  if (fiveHourIndex < 0) {
     return snapshot;
   }
 
   return {
-    ...snapshot,
-    fiveHour: {
-      ...snapshot.fiveHour,
-      remainingRatio: applyDrops(snapshot.fiveHour, demo)
-    }
+    windows: snapshot.windows.map((window, index) => index === fiveHourIndex
+      ? { ...window, remainingRatio: applyDrops(window, demo) }
+      : window)
   };
 }
 

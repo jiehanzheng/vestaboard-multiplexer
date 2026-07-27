@@ -17,8 +17,8 @@ export interface CodexAppServerClient {
 
 export interface RateWindow {
   usedPercent: number;
-  windowDurationMins: number;
-  resetsAt: number;
+  windowDurationMins?: number | null;
+  resetsAt?: number | null;
 }
 
 export interface RateLimitBucket {

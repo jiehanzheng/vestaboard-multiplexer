@@ -6,3 +6,6 @@
 - Official Vestaboard color constants are API character mappings, not renderer-local implementation details. Preserve global constants for red `63`, orange `64`, yellow `65`, green `66`, blue `67`, violet `68`, white `69`, and black `70` even if a specific renderer does not currently emit every color.
 - Avoid compatibility aliases that give the same Codex quota state object multiple public names. Use the real owning type and method names directly instead of export-level renames such as auto-start state aliases.
 - White time-marker cells must continue to take precedence over quota color cells, including low-quota minimum-fill cells.
+- Treat `primary` and `secondary` as source slots, not quota meanings. Order percentage windows by duration and derive their display labels from duration.
+- Keep duration labels to two characters: one week is `WK`; otherwise use an exact one-digit year/week/day/hour/minute label, falling back to the final display position `Q1`…`Qn`.
+- Leave unused quota rows and unavailable reset fields blank. Do not synthesize placeholders or missing-window warnings.
