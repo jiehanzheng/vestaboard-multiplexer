@@ -65,7 +65,7 @@ WKGGGGWG    60%
 
 On Note, the status lane is the third physical row. It normally shows available reset timing, using times for short windows and dates for long windows when both do not fit. Current-cycle statuses, fetch failures, reset availability, and auto-start ping notices temporarily replace reset timing; expired statuses are pruned on later ticks. Unused rows and unavailable reset fields stay blank.
 
-On Vestaboard Flagship, the same quota data renders as a 6-row by 22-column layout. Reset timing moves into each quota row, the progress bars expand to 20 centered cells, and the final row stays blank unless the shared status lane has an active status such as `RESET AVAILABLE`, `AUTO PING FAIL`, `TIMEOUT`, or `FETCH FAIL`.
+On Vestaboard Flagship, the same quota data renders as a 6-row by 22-column layout. Reset timing moves into each quota row, the progress bars expand to 20 centered cells, and the final row stays blank unless the shared status lane has an active status such as `RESET AVAILABLE`, `AUTO PING FAIL`, `AUTH EXPIRED`, `TIMEOUT`, or `FETCH FAIL`.
 
 If Codex is temporarily unavailable after a successful read, the plugin can reuse the complete last successful snapshot and mark the board with a short status-lane message instead of throwing away the display.
 
@@ -73,16 +73,19 @@ If Codex is temporarily unavailable after a successful read, the plugin can reus
 
 The app-server quota source needs a Codex login in the directory Docker mounts into the container.
 
+Codex-managed ChatGPT authentication persists and normally refreshes its tokens automatically. If a quota read still returns `401 Unauthorized` or `token_expired`, the orchestrator asks the same app-server process to refresh the managed token and retries the quota read once. If that recovery also fails, cached quota remains visible when available, the board shows `AUTH EXPIRED`, and logs report only safe credential-file metadata plus the recovery command. The regular polling interval does not change.
+
 There are two common cases:
 
 - If you run this on the same machine where you normally use Codex, Compose already mounts `${HOME}/.codex` into the container. No extra login step is needed.
 - If you run this on a server with Docker, go to the directory that contains `docker-compose.yml` and log in using the Codex binary inside the container:
 
   ```sh
+  docker compose run --rm --build vestaboard-orchestrator codex login status
   docker compose run --rm --build vestaboard-orchestrator codex login --device-auth
   ```
 
-If the host login directory is somewhere else, set `CODEX_HOST_DIR` in `.env` to that host path. Compose mounts it at `/home/node/.codex` inside the container, where `codex app-server` reads the persisted auth and config.
+If the host login directory is somewhere else, set `CODEX_HOST_DIR` in `.env` to that host path. Compose mounts it at `/home/node/.codex` inside the container, where `codex app-server` reads the persisted auth and config. The mounted directory and `auth.json` must be writable by the container user so Codex can persist refreshed credentials, including by atomically replacing the file.
 
 #### Codex Env Config
 

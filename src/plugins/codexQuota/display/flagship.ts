@@ -68,15 +68,17 @@ export function formatFlagshipQuota(
   };
 }
 
-export function formatFlagshipError(error: unknown): VestaboardMessage {
+export function formatFlagshipError(error: unknown, statusMessage?: string): VestaboardMessage {
   const detail = error instanceof Error ? error.message : String(error);
   return flagshipMessage([
     "CODEX QUOTA",
     "ERROR",
-    sanitizeDisplayText(detail).slice(0, FLAGSHIP_COLUMNS),
+    statusMessage ?? sanitizeDisplayText(detail).slice(0, FLAGSHIP_COLUMNS),
     "",
     "",
-    "CHECK API TOKEN"
+    statusMessage === "AUTH EXPIRED" || statusMessage === "LOGIN NEEDED"
+      ? "RUN CODEX LOGIN"
+      : "CHECK API TOKEN"
   ]);
 }
 

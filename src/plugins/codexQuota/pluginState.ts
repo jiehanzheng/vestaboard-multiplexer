@@ -1,6 +1,10 @@
 import type { Priority, VestaboardMessage } from "../../orchestrator.js";
 import { priorityValue } from "../../priority.js";
-import { sanitizeDisplayText } from "./display/index.js";
+import {
+  classifyCodexFailure,
+  codexAppServerErrorDetails,
+  inspectCodexAuthStorage
+} from "./failure.js";
 import type { Logger, QuotaSnapshot, QuotaWindow } from "./types.js";
 
 export const REFRESH_STATUS_MESSAGE_TTL_MS = 5 * 60_000;
@@ -68,8 +72,7 @@ export class QuotaSnapshotCache {
 }
 
 export function errorStatus(error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error);
-  return summarizeBoardError(sanitizeDisplayText(detail));
+  return classifyCodexFailure(error).boardStatus;
 }
 
 export function autoStartErrorStatus(): string {
@@ -83,10 +86,17 @@ export function logQuotaReadFailure(
   message: VestaboardMessage,
   cacheState: QuotaCacheState
 ): void {
+  const failure = classifyCodexFailure(error);
+  const appServerError = codexAppServerErrorDetails(error);
   logger?.warn("Codex quota read failed.", {
-    reason: summarizeFailure(error),
+    reason: failure.reason,
     errorName: error instanceof Error ? error.name : typeof error,
     errorMessage: error instanceof Error ? error.message : String(error),
+    ...(appServerError ? { appServerError } : {}),
+    ...(failure.authenticationFailure ? {
+      authStorage: inspectCodexAuthStorage(),
+      recoveryCommand: "docker compose run --rm --build vestaboard-orchestrator codex login --device-auth"
+    } : {}),
     fallbackPriority: String(errorPriority),
     cacheState,
     vestaboardPreview: messagePreview(message)
@@ -95,7 +105,7 @@ export function logQuotaReadFailure(
 
 export function logAutoStartFailure(logger: Logger | undefined, error: unknown): void {
   logger?.warn("Codex quota auto-start failed after quota read.", {
-    reason: summarizeFailure(error),
+    reason: classifyCodexFailure(error).reason,
     errorName: error instanceof Error ? error.name : typeof error,
     errorMessage: error instanceof Error ? error.message : String(error),
     boardStatus: autoStartErrorStatus()
@@ -121,28 +131,6 @@ function cloneQuotaWindow(window: QuotaWindow): QuotaWindow {
   };
 }
 
-function summarizeBoardError(message: string): string {
-  if (message.includes("TIMED OUT") || message.includes("TIMEOUT")) return "TIMEOUT";
-  if (message.includes("INVALID JSON")) return "BAD JSON";
-  if (message.includes("EXITED")) return "EXIT";
-  if (message.includes("COULD NOT START")) return "START";
-  if (message.includes("RATE LIMIT")) return "RATE LIMIT";
-  if (message.includes("BUBBLEWRAP")) return "BWRAP";
-  return "FETCH FAIL";
-}
-
 function messagePreview(message: VestaboardMessage): string {
   return message.text.replace(/\n/g, " | ");
-}
-
-function summarizeFailure(error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error);
-  const normalized = detail.toUpperCase();
-  if (normalized.includes("TIMED OUT") || normalized.includes("TIMEOUT")) return "timeout";
-  if (normalized.includes("INVALID JSON")) return "invalid_json";
-  if (normalized.includes("EXITED")) return "app_server_exited";
-  if (normalized.includes("COULD NOT START")) return "app_server_start_failed";
-  if (normalized.includes("RATE LIMIT")) return "rate_limit";
-  if (normalized.includes("BUBBLEWRAP")) return "bubblewrap";
-  return "unknown";
 }

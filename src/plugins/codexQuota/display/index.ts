@@ -35,10 +35,13 @@ export function formatQuota(
     : formatNoteQuota(snapshot, rendererOptions);
 }
 
-export function formatError(error: unknown, options: { board?: VestaboardBoard } = {}): VestaboardMessage {
+export function formatError(
+  error: unknown,
+  options: { board?: VestaboardBoard; statusMessage?: string } = {}
+): VestaboardMessage {
   return options.board === "flagship"
-    ? formatFlagshipError(error)
-    : formatNoteError(error);
+    ? formatFlagshipError(error, options.statusMessage)
+    : formatNoteError(error, options.statusMessage);
 }
 
 function defaultResetVisibility(snapshot: QuotaSnapshot): ResetVisibility {

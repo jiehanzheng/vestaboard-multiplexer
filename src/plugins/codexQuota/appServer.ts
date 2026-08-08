@@ -8,11 +8,36 @@ type ResponseParser<T> = (value: unknown) => T;
 const APP_SERVER_TIMEOUT_MS = 30_000;
 
 export interface CodexAppServerClient {
+  readAccount(params: AccountReadParams): Promise<AccountReadResult>;
   readRateLimits(): Promise<RateLimitsResult>;
   readModels(params: ModelListParams): Promise<ModelListResult>;
   startThread(params: ThreadStartParams): Promise<ThreadStartResult>;
   startTurn(params: TurnStartParams): Promise<TurnStartResult>;
   waitForTurnCompletion(threadId: string, turnId: string): Promise<void>;
+}
+
+export interface AccountReadParams {
+  refreshToken: boolean;
+}
+
+export interface AccountReadResult {
+  account?: unknown;
+  requiresOpenaiAuth: boolean;
+}
+
+export class CodexAppServerError extends Error {
+  readonly rpcCode?: number;
+  readonly rpcMessage?: string;
+  readonly rpcData?: unknown;
+
+  constructor(readonly rpcError: unknown) {
+    const fields = objectFields(rpcError);
+    super(`Codex app-server error: ${JSON.stringify(rpcError)}`);
+    this.name = "CodexAppServerError";
+    this.rpcCode = typeof fields?.code === "number" ? fields.code : undefined;
+    this.rpcMessage = typeof fields?.message === "string" ? fields.message : undefined;
+    this.rpcData = fields?.data;
+  }
 }
 
 export interface RateWindow {
@@ -202,6 +227,7 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
   });
 
   const client: CodexAppServerClient = {
+    readAccount: (params) => request("account/read", params, parseAccountReadResult),
     readRateLimits: () => request("account/rateLimits/read", undefined, parseRateLimitsResult),
     readModels: (params) => request("model/list", params, parseModelListResult),
     startThread: (params) => request("thread/start", params, parseThreadStartResult),
@@ -234,7 +260,7 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
 
     pending.delete(message.id);
     if (message.error !== undefined) {
-      entry.reject(new Error(`Codex app-server error: ${JSON.stringify(message.error)}`));
+      entry.reject(new CodexAppServerError(message.error));
     } else {
       entry.resolve(message.result);
     }
@@ -264,6 +290,18 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
 
 function parseInitializeResult(value: unknown): unknown {
   return value;
+}
+
+function parseAccountReadResult(value: unknown): AccountReadResult {
+  const result = asObject(value, "account/read result");
+  if (typeof result.requiresOpenaiAuth !== "boolean") {
+    throw new Error("account/read result must include requiresOpenaiAuth.");
+  }
+
+  return {
+    account: result.account,
+    requiresOpenaiAuth: result.requiresOpenaiAuth
+  };
 }
 
 function parseRateLimitsResult(value: unknown): RateLimitsResult {
@@ -321,6 +359,12 @@ function asObject(value: unknown, label: string): JsonObject {
   }
 
   return value as JsonObject;
+}
+
+function objectFields(value: unknown): JsonObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as JsonObject
+    : undefined;
 }
 
 function requiredString(value: unknown, label: string): string {

@@ -2,6 +2,7 @@ import type { Plugin, PluginUpdate, Priority } from "../../orchestrator.js";
 import type { VestaboardBoard, VestaboardBoardProvider } from "../../vestaboardTypes.js";
 import { applyCodexQuotaDemo, type CodexQuotaDemoState } from "./demo.js";
 import { formatError, formatQuota } from "./display/index.js";
+import { isCodexAuthenticationFailure } from "./failure.js";
 import {
   autoStartErrorStatus,
   bumpStatusPriority,
@@ -91,7 +92,8 @@ export class CodexQuotaPlugin implements Plugin {
 
   private fallbackUpdate(error: unknown, now: Date, board: VestaboardBoard): PluginUpdate {
     const cachedQuota = this.quotaCache.snapshot();
-    this.statusMessages.push(errorStatus(error), now, TRANSIENT_STATUS_MESSAGE_TTL_MS);
+    const failureStatus = errorStatus(error);
+    this.statusMessages.push(failureStatus, now, TRANSIENT_STATUS_MESSAGE_TTL_MS);
     const displayStatusMessage = cachedQuota ? this.statusMessages.top(now) : undefined;
     const message = cachedQuota
       ? formatQuota(cachedQuota, {
@@ -103,7 +105,10 @@ export class CodexQuotaPlugin implements Plugin {
           staleWindowIds: cachedQuota.windows.map((window) => window.id),
           resetVisibility: this.quotaWindowHistory.resetVisibilityFor(cachedQuota)
         })
-      : formatError(error, { board });
+      : formatError(error, {
+          board,
+          statusMessage: isCodexAuthenticationFailure(error) ? failureStatus : undefined
+        });
     logQuotaReadFailure(this.options.logger, error, this.options.errorPriority, message, this.quotaCache.state());
 
     return {
