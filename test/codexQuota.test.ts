@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
+import { constants } from "node:fs";
 import test from "node:test";
 
 import { DemoSignalController } from "../src/demoSignals.js";
-import { isMatchingTurnCompletion, parseModelListResult, turnCompletionFailure } from "../src/plugins/codexQuota/appServer.js";
+import {
+  CodexAppServerError,
+  isMatchingTurnCompletion,
+  parseModelListResult,
+  turnCompletionFailure,
+  type CodexAppServerClient,
+  type RateLimitsResult
+} from "../src/plugins/codexQuota/appServer.js";
 import { CodexAutoStartSidecar } from "../src/plugins/codexQuota/autoStartSidecar.js";
 import { applyCodexQuotaDemo as applyCodexQuotaDemoWindows } from "../src/plugins/codexQuota/demo.js";
 import {
@@ -18,7 +26,9 @@ import {
 } from "../src/plugins/codexQuota/index.js";
 import { LastSentMessageCache, runForever, tick, type VestaboardMessage } from "../src/orchestrator.js";
 import { BLACK, BLUE, GREEN, ORANGE, RED, VIOLET, WHITE, YELLOW } from "../src/plugins/codexQuota/display/shared.js";
+import { classifyCodexFailure, inspectCodexAuthStorage } from "../src/plugins/codexQuota/failure.js";
 import { StatusMessageStack } from "../src/plugins/codexQuota/pluginState.js";
+import { readRateLimitsWithAuthRecovery } from "../src/plugins/codexQuota/quotaSource.js";
 import { formatStartupMessage } from "../src/startupMessage.js";
 import { createVestaboardBoardResolver, boardPreferenceFromEnv } from "../src/vestaboardBoard.js";
 import {
@@ -1311,10 +1321,173 @@ test("app-server turn completion only treats completed as success", () => {
   assert.match(turnCompletionFailure({})?.message ?? "", /status unknown/);
 });
 
+test("codex failures classify expired authentication before the rate-limit endpoint name", () => {
+  const expired = expiredTokenError();
+
+  assert.deepEqual(classifyCodexFailure(expired), {
+    reason: "auth_expired",
+    boardStatus: "AUTH EXPIRED",
+    authenticationFailure: true
+  });
+  assert.equal(classifyCodexFailure(new Error("failed to fetch codex rate limits")).reason, "unknown");
+  assert.equal(classifyCodexFailure(new Error("HTTP 429 too_many_requests")).reason, "rate_limit");
+  assert.deepEqual(classifyCodexFailure(new Error("HTTP 401 Unauthorized")), {
+    reason: "auth_required",
+    boardStatus: "LOGIN NEEDED",
+    authenticationFailure: true
+  });
+});
+
+test("quota reads force one token refresh and retry once after expired authentication", async () => {
+  let quotaReads = 0;
+  const refreshParams: Array<{ refreshToken: boolean }> = [];
+  const expected = rateLimitsResult(25);
+  const client = quotaClient({
+    async readAccount(params) {
+      refreshParams.push(params);
+      return { account: { type: "chatgpt" }, requiresOpenaiAuth: true };
+    },
+    async readRateLimits() {
+      quotaReads += 1;
+      if (quotaReads === 1) throw expiredTokenError();
+      return expected;
+    }
+  });
+
+  assert.equal(await readRateLimitsWithAuthRecovery(client), expected);
+  assert.equal(quotaReads, 2);
+  assert.deepEqual(refreshParams, [{ refreshToken: true }]);
+});
+
+test("quota reads stop after one failed token refresh", async () => {
+  let quotaReads = 0;
+  let refreshes = 0;
+  const client = quotaClient({
+    async readAccount() {
+      refreshes += 1;
+      throw new Error("refresh token revoked");
+    },
+    async readRateLimits() {
+      quotaReads += 1;
+      throw expiredTokenError();
+    }
+  });
+
+  await assert.rejects(async () => {
+    await readRateLimitsWithAuthRecovery(client);
+  }, (error) => classifyCodexFailure(error).reason === "auth_expired");
+  assert.equal(quotaReads, 1);
+  assert.equal(refreshes, 1);
+});
+
+test("quota reads stop after the retried request is still unauthorized", async () => {
+  let quotaReads = 0;
+  let refreshes = 0;
+  const client = quotaClient({
+    async readAccount() {
+      refreshes += 1;
+      return { account: { type: "chatgpt" }, requiresOpenaiAuth: true };
+    },
+    async readRateLimits() {
+      quotaReads += 1;
+      throw expiredTokenError();
+    }
+  });
+
+  await assert.rejects(async () => {
+    await readRateLimitsWithAuthRecovery(client);
+  }, (error) => classifyCodexFailure(error).reason === "auth_expired");
+  assert.equal(quotaReads, 2);
+  assert.equal(refreshes, 1);
+});
+
+test("quota reads do not refresh or retry generic and real rate-limit failures", async () => {
+  for (const error of [new Error("failed to fetch codex rate limits"), new Error("HTTP 429 too_many_requests")]) {
+    let quotaReads = 0;
+    let refreshes = 0;
+    const client = quotaClient({
+      async readAccount() {
+        refreshes += 1;
+        return { account: null, requiresOpenaiAuth: true };
+      },
+      async readRateLimits() {
+        quotaReads += 1;
+        throw error;
+      }
+    });
+
+    await assert.rejects(() => readRateLimitsWithAuthRecovery(client), error);
+    assert.equal(quotaReads, 1);
+    assert.equal(refreshes, 0);
+  }
+});
+
+test("auth storage diagnostics inspect metadata and permissions without reading credentials", () => {
+  const accessCalls: Array<{ path: string; mode: number }> = [];
+  const diagnostics = inspectCodexAuthStorage({
+    env: { CODEX_HOME: "/codex-home" },
+    homeDirectory: "/ignored-home",
+    exists: (path) => path === "/codex-home" || path === "/codex-home/auth.json",
+    access: (path, mode) => {
+      accessCalls.push({ path, mode });
+      if (path.endsWith("auth.json") && mode === constants.W_OK) {
+        throw new Error("read-only");
+      }
+    },
+    modifiedAt: () => new Date("2026-08-08T12:00:00.000Z")
+  });
+
+  assert.deepEqual(diagnostics, {
+    authFile: "/codex-home/auth.json",
+    authFilePresent: true,
+    authFileReadable: true,
+    authFileWritable: false,
+    authDirectoryWritable: true,
+    authFileModifiedAt: "2026-08-08T12:00:00.000Z"
+  });
+  assert.deepEqual(accessCalls, [
+    { path: "/codex-home/auth.json", mode: constants.R_OK },
+    { path: "/codex-home/auth.json", mode: constants.W_OK },
+    { path: "/codex-home", mode: constants.W_OK }
+  ]);
+
+  assert.deepEqual(inspectCodexAuthStorage({
+    env: { CODEX_HOME: "/writable" },
+    exists: () => true,
+    access: () => {},
+    modifiedAt: () => new Date("2026-08-08T12:30:00.000Z")
+  }), {
+    authFile: "/writable/auth.json",
+    authFilePresent: true,
+    authFileReadable: true,
+    authFileWritable: true,
+    authDirectoryWritable: true,
+    authFileModifiedAt: "2026-08-08T12:30:00.000Z"
+  });
+
+  assert.deepEqual(inspectCodexAuthStorage({
+    env: { CODEX_HOME: "/missing" },
+    exists: () => false,
+    access: () => {
+      throw new Error("access should not be called");
+    }
+  }), {
+    authFile: "/missing/auth.json",
+    authFilePresent: false,
+    authFileReadable: false,
+    authFileWritable: false,
+    authDirectoryWritable: false,
+    authFileModifiedAt: undefined
+  });
+});
+
 test("auto-start sidecar starts read-only threads without cwd", async () => {
   let threadStartParams: { sandbox?: string; cwd?: unknown } | undefined;
   const sidecar = new CodexAutoStartSidecar({ fiveHour: false, weekly: false });
   const client = {
+    async readAccount() {
+      throw new Error("unexpected readAccount");
+    },
     async readRateLimits() {
       throw new Error("unexpected readRateLimits");
     },
@@ -1349,6 +1522,9 @@ test("auto-start sidecar starts read-only threads without cwd", async () => {
 test("auto-start sidecar rejects non-progress turn start statuses", async () => {
   const sidecar = new CodexAutoStartSidecar({ fiveHour: false, weekly: false });
   const client = {
+    async readAccount() {
+      throw new Error("unexpected readAccount");
+    },
     async readRateLimits() {
       throw new Error("unexpected readRateLimits");
     },
@@ -1382,6 +1558,9 @@ test("auto-start sidecar records attempts before model reads can fail", async ()
   const snapshot = quotaSnapshot({ fiveHour: 1, weekly: 0.4 });
   const now = new Date("2026-06-19T00:00:00-07:00");
   const client = {
+    async readAccount() {
+      throw new Error("unexpected readAccount");
+    },
     async readRateLimits() {
       throw new Error("unexpected readRateLimits");
     },
@@ -1419,6 +1598,9 @@ test("auto-start sidecar records attempts before turn start can fail", async () 
   const snapshot = quotaSnapshot({ fiveHour: 1, weekly: 0.4 });
   const now = new Date("2026-06-19T00:00:00-07:00");
   const client = {
+    async readAccount() {
+      throw new Error("unexpected readAccount");
+    },
     async readRateLimits() {
       throw new Error("unexpected readRateLimits");
     },
@@ -1452,6 +1634,9 @@ test("auto-start sidecar records attempts before model selection can fail", asyn
   const snapshot = quotaSnapshot({ fiveHour: 1, weekly: 0.4 });
   const now = new Date("2026-06-19T00:00:00-07:00");
   const client = {
+    async readAccount() {
+      throw new Error("unexpected readAccount");
+    },
     async readRateLimits() {
       throw new Error("unexpected readRateLimits");
     },
@@ -1664,6 +1849,48 @@ test("codex plugin returns low-priority error message when quota read fails", as
     },
     vestaboardPreview: "CODEX QUOTA ERR | INVALID JSON FR | "
   });
+});
+
+test("codex plugin renders auth expired with and without cached quota on both boards", async () => {
+  for (const board of ["note", "flagship"] as const) {
+    const noCacheWarnings: unknown[][] = [];
+    const noCachePlugin = testCodexQuotaPlugin(async () => {
+      throw expiredTokenError();
+    }, {
+      priority: "normal",
+      errorPriority: "low",
+      board: async () => board,
+      logger: { warn: (...args) => noCacheWarnings.push(args) }
+    });
+
+    const noCache = await noCachePlugin.getUpdate();
+    assert.match(noCache.message.text, /AUTH EXPIRED/);
+    assert.equal((noCacheWarnings[0]?.[1] as { reason?: string }).reason, "auth_expired");
+    assert.equal(
+      typeof (noCacheWarnings[0]?.[1] as { authStorage?: { authFilePresent?: boolean } }).authStorage?.authFilePresent,
+      "boolean"
+    );
+
+    let fail = false;
+    const cachedPlugin = testCodexQuotaPlugin(async () => {
+      if (fail) throw expiredTokenError();
+      return quotaPollResult({
+        fiveHour: { remainingRatio: 0.8, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
+        weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
+      });
+    }, {
+      priority: "normal",
+      errorPriority: "low",
+      board: async () => board,
+      logger: { warn() {} }
+    });
+
+    await cachedPlugin.getUpdate();
+    fail = true;
+    const cached = await cachedPlugin.getUpdate();
+    assert.equal(cached.priority, "high");
+    assert.match(cached.message.text, /AUTH EXPIRED/);
+  }
 });
 
 test("codex plugin renders cached quota ingredients when a later quota read fails", async () => {
@@ -2480,4 +2707,40 @@ function windowForDuration(snapshot: QuotaSnapshot, durationMins: number): Quota
 
 function quotaPollResult(snapshot: TestQuotaSnapshot) {
   return { snapshot: normalizeQuotaSnapshot(snapshot) };
+}
+
+function quotaClient(
+  overrides: Pick<CodexAppServerClient, "readAccount" | "readRateLimits">
+): CodexAppServerClient {
+  return {
+    ...overrides,
+    async readModels() {
+      throw new Error("unexpected readModels");
+    },
+    async startThread() {
+      throw new Error("unexpected startThread");
+    },
+    async startTurn() {
+      throw new Error("unexpected startTurn");
+    },
+    async waitForTurnCompletion() {
+      throw new Error("unexpected waitForTurnCompletion");
+    }
+  };
+}
+
+function expiredTokenError(): CodexAppServerError {
+  return new CodexAppServerError({
+    code: -32603,
+    message: "failed to fetch codex rate limits: GET https://chatgpt.com/backend-api/wham/usage failed: 401 Unauthorized; body={\"code\":\"token_expired\"}"
+  });
+}
+
+function rateLimitsResult(usedPercent: number): RateLimitsResult {
+  return {
+    rateLimits: {
+      limitId: "codex",
+      primary: { usedPercent, windowDurationMins: 300 }
+    }
+  };
 }

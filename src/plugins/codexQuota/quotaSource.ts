@@ -1,5 +1,6 @@
-import { withCodexAppServer, type RateLimitsResult, type RateWindow } from "./appServer.js";
+import { withCodexAppServer, type CodexAppServerClient, type RateLimitsResult, type RateWindow } from "./appServer.js";
 import { CodexAutoStartSidecar, type AutoStartQuotaConfig } from "./autoStartSidecar.js";
+import { CodexAuthRefreshError, isCodexAuthenticationFailure } from "./failure.js";
 import { FIVE_HOUR_MINS, WEEK_MINS } from "./quotaWindow.js";
 import { QuotaWindowHistory } from "./quotaWindowHistory.js";
 import type { QuotaPollOptions, QuotaPoller, QuotaPollResult, QuotaSnapshot, QuotaWindow } from "./types.js";
@@ -11,13 +12,32 @@ export function createCodexQuotaPoller(autoStartConfig: AutoStartQuotaConfig, hi
 
 export async function readCodexQuota(): Promise<QuotaSnapshot> {
   return withCodexAppServer(async (client) => {
-    const rateLimits = await client.readRateLimits();
+    const rateLimits = await readRateLimitsWithAuthRecovery(client);
     return quotaFromRateLimits(rateLimits);
   });
 }
 
 export async function readRateLimits(): Promise<RateLimitsResult> {
-  return withCodexAppServer((client) => client.readRateLimits());
+  return withCodexAppServer(readRateLimitsWithAuthRecovery);
+}
+
+export async function readRateLimitsWithAuthRecovery(client: CodexAppServerClient): Promise<RateLimitsResult> {
+  try {
+    return await client.readRateLimits();
+  } catch (initialError) {
+    if (!isCodexAuthenticationFailure(initialError)) {
+      throw initialError;
+    }
+
+    try {
+      // A single explicit refresh recovers stale access tokens without creating an unbounded retry loop.
+      await client.readAccount({ refreshToken: true });
+    } catch (refreshError) {
+      throw new CodexAuthRefreshError(initialError, refreshError);
+    }
+
+    return client.readRateLimits();
+  }
 }
 
 export function quotaFromRateLimits(result: RateLimitsResult): QuotaSnapshot {
@@ -56,7 +76,7 @@ async function readCodexQuotaWithSidecar(
   options: QuotaPollOptions
 ): Promise<QuotaPollResult> {
   return withCodexAppServer(async (client) => {
-    const rateLimits = await client.readRateLimits();
+    const rateLimits = await readRateLimitsWithAuthRecovery(client);
     const snapshot = quotaFromRateLimits(rateLimits);
     const rateLimitResetCreditsAvailableCount = resetCreditsAvailableCount(rateLimits);
     try {

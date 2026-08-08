@@ -43,9 +43,9 @@ export function formatNoteQuota(
   };
 }
 
-export function formatNoteError(error: unknown): VestaboardMessage {
+export function formatNoteError(error: unknown, statusMessage?: string): VestaboardMessage {
   const detail = error instanceof Error ? error.message : String(error);
-  const rows = ["CODEX QUOTA ERR", sanitizeDisplayText(detail).slice(0, NOTE_COLUMNS), ""];
+  const rows = ["CODEX QUOTA ERR", statusMessage ?? sanitizeDisplayText(detail).slice(0, NOTE_COLUMNS), ""];
   return {
     text: rows.join("\n"),
     characters: rows.map((row) => encodeNoteRow(row.padEnd(NOTE_COLUMNS, " ").slice(0, NOTE_COLUMNS)))
