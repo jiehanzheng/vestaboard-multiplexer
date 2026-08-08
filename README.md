@@ -99,13 +99,13 @@ If the host login directory is somewhere else, set `CODEX_HOST_DIR` in `.env` to
 | `CODEX_HOST_DIR` | Host Codex config directory mounted into Docker at `/home/node/.codex`.<br><br>Default: `${HOME}/.codex` |
 | `CODEX_AUTO_START_WINDOW_5H` | Ping Codex once when the 5-hour window is completely unused at 100%.<br><br>Default: `false` |
 | `CODEX_AUTO_START_WINDOW_WK` | Ping Codex once when the weekly window is completely unused at 100%.<br><br>Default: `false` |
-| `CODEX_QUOTA_DEMO_PAUSE_MINUTES` | How long normal polling pauses after a signal-triggered demo render.<br><br>Default: `5` |
+| `CODEX_QUOTA_DEMO_PAUSE_MINUTES` | How long normal polling pauses after a `SIGUSR2` demo render.<br><br>Default: `5` |
 
-When auto-start is enabled, the plugin lists visible Codex models, skips `-spark` models, prefers the last `-nano` model, then the last `-mini` model, then the last remaining model. It sends a read-only ephemeral prompt: `Reply exactly: ok. Do not inspect files or run commands.` A running process auto-starts at most once per reset timestamp and never pings more than once every 30 minutes unless forced by demo mode.
+When auto-start is enabled, the plugin lists visible Codex models, skips `-spark` models, prefers the last `-nano` model, then the last `-mini` model, then the last remaining model. It sends a read-only ephemeral prompt: `Reply exactly: ok. Do not inspect files or run commands.` A running process auto-starts at most once per reset timestamp and never pings more than once every 30 minutes.
 
 When any displayed quota row is exhausted at 0% and `account/rateLimits/read` reports reset credits are available, the status lane shows `RESET AVAILABLE`. The plugin only displays that read-only account status; it does not invoke a reset.
 
-#### Demo Mode
+#### Runtime Signals
 
 Use fixture mode to validate formatting without an authenticated Codex app-server:
 
@@ -113,11 +113,11 @@ Use fixture mode to validate formatting without an authenticated Codex app-serve
 CODEX_QUOTA_SOURCE=fixture docker compose up --build
 ```
 
-The long-running process can render one realistic Codex quota demo without restarting:
+The long-running process supports an immediate full refresh and a realistic Codex quota demo without restarting:
 
 ```sh
-kill -HUP <pid>   # drop one percentage point from 5H remaining quota
-kill -USR2 <pid>  # force a Codex ping and show the retained status-lane ping message
+kill -HUP <pid>   # refresh all widgets immediately
+kill -USR2 <pid>  # subtract one percentage point from the first displayed quota
 ```
 
-Signals are cumulative for the running process. Two `SIGHUP`s render a two-point drop, and later demo signals continue from the accumulated demo offset. `SIGUSR2` bypasses auto-start env flags, the 30-minute ping cooldown, and the unused-window check so the ping path can be tested on demand.
+`SIGHUP` wakes the orchestrator during its startup, normal polling, or demo pause and coalesces repeated refresh requests into the next full tick. `SIGUSR2` demo drops are cumulative for the running process: two signals render a two-point drop from whichever quota is displayed first. Only demo renders use `CODEX_QUOTA_DEMO_PAUSE_MINUTES`.

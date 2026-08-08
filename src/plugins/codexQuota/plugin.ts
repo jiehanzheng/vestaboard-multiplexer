@@ -55,7 +55,7 @@ export class CodexQuotaPlugin implements Plugin {
         statusMessage,
         sidecarError,
         rateLimitResetCreditsAvailableCount
-      } = await this.readQuota({ forceAutoStart: demoMode?.forceAutoStart, now });
+      } = await this.readQuota({ now });
       this.quotaWindowHistory.recordFreshSnapshot(freshQuota);
       this.quotaCache.update(freshQuota, now);
       this.pushStatusMessages(now, statusMessage, sidecarError);
