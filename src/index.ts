@@ -1,6 +1,6 @@
-import { DemoSignalController } from "./demoSignals.js";
 import { createCodexQuotaPlugin } from "./plugins/codexQuota/index.js";
 import { LastSentMessageCache, runForever, tick } from "./orchestrator.js";
+import { RuntimeSignalController } from "./runtimeSignals.js";
 import { sendStartupMessage } from "./startupMessage.js";
 import { boardPreferenceFromEnv, createVestaboardBoardResolver } from "./vestaboardBoard.js";
 import { createVestaboardClient, localMessageTransitionOptionsFromEnv } from "./vestaboard.js";
@@ -13,7 +13,7 @@ const startupPollDelayMs = 60_000;
 const vestaboardTransport = process.env.VESTABOARD_LOCAL_API_KEY ? "local" : "cloud";
 const sentMessageCache = new LastSentMessageCache();
 const demoPauseMinutes = Number(process.env.CODEX_QUOTA_DEMO_PAUSE_MINUTES ?? "5");
-const demoSignals = new DemoSignalController();
+const runtimeSignals = new RuntimeSignalController();
 const localMessageTransition = localMessageTransitionOptionsFromEnv(process.env, console);
 
 const vestaboard = createVestaboardClient({
@@ -41,8 +41,8 @@ const plugins = [
     statusMessage: () => boardResolver.resolution().source === "assumed" ? "VB SIZE PEND" : undefined,
     autoStartWindow5h: envFlag(process.env.CODEX_AUTO_START_WINDOW_5H),
     autoStartWindowWk: envFlag(process.env.CODEX_AUTO_START_WINDOW_WK),
-    takeDemoMode: () => demoSignals.take(),
-    restoreDemoMode: (demo) => demoSignals.restore(demo)
+    takeDemoMode: () => runtimeSignals.takeDemo(),
+    restoreDemoMode: (demo) => runtimeSignals.restoreDemo(demo)
   })
 ];
 
@@ -53,8 +53,8 @@ async function run(): Promise<void> {
 if (once) {
   runOnceWithStartup().catch(fail);
 } else {
-  demoSignals.install(console);
-  runWithStartupAndDemoSignals().catch(fail);
+  runtimeSignals.install(console);
+  runWithStartupAndRuntimeSignals().catch(fail);
 }
 
 function fail(error: unknown): void {
@@ -62,13 +62,13 @@ function fail(error: unknown): void {
   process.exitCode = 1;
 }
 
-async function runWithDemoSignals(): Promise<void> {
+async function runWithRuntimeSignals(): Promise<void> {
   await runForever({
     runOnce: run,
     waitMs: intervalMinutes * 60_000,
     sleep: async (ms) => {
-      const delayMs = demoSignals.takePauseAfterRun() ? demoPauseMinutes * 60_000 : ms;
-      await demoSignals.sleep(delayMs);
+      const delayMs = runtimeSignals.takePauseAfterDemoRun() ? demoPauseMinutes * 60_000 : ms;
+      await runtimeSignals.sleep(delayMs);
     }
   });
 }
@@ -78,9 +78,9 @@ async function runOnceWithStartup(): Promise<void> {
   await run();
 }
 
-async function runWithStartupAndDemoSignals(): Promise<void> {
+async function runWithStartupAndRuntimeSignals(): Promise<void> {
   await startup();
-  await runWithDemoSignals();
+  await runWithRuntimeSignals();
 }
 
 async function startup(): Promise<void> {
@@ -92,7 +92,7 @@ async function startup(): Promise<void> {
     timeZone: process.env.CODEX_QUOTA_TIME_ZONE,
     statusLine: localMessageTransition.hasError ? "check logs" : undefined
   });
-  await demoSignals.sleep(startupPollDelayMs);
+  await runtimeSignals.sleep(startupPollDelayMs);
 }
 
 function envFlag(value: string | undefined): boolean {

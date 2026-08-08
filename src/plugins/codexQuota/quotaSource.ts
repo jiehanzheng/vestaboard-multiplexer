@@ -83,7 +83,7 @@ async function readCodexQuotaWithSidecar(
       const autoStart = await autoStartSidecar.afterQuotaRead({
         client,
         snapshot,
-        force: options.forceAutoStart === true,
+        force: false,
         now: options.now ?? new Date()
       });
 

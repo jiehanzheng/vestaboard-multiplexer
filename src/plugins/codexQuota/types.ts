@@ -13,7 +13,6 @@ export interface QuotaWindow {
 }
 
 export interface QuotaPollOptions {
-  forceAutoStart?: boolean;
   now?: Date;
 }
 

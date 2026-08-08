@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import test from "node:test";
 
-import { DemoSignalController } from "../src/demoSignals.js";
+import { RuntimeSignalController } from "../src/runtimeSignals.js";
 import {
   CodexAppServerError,
   isMatchingTurnCompletion,
@@ -902,17 +902,19 @@ test("renders two Flagship quota blocks when quota reaches into the second bucke
   assert.equal(rows[2].slice(1, 21), "GG                  ");
 });
 
-test("demo mode drops five-hour quota by one percentage point", () => {
+test("demo mode drops the first displayed quota by one percentage point", () => {
   const snapshot = applyCodexQuotaDemo(
     {
-      fiveHour: { remainingRatio: 0.76, resetAt: new Date("2026-06-19T03:00:00-07:00"), durationMins: 300 },
-      weekly: { remainingRatio: 0.6, resetAt: new Date("2026-06-22T00:00:00-07:00"), durationMins: 10_080 }
+      windows: [
+        { id: "first", remainingRatio: 0.6, durationMins: 10_080 },
+        { id: "second", remainingRatio: 0.76, durationMins: 300 }
+      ]
     },
     { pctDrops: 1 }
   );
 
-  assert.equal(snapshot.windows[0]?.remainingRatio, 0.75);
-  assert.equal(snapshot.windows[1]?.remainingRatio, 0.6);
+  assert.equal(snapshot.windows[0]?.remainingRatio, 0.59);
+  assert.equal(snapshot.windows[1]?.remainingRatio, 0.76);
 });
 
 test("demo mode accumulates repeated drops", () => {
@@ -2571,32 +2573,52 @@ test("main loop waits after each completed tick", async () => {
   assert.deepEqual(events, ["run-0", "done-1", "sleep-300000", "run-1", "done-2"]);
 });
 
-test("demo signals queue mode and request a pause after the demo run", () => {
-  const controller = new DemoSignalController();
+test("runtime signals queue cumulative first-row demos and request a demo pause", () => {
+  const controller = new RuntimeSignalController();
 
-  controller.queue("drop-1-pct", { info() {} });
-  assert.deepEqual(controller.take(), { pctDrops: 1 });
-  assert.equal(controller.takePauseAfterRun(), true);
-  assert.equal(controller.takePauseAfterRun(), false);
+  controller.queue("drop-first-1-pct", { info() {} });
+  assert.deepEqual(controller.takeDemo(), { pctDrops: 1 });
+  assert.equal(controller.takePauseAfterDemoRun(), true);
+  assert.equal(controller.takePauseAfterDemoRun(), false);
 
-  controller.queue("drop-1-pct", { info() {} });
-  assert.deepEqual(controller.take(), { pctDrops: 2 });
+  controller.queue("drop-first-1-pct", { info() {} });
+  assert.deepEqual(controller.takeDemo(), { pctDrops: 2 });
 
-  controller.queue("force-auto-start", { info() {} });
-  assert.deepEqual(controller.take(), { pctDrops: 2, forceAutoStart: true });
-  controller.queue("drop-1-pct", { info() {} });
-  assert.deepEqual(controller.take(), { pctDrops: 3 });
+  controller.queue("drop-first-1-pct", { info() {} });
+  assert.deepEqual(controller.takeDemo(), { pctDrops: 3 });
 });
 
-test("codex plugin restores queued demo mode when quota read fails", async () => {
-  const controller = new DemoSignalController();
-  const forceAutoStartValues: Array<boolean | undefined> = [];
-  let fail = true;
-  controller.queue("drop-1-pct", { info() {} });
-  controller.queue("force-auto-start", { info() {} });
+test("runtime refresh signal wakes a full loop without creating a demo", async () => {
+  const controller = new RuntimeSignalController();
+  const events: string[] = [];
+  let runs = 0;
 
-  const plugin = testCodexQuotaPlugin(async (options) => {
-    forceAutoStartValues.push(options?.forceAutoStart);
+  await runForever({
+    waitMs: 300_000,
+    shouldContinue: () => runs < 2,
+    async runOnce() {
+      runs += 1;
+      events.push(`run-${runs}`);
+      if (runs === 1) {
+        controller.queue("refresh-now", { info: (message) => events.push(message) });
+      }
+    },
+    sleep: (ms) => controller.sleep(ms)
+  });
+
+  assert.deepEqual(events, ["run-1", "Queued immediate refresh for all widgets.", "run-2"]);
+  assert.equal(controller.takeDemo(), undefined);
+  assert.equal(controller.takePauseAfterDemoRun(), false);
+});
+
+test("codex plugin restores a queued first-row demo when quota read fails", async () => {
+  const controller = new RuntimeSignalController();
+  let attempts = 0;
+  let fail = true;
+  controller.queue("drop-first-1-pct", { info() {} });
+
+  const plugin = testCodexQuotaPlugin(async () => {
+    attempts += 1;
     if (fail) {
       fail = false;
       throw new Error("temporary quota failure");
@@ -2610,14 +2632,14 @@ test("codex plugin restores queued demo mode when quota read fails", async () =>
     priority: "normal",
     errorPriority: "low",
     timeZone: "America/Los_Angeles",
-    takeDemoMode: () => controller.take(),
-    restoreDemoMode: (demo) => controller.restore(demo)
+    takeDemoMode: () => controller.takeDemo(),
+    restoreDemoMode: (demo) => controller.restoreDemo(demo)
   });
 
   await plugin.getUpdate();
   const retry = await plugin.getUpdate();
 
-  assert.deepEqual(forceAutoStartValues, [true, true]);
+  assert.equal(attempts, 2);
   assert.equal(retry.message.text.split("\n")[0].endsWith("75%"), true);
 });
 
@@ -2660,7 +2682,7 @@ function applyCodexQuotaDemo(snapshot: TestQuotaSnapshot, demo: Parameters<typeo
 }
 
 function testCodexQuotaPlugin(
-  readQuota: (options?: { forceAutoStart?: boolean; now?: Date }) => Promise<{
+  readQuota: (options?: { now?: Date }) => Promise<{
     snapshot: TestQuotaSnapshot;
     statusMessage?: string;
     sidecarError?: unknown;
