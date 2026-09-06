@@ -148,6 +148,7 @@ a { color: inherit; }
 .screen-footnote { margin: 20px 0 0; color: var(--muted); font-size: 12px; }
 
 .connection-section { max-width: 1180px; padding: 0 0 30px; border-bottom: 1px solid var(--rule); }
+.connection-actions { display: grid; grid-template-columns: minmax(120px, 180px) minmax(120px, 180px); gap: 12px; max-width: 372px; margin-top: 22px; }
 .section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
 .section-heading p { margin: 9px 0 0; color: var(--muted); font-size: 16px; }
 .connection-badge { white-space: nowrap; padding: 6px 10px; border: 1px solid #c5beb7; border-radius: 999px; color: var(--muted); font-size: 12px; }

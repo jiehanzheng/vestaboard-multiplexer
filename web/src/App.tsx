@@ -248,6 +248,11 @@ export default function App(): ReactNode {
         ) : (
           <ConnectionsScreen
             login={login}
+            dirty={isDirty}
+            layoutError={layoutError}
+            notice={notice}
+            onApply={handleApply}
+            onDiscard={handleDiscard}
             onLogin={(nextLogin) => setStatus((current) => current ? { ...current, login: nextLogin } : current)}
             onNotice={setNotice}
           />
@@ -289,7 +294,11 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
     previewMode, setPreviewMode, preview, previewPending, previewError, draftConfig, updateDraftConfig,
     configResponse, onRefreshElements, onPause, onApply, onDiscard, dirty, layoutError, notice
   } = props;
-  const selectedEntry = draftLayout[selectedRow];
+  const selectedEntryIndex = draftLayout.findIndex((entry) => {
+    const element = elementById(elements, entry.elementId);
+    return element && selectedRow >= entry.startRow && selectedRow < entry.startRow + element.height;
+  });
+  const selectedEntry = selectedEntryIndex >= 0 ? draftLayout[selectedEntryIndex] : undefined;
   const selectedElement = selectedEntry ? elementById(elements, selectedEntry.elementId) : undefined;
   const dimensions = BOARD_DIMENSIONS[board];
   const layoutLocked = isLocked(configResponse?.locked ?? [], ["layout", "elements_config.layout", "elementsConfig.layout"]);
@@ -324,11 +333,11 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
             </div>
             <div className="board-facts">
               {previewPending ? <span>Updating preview…</span> : null}
-              {status?.paused ? <span className="fact-warning">{status.haPause ? "Paused by Home Assistant" : "Paused"}</span> : null}
+              {status?.paused ? <span className="fact-warning">{status.haPause ? (status.manualPause ? "Paused manually + by Home Assistant" : "Paused by Home Assistant") : "Paused manually"}</span> : null}
             </div>
           </div>
           <div className="message-caption">
-            <span>{previewMode === "desired" ? "Desired message" : "Last sent message"}</span>
+            <span>{previewMode === "desired" ? (dirty ? "Draft message" : "Desired message") : "Last sent message"}</span>
             <code>{preview?.text || "No reading yet"}</code>
           </div>
           <RuntimeMessages status={status} />
@@ -350,25 +359,23 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
           />
           <div className="editor-preview-block">
             <div className="subheading-row">
-              <h3>{selectedEntry ? `Row ${selectedRow + 1} preview` : "Row preview"}</h3>
+              <h3>{`Row ${selectedRow + 1} preview`}</h3>
               {selectedElement ? <span className="height-label">{selectedElement.height} row{selectedElement.height === 1 ? "" : "s"}</span> : null}
             </div>
             <MiniPreview element={selectedElement} />
-            {selectedEntry ? (
-              <div className="picker-field">
-                <label htmlFor="element-picker">Choose content</label>
-                <select
-                  id="element-picker"
-                  value={selectedEntry.elementId}
-                  onChange={(event) => setDraftLayout(replaceElement(draftLayout, selectedRow, event.target.value))}
-                  onFocus={() => { void onRefreshElements(); }}
-                  disabled={layoutLocked}
-                >
-                  <option value="">Choose content</option>
-                  {elements.map((element) => <option key={element.id} value={element.id}>{element.label}</option>)}
-                </select>
-              </div>
-            ) : null}
+            <div className="picker-field">
+              <label htmlFor="element-picker">Choose content</label>
+              <select
+                id="element-picker"
+                value={selectedEntry?.elementId ?? ""}
+                onChange={(event) => setDraftLayout(selectElement(draftLayout, selectedEntryIndex, selectedRow, event.target.value, elements))}
+                onFocus={() => { void onRefreshElements(); }}
+                disabled={layoutLocked}
+              >
+                <option value="">Choose content</option>
+                {elements.map((element) => <option key={element.id} value={element.id}>{element.label}</option>)}
+              </select>
+            </div>
           </div>
           <div className="editor-actions">
             <button className="button secondary" onClick={onDiscard} disabled={!dirty}>Discard</button>
@@ -419,16 +426,16 @@ function BoardPreview({ board, message, selectedRow, layout, elements, onSelectR
           const rowLabel = matchingElement ? `Select ${elementLabel(matchingElement)}` : `Select board row ${rowIndex + 1}`;
           return (
             <div
-              className={matchingIndex === selectedRow ? "board-row selected" : "board-row"}
+              className={rowIndex === selectedRow ? "board-row selected" : "board-row"}
               key={`board-row-${rowIndex}`}
               role="button"
               tabIndex={0}
               aria-label={rowLabel}
-              onClick={() => matchingIndex >= 0 && onSelectRow(matchingIndex)}
+              onClick={() => onSelectRow(rowIndex)}
               onKeyDown={(event) => {
-                if ((event.key === "Enter" || event.key === " ") && matchingIndex >= 0) {
+                if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  onSelectRow(matchingIndex);
+                  onSelectRow(rowIndex);
                 }
               }}
             >
@@ -463,10 +470,10 @@ function RowEditor({ board, elements, layout, selectedRow, onSelectRow, onChange
         const element = elementById(elements, entry.elementId);
         const label = elementLabel(element) || `row ${index + 1}`;
         return (
-          <div className={index === selectedRow ? "row-item selected" : "row-item"} key={`${entry.elementId}-${index}`} role="listitem">
-            <button className="row-main" onClick={() => onSelectRow(index)} aria-label={`Edit ${label}`}>
+          <div className={selectedRow >= entry.startRow && selectedRow < entry.startRow + (element?.height ?? 1) ? "row-item selected" : "row-item"} key={`${entry.elementId}-${index}`} role="listitem">
+            <button className="row-main" onClick={() => onSelectRow(entry.startRow)} aria-label={`Edit ${label} at board row ${entry.startRow + 1}`}>
               <span className="row-grip" aria-hidden="true">⠿</span>
-              <span className="row-number">{index + 1}</span>
+              <span className="row-number">{entry.startRow + 1}</span>
               <span className="row-label">{label}</span>
             </button>
             <label className="row-start">
@@ -481,9 +488,9 @@ function RowEditor({ board, elements, layout, selectedRow, onSelectRow, onChange
               />
             </label>
             <div className="row-actions">
-              <button className="icon-button" aria-label={`Move ${label} up`} onClick={() => onChange(moveRow(layout, index, -1))} disabled={locked || index === 0}>↑</button>
-              <button className="icon-button" aria-label={`Move ${label} down`} onClick={() => onChange(moveRow(layout, index, 1))} disabled={locked || index === layout.length - 1}>↓</button>
-              <button className="icon-button danger" aria-label={`Remove ${label}`} onClick={() => { onChange(removeRow(layout, index)); onSelectRow(Math.max(0, Math.min(selectedRow, layout.length - 2))); }} disabled={locked}>×</button>
+              <button className="icon-button" aria-label={`Move ${label} up`} onClick={() => { const next = moveRow(layout, index, -1, maxRows, elements); onChange(next); onSelectRow(next[index]?.startRow ?? entry.startRow); }} disabled={locked || !canMoveRow(layout, index, -1, maxRows, elements)}>↑</button>
+              <button className="icon-button" aria-label={`Move ${label} down`} onClick={() => { const next = moveRow(layout, index, 1, maxRows, elements); onChange(next); onSelectRow(next[index]?.startRow ?? entry.startRow); }} disabled={locked || !canMoveRow(layout, index, 1, maxRows, elements)}>↓</button>
+              <button className="icon-button danger" aria-label={`Remove ${label}`} onClick={() => { onChange(removeRow(layout, index)); onSelectRow(Math.min(entry.startRow, maxRows - 1)); }} disabled={locked}>×</button>
             </div>
           </div>
         );
@@ -577,7 +584,7 @@ function ConfigToggle({ label, checked, locked, onChange }: { label: string; che
 
 function LockMark(): ReactNode { return <span className="lock-mark" title="Managed by environment" aria-label="Managed by environment">⌑</span>; }
 
-function ConnectionsScreen({ login, onLogin, onNotice }: { login: LoginStatus; onLogin: (status: LoginStatus) => void; onNotice: (notice: Notice) => void }): ReactNode {
+function ConnectionsScreen({ login, dirty, layoutError, notice, onApply, onDiscard, onLogin, onNotice }: { login: LoginStatus; dirty: boolean; layoutError: string | undefined; notice: Notice; onApply: () => void; onDiscard: () => void; onLogin: (status: LoginStatus) => void; onNotice: (notice: Notice) => void }): ReactNode {
   const [busy, setBusy] = useState(false);
   const act = async (operation: () => Promise<LoginStatus>, success?: string) => {
     setBusy(true);
@@ -597,7 +604,7 @@ function ConnectionsScreen({ login, onLogin, onNotice }: { login: LoginStatus; o
       <div className="page-heading">
         <div>
           <h1>Connections</h1>
-          <p>Connect Codex once, then reuse its reading in board rows.</p>
+          <p>Connect Codex to reuse its reading in board rows.</p>
         </div>
       </div>
       <section className="connection-section" aria-labelledby="codex-heading">
@@ -615,6 +622,12 @@ function ConnectionsScreen({ login, onLogin, onNotice }: { login: LoginStatus; o
         </div>
         {login.error ? <p className="inline-message error" role="alert">{login.error}</p> : null}
       </section>
+      <div className="connection-actions">
+        <button className="button secondary" type="button" onClick={onDiscard} disabled={!dirty}>Discard</button>
+        <button className="button primary" type="button" onClick={onApply} disabled={!dirty || Boolean(layoutError)}>Apply</button>
+      </div>
+      {layoutError ? <p className="inline-message error" role="alert">{layoutError} Fix the board layout before applying these settings.</p> : null}
+      {notice ? <p className={`inline-message ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.message}</p> : null}
       <section className="connection-note" aria-label="More connections">
         <span className="note-mark" aria-hidden="true">↗</span>
         <div><h2>Board credentials</h2><p>Transport and environment-managed board credentials are available from Board settings.</p></div>
@@ -627,20 +640,64 @@ function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => voi
   return <main className="error-screen"><span className="error-mark" aria-hidden="true">!</span><h1>vbmux could not load</h1><p>{message}</p><button className="button primary" onClick={onRetry}>Try again</button></main>;
 }
 
-function replaceElement(layout: LayoutEntry[], index: number, elementId: string): LayoutEntry[] {
-  return layout.map((entry, entryIndex) => entryIndex === index ? { ...entry, elementId } : entry);
+function selectElement(layout: LayoutEntry[], index: number, startRow: number, elementId: string, elements: BoardElement[]): LayoutEntry[] {
+  if (!elementId || !elementById(elements, elementId)) return layout;
+  if (index >= 0) return layout.map((entry, entryIndex) => entryIndex === index ? { ...entry, elementId } : entry);
+  const nextEntry = { elementId, startRow };
+  const insertAt = layout.findIndex((entry) => entry.startRow > startRow);
+  if (insertAt < 0) return [...layout, nextEntry];
+  return [...layout.slice(0, insertAt), nextEntry, ...layout.slice(insertAt)];
 }
 
 function setStartRow(layout: LayoutEntry[], index: number, startRow: number): LayoutEntry[] {
   return layout.map((entry, entryIndex) => entryIndex === index ? { ...entry, startRow: Number.isFinite(startRow) ? startRow : 0 } : entry);
 }
 
-function moveRow(layout: LayoutEntry[], index: number, direction: -1 | 1): LayoutEntry[] {
-  const target = index + direction;
-  if (target < 0 || target >= layout.length) return layout;
-  const next = [...layout];
-  [next[index], next[target]] = [next[target], next[index]];
+function moveRow(layout: LayoutEntry[], index: number, direction: -1 | 1, maxRows: number, elements: BoardElement[]): LayoutEntry[] {
+  if (!canMoveRow(layout, index, direction, maxRows, elements)) return layout;
+  const entry = layout[index];
+  const height = elementById(elements, entry.elementId)?.height ?? 1;
+  const targetStart = entry.startRow + direction;
+  const collisionIndex = layout.findIndex((other, otherIndex) => otherIndex !== index && rangesOverlap(
+    targetStart, targetStart + height, other.startRow, other.startRow + (elementById(elements, other.elementId)?.height ?? 1)
+  ));
+  const next = layout.map((item) => ({ ...item }));
+  if (collisionIndex < 0) {
+    next[index].startRow = targetStart;
+    return next;
+  }
+  const other = layout[collisionIndex];
+  const otherHeight = elementById(elements, other.elementId)?.height ?? 1;
+  if (direction < 0) {
+    next[index].startRow = other.startRow;
+    next[collisionIndex].startRow = other.startRow + height;
+  } else {
+    next[index].startRow = entry.startRow + otherHeight;
+    next[collisionIndex].startRow = entry.startRow;
+  }
   return next;
+}
+
+function canMoveRow(layout: LayoutEntry[], index: number, direction: -1 | 1, maxRows: number, elements: BoardElement[]): boolean {
+  const entry = layout[index];
+  if (!entry) return false;
+  const height = elementById(elements, entry.elementId)?.height ?? 1;
+  const targetStart = entry.startRow + direction;
+  if (targetStart < 0 || targetStart + height > maxRows) return false;
+  const collisionIndex = layout.findIndex((other, otherIndex) => otherIndex !== index && rangesOverlap(
+    targetStart, targetStart + height, other.startRow, other.startRow + (elementById(elements, other.elementId)?.height ?? 1)
+  ));
+  if (collisionIndex < 0) return true;
+  const other = layout[collisionIndex];
+  const otherHeight = elementById(elements, other.elementId)?.height ?? 1;
+  const swappedEntryStart = direction < 0 ? other.startRow : entry.startRow + otherHeight;
+  const swappedOtherStart = direction < 0 ? other.startRow + height : entry.startRow;
+  return swappedEntryStart >= 0 && swappedEntryStart + height <= maxRows
+    && swappedOtherStart >= 0 && swappedOtherStart + otherHeight <= maxRows;
+}
+
+function rangesOverlap(startA: number, endA: number, startB: number, endB: number): boolean {
+  return startA < endB && startB < endA;
 }
 
 function removeRow(layout: LayoutEntry[], index: number): LayoutEntry[] {
