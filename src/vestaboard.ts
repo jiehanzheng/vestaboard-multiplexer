@@ -107,6 +107,7 @@ export async function detectVestaboardBoard({
   logger?: Pick<Console, "info">;
 }): Promise<VestaboardBoard | undefined> {
   const response = await fetchImpl(cloudUrl, {
+    signal: AbortSignal.timeout(30_000),
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -136,6 +137,7 @@ export async function detectLocalVestaboardBoard({
   logger?: Pick<Console, "info">;
 }): Promise<VestaboardBoard | undefined> {
   const response = await fetchImpl(localUrl, {
+    signal: AbortSignal.timeout(30_000),
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -273,6 +275,7 @@ async function post(
   { headers, body }: { headers: Record<string, string>; body: unknown }
 ): Promise<void> {
   const response = await fetchImpl(url, {
+    signal: AbortSignal.timeout(30_000),
     method: "POST",
     headers: {
       "Content-Type": "application/json",

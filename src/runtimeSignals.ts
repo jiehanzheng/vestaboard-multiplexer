@@ -4,9 +4,11 @@ export type RuntimeSignalAction = "refresh-now" | CodexQuotaDemoMode;
 
 export class RuntimeSignalController {
   private demoPending = false;
+  private demoWakePending = false;
   private refreshPending = false;
   private demoState: CodexQuotaDemoState = { pctDrops: 0 };
   private pauseAfterDemoRun = false;
+  private refreshWakePending = false;
   private wake: (() => void) | undefined;
   private readonly handlers = new Map<NodeJS.Signals, NodeJS.SignalsListener>();
 
@@ -46,6 +48,7 @@ export class RuntimeSignalController {
     }
 
     this.demoPending = false;
+    this.demoWakePending = false;
     this.pauseAfterDemoRun = true;
     return { ...this.demoState };
   }
@@ -53,6 +56,7 @@ export class RuntimeSignalController {
   restoreDemo(demoState: CodexQuotaDemoState): void {
     this.demoState.pctDrops = Math.max(this.demoState.pctDrops, demoState.pctDrops);
     this.demoPending = true;
+    this.demoWakePending = false;
     this.pauseAfterDemoRun = true;
   }
 
@@ -60,6 +64,18 @@ export class RuntimeSignalController {
     const pause = this.pauseAfterDemoRun;
     this.pauseAfterDemoRun = false;
     return pause;
+  }
+
+  /** Wakes a runtime that is waiting for its next scheduled write. */
+  wakeNow(): void {
+    this.wake?.();
+  }
+
+  takeRefreshRequest(): boolean {
+    const requested = this.refreshPending || this.refreshWakePending;
+    this.refreshPending = false;
+    this.refreshWakePending = false;
+    return requested;
   }
 
   sleep(ms: number): Promise<void> {
@@ -82,7 +98,15 @@ export class RuntimeSignalController {
   }
 
   private takeWakeRequest(): boolean {
-    const requested = this.demoPending || this.refreshPending;
+    const demoRequested = this.demoPending && !this.demoWakePending;
+    const requested = demoRequested || this.refreshPending;
+    if (this.demoPending) {
+      this.demoWakePending = true;
+    }
+    if (this.refreshPending) {
+      this.refreshWakePending = true;
+      this.refreshPending = false;
+    }
     // Refresh requests coalesce into the next full tick. Demo state remains pending until the Codex widget takes it.
     this.refreshPending = false;
     return requested;

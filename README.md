@@ -1,6 +1,6 @@
 # [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT) Orchestrator
 
-A small TypeScript service for [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT), a connected split-flap-style display for showing short messages, status, and ambient information, that polls local plugins, picks the highest-priority message, and sends it to the board (referral link).
+A small TypeScript service for [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT), a connected split-flap-style display for showing short messages, status, and ambient information, that collects plugin data independently and sends the latest message to the board at a limited rate (referral link).
 
 ![Codex quota pacing hidden on a Vestaboard compose screen](docs/images/codex-pacing-off.png)
 
@@ -28,7 +28,8 @@ Core environment variables configure the orchestrator and Vestaboard transport. 
 
 | Variable | Description |
 | --- | --- |
-| `ORCHESTRATOR_INTERVAL_MINUTES` | How often the orchestrator polls plugins.<br><br>Default: `5` |
+| `ORCHESTRATOR_INTERVAL_MINUTES` | Minimum time between normal board write attempts. Failed attempts also count.<br><br>Default: `5` |
+| `CODEX_QUOTA_POLL_INTERVAL_SECONDS` | How often Codex collects fresh quota, independently of board writes.<br><br>Default: `60` |
 | `VESTABOARD_TOKEN` | Vestaboard Cloud Read/Write API token.<br><br>Default: **You MUST set either this or VESTABOARD_LOCAL_API_KEY** |
 | `VESTABOARD_CLOUD_URL` | Vestaboard Cloud API endpoint.<br><br>Default: `https://cloud.vestaboard.com/` |
 | `VESTABOARD_LOCAL_API_KEY` | Local API key. If set, this is preferred over the cloud API.<br><br>Default: **You MUST set either this or VESTABOARD_TOKEN** |
@@ -38,7 +39,7 @@ Core environment variables configure the orchestrator and Vestaboard transport. 
 | `VESTABOARD_LOCAL_MESSAGE_STEP_SIZE` | Local API transition step size. Invalid, non-finite, or non-positive values log an error, use the default, and show `check logs` on the startup message.<br><br>Default: `1` |
 | `VESTABOARD_BOARD` | Board renderer: `auto`, `note`, or `flagship`. In `auto`, the orchestrator reads the current message layout through the configured Vestaboard API and detects Note (`3x15`) or Flagship (`6x22`). If detection cannot determine the board type, it assumes Note for that tick and retries on the next tick.<br><br>Default: `auto` |
 
-On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` banner with the current `yyyymmdd hhmm` timestamp and enabled plugin slugs, then waits 60 seconds before polling. The loop is serial: it runs one plugin pass, sends the selected message, waits `ORCHESTRATOR_INTERVAL_MINUTES`, then starts the next pass. If the winning message is unchanged from the last successful send, the orchestrator skips the Vestaboard API call.
+On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` banner with the current `yyyymmdd hhmm` timestamp and enabled plugin slugs. The banner displays for 30 seconds outside the normal write limit, then the latest data is sent. Codex collection continues independently of board writes. Changes coalesce into the newest message; unchanged messages are skipped. Normal attempts, including failed attempts, are separated by `ORCHESTRATOR_INTERVAL_MINUTES`.
 
 ## Plugins
 
@@ -73,7 +74,7 @@ If Codex is temporarily unavailable after a successful read, the plugin can reus
 
 The app-server quota source needs a Codex login in the directory Docker mounts into the container.
 
-Codex-managed ChatGPT authentication persists and normally refreshes its tokens automatically. If a quota read still returns `401 Unauthorized` or `token_expired`, the orchestrator asks the same app-server process to refresh the managed token and retries the quota read once. If that recovery also fails, cached quota remains visible when available, the board shows `AUTH EXPIRED`, and logs report only safe credential-file metadata plus the recovery command. The regular polling interval does not change.
+Codex-managed ChatGPT authentication persists and normally refreshes its tokens automatically. If a quota read still returns `401 Unauthorized` or `token_expired`, the orchestrator asks the same app-server process to refresh the managed token and retries the quota read once. If that recovery also fails, cached quota remains visible when available, the board shows `AUTH EXPIRED`, and logs report only safe credential-file metadata plus the recovery command. The regular collection interval does not change.
 
 There are two common cases:
 
@@ -120,4 +121,4 @@ kill -HUP <pid>   # refresh all widgets immediately
 kill -USR2 <pid>  # subtract one percentage point from the first displayed quota
 ```
 
-`SIGHUP` wakes the orchestrator during its startup, normal polling, or demo pause and coalesces repeated refresh requests into the next full tick. `SIGUSR2` demo drops are cumulative for the running process: two signals render a two-point drop from whichever quota is displayed first. Only demo renders use `CODEX_QUOTA_DEMO_PAUSE_MINUTES`.
+`SIGHUP` requests fresh quota, coalescing repeated requests. `SIGUSR2` demo drops are cumulative for the running process: two signals render a two-point drop from whichever quota is displayed first. The demo remains visible for `CODEX_QUOTA_DEMO_PAUSE_MINUTES` while collection continues. Both signals respect the board write limit.

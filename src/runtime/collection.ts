@@ -1,0 +1,125 @@
+export interface CollectionStatus {
+  running: boolean;
+  intervalMs: number;
+  lastStartedAt?: Date;
+  lastCompletedAt?: Date;
+  lastFailure?: unknown;
+  collectionCount: number;
+  failureCount: number;
+}
+
+export interface CollectionControllerOptions {
+  intervalMs: number;
+  collect: () => Promise<void>;
+  now?: () => Date;
+  sleep?: (ms: number) => Promise<void>;
+  onCollected?: () => Promise<void> | void;
+  logger?: Pick<Console, "warn">;
+}
+
+/** Runs quota collection independently of presentation and delivery cadence. */
+export class CollectionController {
+  private readonly now: () => Date;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly logger: Pick<Console, "warn">;
+  private running = false;
+  private stopRequested = false;
+  private wake: (() => void) | undefined;
+  private loopPromise: Promise<void> | undefined;
+  private lastStartedAt: Date | undefined;
+  private lastCompletedAt: Date | undefined;
+  private lastFailure: unknown;
+  private collectionCount = 0;
+  private failureCount = 0;
+
+  constructor(private readonly options: CollectionControllerOptions) {
+    if (!Number.isFinite(options.intervalMs) || options.intervalMs <= 0) {
+      throw new Error("Collection interval must be a positive number.");
+    }
+    this.now = options.now ?? (() => new Date());
+    this.sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    this.logger = options.logger ?? console;
+  }
+
+  start(): Promise<void> {
+    if (this.loopPromise) return this.loopPromise;
+    this.running = true;
+    this.stopRequested = false;
+    this.loopPromise = this.loop().finally(() => {
+      this.running = false;
+      this.loopPromise = undefined;
+    });
+    return this.loopPromise;
+  }
+
+  async stop(): Promise<void> {
+    this.stopRequested = true;
+    this.running = false;
+    this.wake?.();
+    await this.loopPromise;
+  }
+
+  requestNow(): void {
+    this.wake?.();
+  }
+
+  setInterval(intervalMs: number): void {
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+      throw new Error("Collection interval must be a positive number.");
+    }
+    this.options.intervalMs = intervalMs;
+    this.requestNow();
+  }
+
+  status(): CollectionStatus {
+    return {
+      running: this.running,
+      intervalMs: this.options.intervalMs,
+      lastStartedAt: this.lastStartedAt ? new Date(this.lastStartedAt) : undefined,
+      lastCompletedAt: this.lastCompletedAt ? new Date(this.lastCompletedAt) : undefined,
+      lastFailure: this.lastFailure,
+      collectionCount: this.collectionCount,
+      failureCount: this.failureCount
+    };
+  }
+
+  private async loop(): Promise<void> {
+    while (!this.stopRequested) {
+      this.lastStartedAt = new Date(this.now());
+      try {
+        await this.options.collect();
+        this.lastFailure = undefined;
+        this.collectionCount += 1;
+        this.lastCompletedAt = new Date(this.now());
+      } catch (error) {
+        this.lastFailure = error;
+        this.failureCount += 1;
+        this.logger.warn("Quota collection failed.", error);
+      }
+
+      try {
+        await this.options.onCollected?.();
+      } catch (error) {
+        this.logger.warn("Collection frame refresh failed.", error);
+      }
+
+      if (!this.stopRequested) {
+        await this.sleepUntilNextCollection();
+      }
+    }
+  }
+
+  private async sleepUntilNextCollection(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const done = (): void => {
+        if (settled) return;
+        settled = true;
+        if (this.wake === done) this.wake = undefined;
+        resolve();
+      };
+      this.wake = done;
+      void this.sleep(this.options.intervalMs).then(done, done);
+    });
+  }
+}
