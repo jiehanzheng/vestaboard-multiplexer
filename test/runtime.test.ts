@@ -111,6 +111,7 @@ test("startup bypasses the normal limiter and holds the next attempt only after 
   delivery.updateFrame(message("quota"));
   assert.equal((await delivery.attempt()).outcome, "limited");
   nowMs = 30_000;
+  assert.equal(delivery.status().nextAttemptAt, undefined);
   assert.equal((await delivery.attempt()).outcome, "sent");
   assert.equal(sends, 3);
 });

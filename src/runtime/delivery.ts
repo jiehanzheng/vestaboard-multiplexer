@@ -34,7 +34,6 @@ export class DeliveryController {
   private readonly now: () => Date;
   private readonly logger: Pick<Console, "info" | "warn">;
   private frame: VestaboardMessage | undefined;
-  private nextAttemptAt: Date | undefined;
   private lastAttemptAt: Date | undefined;
   private lastNormalAttemptAt: Date | undefined;
   private lastSuccessfulAt: Date | undefined;
@@ -67,7 +66,6 @@ export class DeliveryController {
   setInterval(intervalMs: number): void {
     validateInterval(intervalMs, "Delivery");
     this.options.intervalMs = intervalMs;
-    this.refreshNextAttemptAt();
     this.notifyStatus();
     this.requestNow();
   }
@@ -162,11 +160,8 @@ export class DeliveryController {
     const now = this.now();
     const eligibleAt = this.nextEligibleAt();
     if (eligibleAt && now.getTime() < eligibleAt.getTime()) {
-      this.nextAttemptAt = eligibleAt;
       return this.finish("limited");
     }
-
-    this.nextAttemptAt = undefined;
 
     if (!this.frame) return this.finish("empty");
 
@@ -178,7 +173,6 @@ export class DeliveryController {
 
     this.lastAttemptAt = new Date(now);
     this.lastNormalAttemptAt = new Date(now);
-    this.nextAttemptAt = new Date(now.getTime() + this.options.intervalMs);
 
     try {
       await this.options.send(message);
@@ -220,7 +214,6 @@ export class DeliveryController {
       this.lastAttemptAt = new Date(now);
       this.lastSuccessfulAt = new Date(now);
       this.startupHoldUntil = new Date(now.getTime() + holdAfterSuccessMs);
-      this.refreshNextAttemptAt();
       this.logger.info("Sent Vestaboard startup message.");
       return this.finish("sent");
     } catch (error) {
@@ -230,12 +223,14 @@ export class DeliveryController {
   }
 
   status(): DeliveryStatus {
+    const nextEligibleAt = this.nextEligibleAt();
+    const now = this.now().getTime();
     return {
       running: this.running,
       paused: this.paused,
       pauseReason: this.pauseReason,
       intervalMs: this.options.intervalMs,
-      nextAttemptAt: this.nextAttemptAt ? new Date(this.nextAttemptAt) : undefined,
+      nextAttemptAt: nextEligibleAt && nextEligibleAt.getTime() > now ? nextEligibleAt : undefined,
       lastAttemptAt: this.lastAttemptAt ? new Date(this.lastAttemptAt) : undefined,
       lastSuccessfulAt: this.lastSuccessfulAt ? new Date(this.lastSuccessfulAt) : undefined,
       lastOutcome: this.lastOutcome,
@@ -259,7 +254,7 @@ export class DeliveryController {
     while (this.running) {
       const attempt = await this.attempt();
       if (!this.running) break;
-      const next = this.nextAttemptAt?.getTime();
+      const next = this.nextEligibleAt()?.getTime();
       const now = this.now().getTime();
       // Paused, empty and unchanged frames wait for a real change. In
       // particular an expired deadline while paused must not create a busy loop.
@@ -278,10 +273,6 @@ export class DeliveryController {
     const candidates = [normal, startup].filter((value): value is number => value !== undefined);
     if (candidates.length === 0) return undefined;
     return new Date(Math.max(...candidates));
-  }
-
-  private refreshNextAttemptAt(): void {
-    this.nextAttemptAt = this.nextEligibleAt();
   }
 
   private async waitForScheduler(delayMs: number | undefined): Promise<void> {
