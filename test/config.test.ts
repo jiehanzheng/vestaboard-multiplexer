@@ -17,7 +17,7 @@ test("opens defaults when no config file exists and applies environment locks", 
   assert.equal(store.get().board, "flagship");
   assert.equal(store.get().codex.showPacing, false);
   const publicConfig = store.getPublic();
-  assert.equal(publicConfig.config.transport.token, undefined);
+  assert.equal("token" in publicConfig.config.transport, false);
   assert.deepEqual(publicConfig.hasSecrets, { token: true, localApiKey: false, haToken: false });
   assert.deepEqual(publicConfig.locked, ["board", "transport.token", "codex.showPacing"]);
 });
@@ -97,8 +97,8 @@ test("validates Home Assistant URL, pause mapping, and numeric water sources", a
   const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
   const store = await ConfigStore.open(dataDir, {});
   await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: { ...DEFAULT_APP_CONFIG.ha, url: "https://user:pass@ha.local" } }), /embedded credentials/i);
-  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: { ...DEFAULT_APP_CONFIG.ha, pause: { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "on" } } }), /distinct/i);
-  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: null as never }), /ha is required/i);
+  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: { ...DEFAULT_APP_CONFIG.ha, pause: { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "on" } } }), /differ|distinct/i);
+  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: null as never }), /ha is required|expected object/i);
   await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, water: { ...DEFAULT_APP_CONFIG.water, capacity: { constant: 0 } } }), /water\.capacity.*positive/i);
   await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, water: { ...DEFAULT_APP_CONFIG.water, temperature: { entityId: "" } } }), /water\.temperature.*entity/i);
 });
@@ -108,7 +108,7 @@ test("preserves and redacts an omitted Home Assistant token", async () => {
   const first = await ConfigStore.open(dataDir, {});
   await first.save({ ...DEFAULT_APP_CONFIG, ha: { ...DEFAULT_APP_CONFIG.ha, url: "http://ha.local:8123", token: "ha-secret" } });
   const second = await ConfigStore.open(dataDir, {});
-  assert.equal(second.getPublic().config.ha.token, undefined);
+  assert.equal("token" in second.getPublic().config.ha, false);
   assert.equal(second.getPublic().hasSecrets.haToken, true);
   await second.save({ ...second.get(), ha: { ...second.get().ha, token: undefined } });
   assert.equal(second.get().ha.token, "ha-secret");

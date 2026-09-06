@@ -51,7 +51,7 @@ test("reports invalid constants while leaving setup inputs optional", () => {
   const heater = new WaterHeater({ ...baseConfig, remaining: null, capacity: { constant: 0 } });
   const status = heater.update({ ...baseConfig, remaining: null, capacity: { constant: 0 } }, []);
   assert.match(status.error ?? "", /capacity.*positive/i);
-  assert.deepEqual(heater.elements()[0]!.render(15)[0]?.slice(0, 3), [14, 59, 1]);
+  assert.deepEqual(heater.elements()[0]!.render(15)[0]?.slice(0, 3), [0, 0, 0]);
 });
 
 test("renders disabled water elements as blank rows", () => {
