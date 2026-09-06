@@ -47,15 +47,15 @@ export function createCodexElements(
 
 export function defaultCodexLayout(board: "note" | "flagship"): LayoutEntry[] {
   return board === "note"
-    ? [
-        { elementId: CODEX_WINDOW_1_ID, startRow: 0 },
-        { elementId: CODEX_WINDOW_2_ID, startRow: 1 },
+      ? [
+        { elementId: CODEX_WINDOW_2_ID, startRow: 0 },
+        { elementId: CODEX_WINDOW_1_ID, startRow: 1 },
         { elementId: CODEX_STATUS_ID, startRow: 2 }
       ]
     : [
         { elementId: CODEX_HEADER_ID, startRow: 0 },
-        { elementId: CODEX_WINDOW_1_LARGE_ID, startRow: 1 },
-        { elementId: CODEX_WINDOW_2_LARGE_ID, startRow: 3 },
+        { elementId: CODEX_WINDOW_2_LARGE_ID, startRow: 1 },
+        { elementId: CODEX_WINDOW_1_LARGE_ID, startRow: 3 },
         { elementId: CODEX_STATUS_ID, startRow: 5 }
       ];
 }
@@ -70,8 +70,8 @@ function createCompactWindow(id: string, index: number, getDisplayState: () => C
         if (width >= 22) {
           return [compactWindowRow(state, index, width, now)];
         }
-        const message = formatForWidth(state, width, now);
-        return [fitRow(message.characters?.[index] ?? [], width)];
+        const message = formatForWindow(state, index, width, now);
+        return [fitRow(message?.characters?.[0] ?? [], width)];
       }
   };
 }
@@ -84,11 +84,10 @@ function createLargeWindow(id: string, index: number, getDisplayState: () => Cod
       render: (width) => {
         const state = getDisplayState();
         if (width >= 22) {
-        const message = formatForWidth(state, width, now);
-        const start = index === 0 ? 1 : 3;
+        const message = formatForWindow(state, index, width, now);
         return [
-          fitRow(message.characters?.[start] ?? [], width),
-          fitRow(message.characters?.[start + 1] ?? [], width)
+          fitRow(message?.characters?.[1] ?? [], width),
+          fitRow(message?.characters?.[2] ?? [], width)
         ];
       }
 
@@ -98,7 +97,7 @@ function createLargeWindow(id: string, index: number, getDisplayState: () => Cod
 }
 
 function compactWindowRow(state: CodexQuotaDisplayState, index: number, width: number, now: () => Date): number[] {
-  const window = state.snapshot?.windows[index];
+  const window = rankedWindows(state.snapshot)[index];
   if (!window) return blankRow(width);
   const barWidth = width - 5;
   const bar = quotaBar(
@@ -116,7 +115,7 @@ function compactWindowRow(state: CodexQuotaDisplayState, index: number, width: n
 }
 
 function largeCompactRows(state: CodexQuotaDisplayState, index: number, width: number, now: () => Date): number[][] {
-  const window = state.snapshot?.windows[index];
+  const window = rankedWindows(state.snapshot)[index];
   if (!window) return [blankRow(width), blankRow(width)];
   const firstRow = [
     ...encode(quotaWindowLabel(window, index)),
@@ -144,6 +143,41 @@ function formatForWidth(state: CodexQuotaDisplayState, width: number, now: () =>
     showPacing: state.showPacing,
     resetVisibility: state.resetVisibility
   });
+}
+
+function formatForWindow(state: CodexQuotaDisplayState, index: number, width: number, now: () => Date) {
+  const window = rankedWindows(state.snapshot)[index];
+  return window
+    ? formatQuota({ windows: [window] }, {
+        board: width >= 22 ? "flagship" : "note",
+        timeZone: state.timeZone,
+        now: now(),
+        statusMessage: state.statusMessage,
+        staleWindowIds: state.staleWindowIds,
+        showPacing: state.showPacing,
+        resetVisibility: state.resetVisibility
+      })
+    : undefined;
+}
+
+function rankedWindows(snapshot: CodexQuotaDisplayState["snapshot"]): NonNullable<CodexQuotaDisplayState["snapshot"]>["windows"] {
+  return [...(snapshot?.windows ?? [])]
+    .map((window, index) => ({ window, index }))
+    .sort((left, right) => {
+      const leftKnown = knownDuration(left.window.durationMins);
+      const rightKnown = knownDuration(right.window.durationMins);
+      if (leftKnown === undefined && rightKnown === undefined) return left.index - right.index;
+      if (leftKnown === undefined) return 1;
+      if (rightKnown === undefined) return -1;
+      return rightKnown - leftKnown || left.index - right.index;
+    })
+    .map(({ window }) => window);
+}
+
+function knownDuration(durationMins: number | undefined): number | undefined {
+  return durationMins !== undefined && Number.isFinite(durationMins) && durationMins > 0
+    ? durationMins
+    : undefined;
 }
 
 function noteMessage(state: CodexQuotaDisplayState, now: () => Date = () => new Date()) {

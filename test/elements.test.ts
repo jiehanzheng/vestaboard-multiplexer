@@ -6,7 +6,9 @@ import {
   CODEX_STATUS_ID,
   CODEX_WINDOW_1_ID,
   CODEX_WINDOW_1_LARGE_ID,
+  CODEX_WINDOW_2_ID,
   createCodexElements,
+  defaultCodexLayout,
   type CodexQuotaDisplayState
 } from "../src/plugins/codexQuota/elements.js";
 
@@ -59,4 +61,26 @@ test("Codex element IDs include compact and large window variants", () => {
   assert.equal(large.render(15).length, 2);
   assert.equal(large.render(22)[0]?.length, 22);
   assert.equal(status.render(15)[0]?.length, 15);
+});
+
+test("ranks Codex element windows by longest duration without mutating the snapshot", () => {
+  const snapshot = {
+    windows: [
+      { id: "short", remainingRatio: 0.8, durationMins: 300 },
+      { id: "long", remainingRatio: 0.6, durationMins: 10_080 }
+    ]
+  };
+  const state: CodexQuotaDisplayState = {
+    snapshot,
+    staleWindowIds: [],
+    resetVisibility: {},
+    showPacing: false
+  };
+  const elements = createCodexElements(() => state);
+  const longest = elements.find(({ id }) => id === CODEX_WINDOW_1_ID)!;
+  const shorter = elements.find(({ id }) => id === CODEX_WINDOW_2_ID)!;
+  assert.deepEqual(longest.render(15)[0]?.slice(0, 2), [23, 11]);
+  assert.deepEqual(shorter.render(15)[0]?.slice(0, 2), [31, 8]);
+  assert.deepEqual(snapshot.windows.map(({ id }) => id), ["short", "long"]);
+  assert.deepEqual(defaultCodexLayout("note").map(({ elementId }) => elementId), [CODEX_WINDOW_2_ID, CODEX_WINDOW_1_ID, CODEX_STATUS_ID]);
 });

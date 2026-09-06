@@ -131,7 +131,12 @@ export class ConfigStore {
    * the corresponding secret.
    */
   async save(input: AppConfig): Promise<AppConfig> {
-    const candidate = mergeConfig(this.saved ?? DEFAULT_APP_CONFIG, input);
+    const savedBase = this.saved ?? DEFAULT_APP_CONFIG;
+    const candidate = mergeConfig(savedBase, input);
+    const locked = applyEnvironment(cloneConfig(savedBase), this.env).locked;
+    for (const path of locked) {
+      setConfigPath(candidate, path, getConfigPath(savedBase, path));
+    }
     const validated = validateConfig(candidate);
     await mkdir(dirname(this.filePath), { recursive: true });
     const temporaryPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -259,6 +264,25 @@ function cloneConfig(config: AppConfig): AppConfig {
     codex: { ...config.codex },
     layout: config.layout ? config.layout.map((entry) => ({ ...entry })) : null
   };
+}
+
+function getConfigPath(config: AppConfig, path: string): unknown {
+  return path.split(".").reduce<unknown>((value, segment) => (
+    value && typeof value === "object" ? (value as Record<string, unknown>)[segment] : undefined
+  ), config);
+}
+
+function setConfigPath(config: AppConfig, path: string, value: unknown): void {
+  const segments = path.split(".");
+  const leaf = segments.pop();
+  if (!leaf) return;
+  let target: Record<string, unknown> = config as unknown as Record<string, unknown>;
+  for (const segment of segments) {
+    const next = target[segment];
+    if (!next || typeof next !== "object" || Array.isArray(next)) return;
+    target = next as Record<string, unknown>;
+  }
+  target[leaf] = value;
 }
 
 function validateConfig(config: AppConfig): AppConfig {

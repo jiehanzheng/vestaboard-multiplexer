@@ -36,6 +36,20 @@ test("save persists versioned JSON, preserves omitted secrets, and allows explic
   assert.equal(second.get().transport.token, "");
 });
 
+test("does not persist environment overrides when saving effective UI values", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
+  const initial = await ConfigStore.open(dataDir, {});
+  await initial.save({ ...DEFAULT_APP_CONFIG, updateIntervalMinutes: 5 });
+
+  const locked = await ConfigStore.open(dataDir, { ORCHESTRATOR_INTERVAL_MINUTES: "10" });
+  assert.equal(locked.get().updateIntervalMinutes, 10);
+  await locked.save({ ...locked.get(), layout: [] });
+
+  const reopened = await ConfigStore.open(dataDir, {});
+  assert.equal(reopened.get().updateIntervalMinutes, 5);
+  assert.deepEqual(reopened.get().layout, []);
+});
+
 test("invalid saved config is reported without overwriting it", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
   const filePath = join(dataDir, "config.json");
