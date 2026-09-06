@@ -57,7 +57,7 @@ export class CollectionController {
     await this.loopPromise;
   }
 
-  requestNow(): void {
+  private wakeNow(): void {
     this.wake?.();
   }
 
@@ -66,7 +66,7 @@ export class CollectionController {
       throw new Error("Collection interval must be a positive number.");
     }
     this.options.intervalMs = intervalMs;
-    this.requestNow();
+    this.wakeNow();
   }
 
   status(): CollectionStatus {

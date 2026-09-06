@@ -1,6 +1,7 @@
 import { CollectionController } from "../../runtime/collection.js";
 import type { Element } from "../../elements.js";
 import { formatError } from "./display/index.js";
+import { CodexLogin } from "./login.js";
 import {
   autoStartErrorStatus,
   errorStatus,
@@ -28,6 +29,7 @@ export class CodexQuotaPlugin {
   private collectionFailure: unknown;
   private lastCollectedAt: Date | undefined;
   private collectTask: Promise<void> | undefined;
+  private readonly login: CodexLogin;
   private collection?: CollectionController;
 
   constructor(
@@ -37,6 +39,7 @@ export class CodexQuotaPlugin {
       showPacing?: boolean;
       statusMessage?: () => string | undefined;
       logger?: Logger;
+      changed?: () => void;
       now?: () => Date;
       quotaWindowHistory?: QuotaWindowHistory;
       fixture?: boolean;
@@ -44,6 +47,7 @@ export class CodexQuotaPlugin {
   ) {
     this.quotaWindowHistory = options.quotaWindowHistory ?? new QuotaWindowHistory();
     this.sourceFixture = options.fixture;
+    this.login = new CodexLogin(options.changed ?? (() => {}));
   }
 
   configure(options: {
@@ -98,8 +102,6 @@ export class CodexQuotaPlugin {
     return this.collection?.stop() ?? Promise.resolve();
   }
 
-  requestPoll(): void { this.collection?.requestNow(); }
-
   setPollInterval(intervalMs: number): void {
     if (!this.collection) return;
     this.collection.setInterval(intervalMs);
@@ -117,8 +119,16 @@ export class CodexQuotaPlugin {
     return this.lastCollectedAt ? new Date(this.lastCollectedAt) : undefined;
   }
 
+  loginStatus() { return this.login.status(); }
+
+  loginAction(action: "start" | "cancel" | "check"): Promise<void> | void {
+    if (action === "start") return this.login.start();
+    if (action === "cancel") return this.login.cancel();
+    return this.login.check();
+  }
+
   async stop(): Promise<void> {
-    await Promise.all([this.stopPolling(), this.collectTask]);
+    await Promise.all([this.stopPolling(), this.login.stop(), this.collectTask]);
   }
 
   async collect(): Promise<void> {
@@ -224,6 +234,7 @@ export function createCodexQuotaPlugin({
   autoStartWindowWk = false,
   statusMessage,
     logger = console,
+  changed,
     now,
   readQuota
 }: CodexQuotaPluginOptions & {
@@ -243,6 +254,7 @@ export function createCodexQuotaPlugin({
     showPacing,
     statusMessage,
     logger,
+    changed,
     now,
     quotaWindowHistory,
     fixture

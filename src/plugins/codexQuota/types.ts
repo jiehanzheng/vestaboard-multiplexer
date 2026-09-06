@@ -30,4 +30,5 @@ export interface CodexQuotaPluginOptions {
   autoStartWindowWk?: boolean;
   showPacing?: boolean;
   statusMessage?: () => string | undefined;
+  changed?: () => void;
 }

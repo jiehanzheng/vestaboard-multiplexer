@@ -45,6 +45,7 @@ The Home Assistant runtime foundation is present while the existing daemon remai
 The water heater plugin foundation is present for later runtime wiring and remains disabled by default.
 
 Its remaining element uses an `HW` label, a blue capacity bar, and a rounded gallons suffix sized to the board width; unavailable readings continue to show `N/A`. Temperature text rounds current and target values to whole degrees.
+The new application engine is included for compilation and testing, while the existing daemon remains the default until the UI cutover.
 
 The optional `water.emv-position` element reads `emvPosition` and renders a rounded `MV` value from Home Assistant; unavailable values show `MV N/A`, and values that exceed the allocated width show question marks.
 
