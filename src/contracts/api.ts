@@ -23,7 +23,11 @@ export const BoardElementSchema = z.object({
 
 export const ElementsResponseSchema = z.object({
   elements: z.array(BoardElementSchema),
-  defaultLayout: z.array(LayoutEntrySchema).optional()
+  defaultLayout: z.array(LayoutEntrySchema).optional(),
+  defaultLayouts: z.object({
+    note: z.array(LayoutEntrySchema),
+    flagship: z.array(LayoutEntrySchema)
+  }).strict().optional()
 }).strict();
 
 export type ElementsResponse = z.infer<typeof ElementsResponseSchema>;

@@ -4,8 +4,6 @@ export interface CollectionStatus {
   lastStartedAt?: Date;
   lastCompletedAt?: Date;
   lastFailure?: unknown;
-  collectionCount: number;
-  failureCount: number;
 }
 
 export interface CollectionControllerOptions {
@@ -30,8 +28,6 @@ export class CollectionController {
   private lastStartedAt: Date | undefined;
   private lastCompletedAt: Date | undefined;
   private lastFailure: unknown;
-  private collectionCount = 0;
-  private failureCount = 0;
 
   constructor(private readonly options: CollectionControllerOptions) {
     if (!Number.isFinite(options.intervalMs) || options.intervalMs <= 0) {
@@ -80,8 +76,6 @@ export class CollectionController {
       lastStartedAt: this.lastStartedAt ? new Date(this.lastStartedAt) : undefined,
       lastCompletedAt: this.lastCompletedAt ? new Date(this.lastCompletedAt) : undefined,
       lastFailure: this.lastFailure,
-      collectionCount: this.collectionCount,
-      failureCount: this.failureCount
     };
   }
 
@@ -91,11 +85,9 @@ export class CollectionController {
       try {
         await this.options.collect();
         this.lastFailure = undefined;
-        this.collectionCount += 1;
         this.lastCompletedAt = new Date(this.now());
       } catch (error) {
         this.lastFailure = error;
-        this.failureCount += 1;
         this.logger.warn("Quota collection failed.", error);
       }
 

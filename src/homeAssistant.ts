@@ -2,22 +2,6 @@ import type { HAConfig, HAEntity, HAStatus } from "./contracts/homeAssistant.js"
 
 export type { HAConfig, HAEntity, HAStatus } from "./contracts/homeAssistant.js";
 
-export function haPauseBinding(config: HAConfig): string | undefined {
-  const pause = config.pause;
-  if (!pause) return undefined;
-  return JSON.stringify([config.url, pause.entityId, pause.pauseValue, pause.resumeValue]);
-}
-
-export function readHAPause(config: HAConfig, entities: readonly HAEntity[]): boolean | undefined {
-  const pause = config.pause;
-  if (!pause) return undefined;
-  const entity = entities.find((candidate) => candidate.entity_id === pause.entityId);
-  if (!entity || entity.state === "unknown" || entity.state === "unavailable") return undefined;
-  if (entity.state === pause.pauseValue) return true;
-  if (entity.state === pause.resumeValue) return false;
-  return undefined;
-}
-
 export interface HomeAssistantSocket {
   send(data: string): void;
   close(code?: number, reason?: string): void;
@@ -59,6 +43,7 @@ export class HomeAssistantClient {
   private readonly token: string;
   private readonly socketFactory: (url: string) => HomeAssistantSocket;
   private readonly changed?: () => void;
+  private readonly listeners = new Set<() => void>();
   private readonly timers: HomeAssistantTimers;
   private socket: HomeAssistantSocket | undefined;
   private entities = new Map<string, HAEntity>();
@@ -118,6 +103,11 @@ export class HomeAssistantClient {
     };
   }
 
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   waitUntilReady(timeoutMs = 10_000): Promise<void> {
     if (this.ready) return Promise.resolve();
     return new Promise<void>((resolve, reject) => {
@@ -148,7 +138,10 @@ export class HomeAssistantClient {
       }, HANDSHAKE_TIMEOUT_MS);
       socket.onopen = () => undefined;
       socket.onmessage = (event) => this.handleMessage(event.data);
-      socket.onerror = () => this.fail("Home Assistant WebSocket error.");
+      socket.onerror = () => {
+        this.fail("Home Assistant WebSocket error.");
+        this.closeForRecovery();
+      };
       socket.onclose = () => this.handleClose();
     } catch {
       this.fail("Unable to connect to Home Assistant.");
@@ -353,6 +346,9 @@ export class HomeAssistantClient {
 
   private notifyChanged(): void {
     try { this.changed?.(); } catch { /* a subscriber must not break the socket */ }
+    for (const listener of this.listeners) {
+      try { listener(); } catch { /* a subscriber must not break the socket */ }
+    }
   }
 }
 

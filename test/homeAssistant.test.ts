@@ -3,11 +3,11 @@ import test from "node:test";
 
 import {
   HomeAssistantClient,
-  haPauseBinding,
   homeAssistantWebSocketUrl,
-  readHAPause,
   type HomeAssistantSocket
 } from "../src/homeAssistant.js";
+import { HomeAssistantService } from "../src/homeAssistantService.js";
+import { haPauseBinding, readHAPause } from "../src/haPause.js";
 
 class FakeSocket implements HomeAssistantSocket {
   onopen: (() => void) | null = null;
@@ -29,6 +29,33 @@ class FakeSocket implements HomeAssistantSocket {
     this.onmessage?.({ data: JSON.stringify(message) });
   }
 }
+
+test("socket errors reconnect and resynchronize the snapshot", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const sockets: FakeSocket[] = [];
+  const client = new HomeAssistantClient({
+    url: "http://ha.local", token: "secret",
+    timers: { setTimeout, clearTimeout, setInterval, clearInterval },
+    socketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; }
+  });
+  const synchronize = (socket: FakeSocket, state: string) => {
+    socket.receive({ type: "auth_ok" });
+    socket.receive({ type: "result", id: socket.sent.at(-1)!.id, success: true, result: null });
+    socket.receive({ type: "result", id: socket.sent.at(-1)!.id, success: true, result: [{ entity_id: "sensor.water", state, attributes: {} }] });
+  };
+  try {
+    client.start();
+    synchronize(sockets[0]!, "40");
+    sockets[0]!.onerror?.();
+    assert.equal(sockets[0]!.closed, true);
+    assert.equal(client.status().connected, false);
+    t.mock.timers.tick(1_000);
+    assert.equal(sockets.length, 2);
+    synchronize(sockets[1]!, "55");
+    assert.equal(client.status().connected, true);
+    assert.equal(client.states()[0]!.state, "55");
+  } finally { client.stop(); }
+});
 
 test("authenticates, subscribes before get_states, and keeps initial snapshot ahead of old events", async () => {
   const socket = new FakeSocket();
@@ -147,4 +174,45 @@ test("normalizes Home Assistant HTTP URLs to one WebSocket API endpoint", () => 
   assert.equal(homeAssistantWebSocketUrl("http://ha.local:8123"), "ws://ha.local:8123/api/websocket");
   assert.equal(homeAssistantWebSocketUrl("https://ha.local/api/websocket/"), "wss://ha.local/api/websocket");
   assert.equal(homeAssistantWebSocketUrl("https://ha.local/api"), "wss://ha.local/api/websocket");
+});
+
+test("shares the configured client and closes temporary inspection clients", async () => {
+  const sockets: FakeSocket[] = [];
+  const service = new HomeAssistantService({
+    createClient: (options) => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return new HomeAssistantClient({ ...options, socketFactory: () => socket });
+    }
+  });
+  service.configure({ url: "http://ha.local:8123", token: "secret" });
+  const ready = service.collectInitial();
+  const active = sockets[0]!;
+  active.receive({ type: "auth_required" });
+  active.receive({ type: "auth_ok" });
+  const subscribeId = active.sent.find((message) => message.type === "subscribe_events")?.id as number;
+  active.receive({ id: subscribeId, type: "result", success: true, result: null });
+  const statesId = active.sent.find((message) => message.type === "get_states")?.id as number;
+  active.receive({ id: statesId, type: "result", success: true, result: [{ entity_id: "sensor.tank", state: "50", attributes: {} }] });
+  await ready;
+  assert.equal(service.snapshot().source, "http://ha.local:8123");
+  assert.equal(service.snapshot().entities[0]?.state, "50");
+  const entities = await service.inspect("entities", { url: "http://ha.local:8123" });
+  assert.equal((entities as { entities: readonly { state: string }[] }).entities[0]?.state, "50");
+  assert.equal(sockets.length, 1);
+
+  const draft = service.inspect("test", { url: "http://draft.local:8123", token: "draft" });
+  const temporary = sockets[1]!;
+  temporary.receive({ type: "auth_required" });
+  temporary.receive({ type: "auth_ok" });
+  const temporarySubscribeId = temporary.sent.find((message) => message.type === "subscribe_events")?.id as number;
+  temporary.receive({ id: temporarySubscribeId, type: "result", success: true, result: null });
+  const temporaryStatesId = temporary.sent.find((message) => message.type === "get_states")?.id as number;
+  temporary.receive({ id: temporaryStatesId, type: "result", success: true, result: [] });
+  assert.equal((await draft).connected, true);
+  assert.equal(temporary.closed, true);
+  await service.stop();
+  assert.equal(active.closed, true);
+  service.start();
+  assert.equal(sockets.length, 2);
 });

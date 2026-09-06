@@ -58,9 +58,9 @@ Core environment variables configure the orchestrator and Vestaboard transport. 
 | `VESTABOARD_CLOUD_URL` | Vestaboard Cloud API endpoint.<br><br>Default: `https://cloud.vestaboard.com/` |
 | `VESTABOARD_LOCAL_API_KEY` | Local API key. If set, this is preferred over the cloud API.<br><br>Default: configure this or a cloud token in the web interface |
 | `VESTABOARD_LOCAL_URL` | Local API endpoint.<br><br>Default: `http://vestaboard.local:7000/local-api/message` |
-| `VESTABOARD_LOCAL_MESSAGE_STRATEGY` | Local API message transition strategy: `column`, `reverse-column`, `edges-to-center`, `row`, `diagonal`, or `random`. Invalid values log an error, use the default, and show `check logs` on the startup message.<br><br>Default: `row` |
-| `VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS` | Local API transition delay between animation steps. Invalid, non-finite, or non-positive values log an error, use the default, and show `check logs` on the startup message.<br><br>Default: `2000` |
-| `VESTABOARD_LOCAL_MESSAGE_STEP_SIZE` | Local API transition step size. Invalid, non-finite, or non-positive values log an error, use the default, and show `check logs` on the startup message.<br><br>Default: `1` |
+| `VESTABOARD_LOCAL_MESSAGE_STRATEGY` | Local API message transition strategy: `column`, `reverse-column`, `edges-to-center`, `row`, `diagonal`, or `random`. Invalid configuration appears in the UI and prevents board writes.<br><br>Default: `row` |
+| `VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS` | Positive local API transition delay between animation steps.<br><br>Default: `2000` |
+| `VESTABOARD_LOCAL_MESSAGE_STEP_SIZE` | Positive local API transition step size.<br><br>Default: `1` |
 | `VESTABOARD_BOARD` | Board renderer: `auto`, `note`, or `flagship`. In `auto`, the orchestrator reads the current message layout through the configured Vestaboard API and detects Note (`3x15`) or Flagship (`6x22`). If detection cannot determine the board type, it assumes Note; changing the board connection or board setting runs detection again.<br><br>Default: `auto` |
 
 On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` banner with the current `yyyymmdd hhmm` timestamp and enabled plugin slugs. The banner displays for 30 seconds outside the normal write limit, then the latest data is sent. Codex collection continues independently of board writes. Changes coalesce into the newest message; unchanged messages are skipped. Normal attempts, including failed attempts, are separated by `ORCHESTRATOR_INTERVAL_MINUTES`.
@@ -79,7 +79,9 @@ Elements span the board width and have a fixed height. Assign their zero-based s
 
 ## Plugins
 
-Plugin settings use browser-safe Zod schemas shared by configuration validation and the HTTP contracts. Vestaboard encoding belongs to the platform; plugins do not import one another. Existing JSON settings and environment overrides retain their names.
+Plugins own their settings, collection, cached readings and rendering. The platform owns board encoding, layout, delivery and pause; application code wires them together. Home Assistant provides one shared raw entity subscription, consumed independently by Water Heater and platform pause. Browser-safe Zod schemas define settings and HTTP contracts; plugins do not import one another.
+
+The server and `--once` use the same application engine. `--once` collects initial readings, composes and attempts one frame, then shuts down without a banner or HTTP server. Status and draft previews only read cached data. Delivery owns its timer and checks pause before writing; collections continue while paused. Persistence errors appear separately from connection errors.
 
 ### Water heater / Home Assistant
 
@@ -144,7 +146,7 @@ If the host login directory is somewhere else, set `CODEX_HOST_DIR` in `.env` to
 | `CODEX_HOST_DIR` | Host Codex config directory mounted into Docker at `/home/node/.codex`.<br><br>Default: `${HOME}/.codex` |
 | `CODEX_AUTO_START_WINDOW_5H` | Ping Codex once when the 5-hour window is completely unused at 100%.<br><br>Default: `false` |
 | `CODEX_AUTO_START_WINDOW_WK` | Ping Codex once when the weekly window is completely unused at 100%.<br><br>Default: `false` |
-| `CODEX_QUOTA_DEMO_PAUSE_MINUTES` | How long normal polling pauses after a `SIGUSR2` demo render.<br><br>Default: `5` |
+| `CODEX_QUOTA_DEMO_PAUSE_MINUTES` | How long a `SIGUSR2` demo remains visible while collection continues.<br><br>Default: `5` |
 
 When auto-start is enabled, the plugin lists visible Codex models, skips `-spark` models, prefers the last `-nano` model, then the last `-mini` model, then the last remaining model. It sends a read-only ephemeral prompt: `Reply exactly: ok. Do not inspect files or run commands.` A running process auto-starts at most once per reset timestamp and never pings more than once every 30 minutes.
 

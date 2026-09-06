@@ -96,6 +96,28 @@ test("paused delivery exposes status and resumes with the latest frame", async (
   assert.deepEqual(sent, ["latest"]);
 });
 
+test("a target transition waits for an old write and invalidates its cache", async () => {
+  let release!: () => void;
+  const writeStarted = new Promise<void>((resolve) => { release = resolve; });
+  const delivery = new DeliveryController({
+    intervalMs: 60_000,
+    send: async () => writeStarted,
+    logger: { info() {}, warn() {} }
+  });
+  delivery.updateFrame(message("old-target"));
+  const attempt = delivery.attempt();
+  await Promise.resolve();
+  const transition = delivery.resetTarget();
+  let transitioned = false;
+  void transition.then(() => { transitioned = true; });
+  await Promise.resolve();
+  assert.equal(transitioned, false);
+  release();
+  await transition;
+  await attempt;
+  assert.equal(delivery.lastSent(), undefined);
+});
+
 test("collection starts immediately, waits between polls, and stops cleanly", async () => {
   let reads = 0;
   const waits: number[] = [];

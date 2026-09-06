@@ -1,6 +1,6 @@
-import type { VestaboardMessage } from "../orchestrator.js";
+import type { VestaboardMessage } from "../vestaboard.js";
 
-export type DeliveryOutcome = "sent" | "unchanged" | "failed" | "paused" | "limited" | "empty" | "stopped" | "in-flight";
+export type DeliveryOutcome = "sent" | "unchanged" | "failed" | "paused" | "limited" | "empty" | "stopped";
 
 export interface DeliveryStatus {
   running: boolean;
@@ -44,8 +44,10 @@ export class DeliveryController {
   private running = true;
   private sentMessageKey: string | undefined;
   private inFlight: Promise<DeliveryAttempt> | undefined;
-  private readonly listeners = new Set<(message: VestaboardMessage) => void>();
   private readonly statusListeners = new Set<(status: DeliveryStatus) => void>();
+  private schedulerPromise: Promise<void> | undefined;
+  private schedulerWake: (() => void) | undefined;
+  private schedulerTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly options: DeliveryControllerOptions) {
     if (!Number.isFinite(options.intervalMs) || options.intervalMs <= 0) {
@@ -56,14 +58,15 @@ export class DeliveryController {
   }
 
   updateFrame(message: VestaboardMessage): void {
-    this.frame = message;
-    this.listeners.forEach((listener) => listener(message));
+    this.frame = structuredClone(message);
+    this.requestNow();
   }
 
   setInterval(intervalMs: number): void {
     validateInterval(intervalMs, "Delivery");
     this.options.intervalMs = intervalMs;
     this.notifyStatus();
+    this.requestNow();
   }
 
   clearFrame(): void {
@@ -71,21 +74,20 @@ export class DeliveryController {
   }
 
   pause(reason = "paused"): void {
+    if (this.paused && this.pauseReason === reason) return;
     this.paused = true;
     this.pauseReason = reason;
     this.lastOutcome = "paused";
     this.notifyStatus();
+    this.requestNow();
   }
 
   resume(): void {
+    if (!this.paused) return;
     this.paused = false;
     this.pauseReason = undefined;
     this.notifyStatus();
-  }
-
-  onChange(listener: (message: VestaboardMessage) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    this.requestNow();
   }
 
   onStatusChange(listener: (status: DeliveryStatus) => void): () => void {
@@ -94,24 +96,46 @@ export class DeliveryController {
   }
 
   currentFrame(): VestaboardMessage | undefined {
-    return this.frame;
+    return this.frame ? structuredClone(this.frame) : undefined;
   }
 
   lastSent(): VestaboardMessage | undefined {
-    return this.lastSentFrame;
+    return this.lastSentFrame ? structuredClone(this.lastSentFrame) : undefined;
   }
 
-  clearLastSent(): void {
+  /** Serializes a board target transition behind any write already in flight. */
+  async resetTarget(): Promise<void> {
+    await this.inFlight;
     this.sentMessageKey = undefined;
     this.lastSentFrame = undefined;
     this.lastSuccessfulAt = undefined;
+    this.requestNow();
   }
 
   async stop(): Promise<void> {
     this.running = false;
     this.lastOutcome = "stopped";
     this.notifyStatus();
+    this.schedulerWake?.();
     await this.inFlight;
+    await this.schedulerPromise;
+  }
+
+  /** Runs the write scheduler over the latest published frame. */
+  startScheduler(): Promise<void> {
+    if (this.schedulerPromise) return this.schedulerPromise;
+    if (!this.running) return Promise.resolve();
+    this.schedulerPromise = this.schedulerLoop().finally(() => {
+      this.schedulerPromise = undefined;
+      this.schedulerWake = undefined;
+      if (this.schedulerTimer !== undefined) clearTimeout(this.schedulerTimer);
+      this.schedulerTimer = undefined;
+    });
+    return this.schedulerPromise;
+  }
+
+  requestNow(): void {
+    this.schedulerWake?.();
   }
 
   /**
@@ -222,6 +246,36 @@ export class DeliveryController {
     if (this.statusListeners.size === 0) return;
     const status = this.status();
     this.statusListeners.forEach((listener) => listener(status));
+  }
+
+  private async schedulerLoop(): Promise<void> {
+    while (this.running) {
+      const attempt = await this.attempt();
+      if (!this.running) break;
+      const next = this.nextAttemptAt?.getTime();
+      const now = this.now().getTime();
+      // Paused, empty and unchanged frames wait for a real change. In
+      // particular an expired deadline while paused must not create a busy loop.
+      const pending = this.frame && messageKey(this.frame) !== this.sentMessageKey;
+      const delay = !this.paused && pending ? Math.max(0, (next ?? now) - now) : undefined;
+      await this.waitForScheduler(delay);
+      if (attempt.outcome === "stopped") break;
+    }
+  }
+
+  private async waitForScheduler(delayMs: number | undefined): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const done = (): void => {
+        if (settled) return;
+        settled = true;
+        if (this.schedulerTimer !== undefined) clearTimeout(this.schedulerTimer);
+        if (this.schedulerWake === done) this.schedulerWake = undefined;
+        resolve();
+      };
+      this.schedulerWake = done;
+      if (delayMs !== undefined) this.schedulerTimer = setTimeout(done, delayMs);
+    });
   }
 }
 

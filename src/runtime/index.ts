@@ -7,5 +7,3 @@ export type {
   DeliveryOutcome,
   DeliveryStatus
 } from "./delivery.js";
-export { RuntimeController } from "./runtime.js";
-export type { RuntimeControllerOptions, RuntimeStatus } from "./runtime.js";

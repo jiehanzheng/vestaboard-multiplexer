@@ -1,6 +1,7 @@
 import type { Element } from "../elements.js";
 import { BLANK, BLUE, encode, GREEN } from "../vestaboardCharacters.js";
 import type { HAEntity } from "../contracts/homeAssistant.js";
+import type { HomeAssistantService } from "../homeAssistantService.js";
 import {
   DEFAULT_WATER_HEATER_CONFIG,
   validateWaterHeaterConfig,
@@ -81,6 +82,32 @@ export class WaterHeater {
     return this.status();
   }
 
+  /** Drops readings that came from a different Home Assistant source. */
+  resetSource(config: WaterHeaterConfig): void {
+    this.config = cloneConfig(config);
+    this.readings = {};
+    this.bindings = {
+      remaining: "remaining:none",
+      capacity: "capacity:none",
+      temperature: "temperature:none",
+      target: "target:none"
+    };
+    this.diagnostic = undefined;
+  }
+
+  /** Builds draft elements without changing this instance's cached readings. */
+  previewElements(config: WaterHeaterConfig, entities: readonly HAEntity[] = []): Element[] {
+    const errors = validateWaterHeaterConfig(config);
+    if (errors.length) throw new Error(errors[0]);
+    // Unchanged bindings retain last-good values even while HA is unavailable.
+    // update() clears only bindings changed by this isolated draft.
+    const preview = new WaterHeater(this.config);
+    preview.readings = { ...this.readings };
+    preview.bindings = { ...this.bindings };
+    preview.update(config, entities);
+    return preview.elements();
+  }
+
   status(): WaterHeaterStatus {
     return this.diagnostic ? { error: this.diagnostic } : {};
   }
@@ -134,6 +161,31 @@ export class WaterHeater {
     if (temperature === undefined || target === undefined) return textRow("N/A", width);
     return textRow(`${displayNumber(temperature)}/${displayNumber(target)}${this.config.unit}`, width);
   }
+}
+
+export function createWaterHeaterIntegration(config: WaterHeaterConfig, source: Pick<HomeAssistantService, "snapshot" | "subscribe">, changed: () => void) {
+  let current = config;
+  const heater = createWaterHeater(config);
+  let identity = source.snapshot().source;
+  const update = () => {
+    const snapshot = source.snapshot();
+    if (identity !== snapshot.source) {
+      identity = snapshot.source;
+      heater.resetSource(current);
+    }
+    heater.update(current, snapshot.entities);
+    changed();
+  };
+  const unsubscribe = source.subscribe(update);
+  heater.update(current, source.snapshot().entities);
+  return {
+    id: "water-heater", slug: "water",
+    get enabled() { return current.enabled; },
+    configure(value: WaterHeaterConfig) { current = value; update(); },
+    elements(draft = current) { return heater.previewElements(draft, source.snapshot().entities); },
+    status: () => heater.status(),
+    stop() { unsubscribe(); }
+  };
 }
 
 export function createWaterHeater(config: WaterHeaterConfig = DEFAULT_WATER_HEATER_CONFIG): WaterHeater {

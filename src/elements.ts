@@ -1,4 +1,6 @@
-import type { VestaboardMessage } from "./orchestrator.js";
+import type { VestaboardMessage } from "./vestaboard.js";
+import type { LayoutEntry } from "./contracts/config.js";
+export type { LayoutEntry } from "./contracts/config.js";
 import { isValidCharacterCode } from "./vestaboardCharacters.js";
 
 /** A fixed-height contribution to a board layout. */
@@ -10,11 +12,6 @@ export interface Element {
 }
 
 /** The first row occupied by an element. Rows are zero based. */
-export interface LayoutEntry {
-  elementId: string;
-  startRow: number;
-}
-
 export interface ComposeDimensions {
   width: number;
   height: number;

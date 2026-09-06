@@ -1,11 +1,9 @@
-import type { Plugin, PluginUpdate, Priority } from "../../orchestrator.js";
-import type { VestaboardBoard, VestaboardBoardProvider } from "../../vestaboardTypes.js";
+import type { Element } from "../../elements.js";
+import { CollectionController } from "../../runtime/collection.js";
+import { CodexLogin } from "./login.js";
 import { applyCodexQuotaDemo, type CodexQuotaDemoState } from "./demo.js";
-import { formatError, formatQuota } from "./display/index.js";
-import { isCodexAuthenticationFailure } from "./failure.js";
 import {
   autoStartErrorStatus,
-  bumpStatusPriority,
   errorStatus,
   logAutoStartFailure,
   logQuotaReadFailure,
@@ -17,35 +15,35 @@ import {
 import { QuotaWindowHistory } from "./quotaWindowHistory.js";
 import type { ResetVisibility } from "./quotaWindowHistory.js";
 import { createCodexQuotaPoller, readFixtureQuota } from "./quotaSource.js";
+import { createCodexElements } from "./elements.js";
 import type { CodexQuotaPluginOptions, Logger, QuotaPoller, QuotaSnapshot } from "./types.js";
 
-export class CodexQuotaPlugin implements Plugin {
+export class CodexQuotaPlugin {
   readonly id = "codex-quota";
   readonly slug = "codex";
   private readonly quotaCache = new QuotaSnapshotCache();
   private readonly statusMessages = new StatusMessageStack();
   private readonly quotaWindowHistory: QuotaWindowHistory;
-  private readonly demoDurationMs: number;
+  private demoDurationMs: number;
   private presentationDemo: CodexQuotaDemoState | undefined;
   private presentationDemoExpiresAt: Date | undefined;
   private collectionFailure: unknown;
-  private pendingFailureLog: unknown;
+  private lastCollectedAt: Date | undefined;
+  private collectTask: Promise<void> | undefined;
+  private readonly login: CodexLogin;
+  private collection?: CollectionController;
 
   constructor(
-    private readonly readQuota: QuotaPoller,
+    private readQuota: QuotaPoller,
     private readonly options: {
-      priority: Priority;
-      errorPriority: Priority;
       timeZone?: string;
       showPacing?: boolean;
-      board?: VestaboardBoardProvider;
       statusMessage?: () => string | undefined;
-      takeDemoMode?: () => CodexQuotaDemoState | undefined;
-      restoreDemoMode?: (demo: CodexQuotaDemoState) => void;
       logger?: Logger;
       now?: () => Date;
       quotaWindowHistory?: QuotaWindowHistory;
       demoDurationMs?: number;
+      onChanged?: () => void;
     }
   ) {
     this.quotaWindowHistory = options.quotaWindowHistory ?? new QuotaWindowHistory();
@@ -53,11 +51,92 @@ export class CodexQuotaPlugin implements Plugin {
     if (!Number.isFinite(this.demoDurationMs) || this.demoDurationMs < 0) {
       throw new Error("Codex demo duration must be a non-negative number.");
     }
+    this.login = new CodexLogin(() => this.options.onChanged?.());
   }
 
-  async getUpdate(): Promise<PluginUpdate> {
-    await this.collect();
-    return this.renderUpdate();
+  configure(options: {
+    fixture?: boolean;
+    autoStartWindow5h?: boolean;
+    autoStartWindowWk?: boolean;
+    timeZone?: string;
+    showPacing?: boolean;
+    demoDurationMs?: number;
+    now?: () => Date;
+    readQuota?: QuotaPoller;
+  }): void {
+    if (options.readQuota) {
+      this.readQuota = options.readQuota;
+    } else if (options.fixture !== undefined || options.autoStartWindow5h !== undefined || options.autoStartWindowWk !== undefined) {
+      this.readQuota = options.fixture
+        ? async () => ({ snapshot: await readFixtureQuota() })
+        : createCodexQuotaPoller({
+            fiveHour: options.autoStartWindow5h ?? false,
+            weekly: options.autoStartWindowWk ?? false
+          }, this.quotaWindowHistory);
+    }
+    if ("timeZone" in options) this.options.timeZone = options.timeZone;
+    if ("showPacing" in options && options.showPacing !== undefined) this.options.showPacing = options.showPacing;
+    if ("now" in options) this.options.now = options.now;
+    if (options.demoDurationMs !== undefined) {
+      if (!Number.isFinite(options.demoDurationMs) || options.demoDurationMs < 0) throw new Error("Codex demo duration must be a non-negative number.");
+      this.demoDurationMs = options.demoDurationMs;
+    }
+  }
+
+  startPolling(intervalMs: number, onCollected?: () => Promise<void> | void): Promise<void> {
+    if (!this.collection) {
+      this.collection = new CollectionController({
+        intervalMs,
+        collect: () => this.collect(),
+        onCollected
+      });
+    } else {
+      this.collection.setInterval(intervalMs);
+    }
+    return this.collection.start();
+  }
+
+  stopPolling(): Promise<void> {
+    return this.collection?.stop() ?? Promise.resolve();
+  }
+
+  requestPoll(): void { this.collection?.requestNow(); }
+
+  setPollInterval(intervalMs: number): void {
+    if (!this.collection) return;
+    this.collection.setInterval(intervalMs);
+  }
+
+  collectionStatus(): ReturnType<CollectionController["status"]> | undefined {
+    return this.collection?.status();
+  }
+
+  collectionError(): unknown {
+    return this.collectionFailure;
+  }
+
+  collectedAt(): Date | undefined {
+    return this.lastCollectedAt ? new Date(this.lastCollectedAt) : undefined;
+  }
+
+  loginStatus() { return this.login.status(); }
+
+  loginAction(action: "start" | "cancel" | "check"): Promise<void> | void {
+    if (action === "start") return this.login.start();
+    if (action === "cancel") return this.login.cancel();
+    return this.login.check();
+  }
+
+  async stop(): Promise<void> {
+    await Promise.all([this.stopPolling(), this.login.stop(), this.collectTask]);
+  }
+
+  activateDemo(demo: CodexQuotaDemoState, now = this.options.now?.() ?? new Date()): void {
+    this.presentationDemo = { ...demo };
+    this.presentationDemoExpiresAt = this.demoDurationMs > 0
+      ? new Date(now.getTime() + this.demoDurationMs)
+      : undefined;
+    this.options.onChanged?.();
   }
 
   /**
@@ -66,6 +145,16 @@ export class CodexQuotaPlugin implements Plugin {
    * on the board and lets a later renderer reuse the same quota history/cache.
    */
   async collect(): Promise<void> {
+    if (this.collectTask) return this.collectTask;
+    let task!: Promise<void>;
+    task = this.collectImpl().finally(() => {
+      if (this.collectTask === task) this.collectTask = undefined;
+    });
+    this.collectTask = task;
+    return task;
+  }
+
+  private async collectImpl(): Promise<void> {
     const now = this.options.now?.() ?? new Date();
     try {
       const {
@@ -76,9 +165,9 @@ export class CodexQuotaPlugin implements Plugin {
       } = await this.readQuota({ now });
       this.quotaWindowHistory.recordFreshSnapshot(freshQuota);
       this.quotaCache.update(freshQuota, now);
+      this.lastCollectedAt = new Date(now);
       this.pushStatusMessages(now, statusMessage, sidecarError);
       this.collectionFailure = undefined;
-      this.pendingFailureLog = undefined;
       const resetStatus = resetAvailableStatus(freshQuota, rateLimitResetCreditsAvailableCount);
       if (resetStatus) {
         this.statusMessages.pushLow(resetStatus, now, TRANSIENT_STATUS_MESSAGE_TTL_MS);
@@ -88,89 +177,40 @@ export class CodexQuotaPlugin implements Plugin {
       }
     } catch (error) {
       this.collectionFailure = error;
-      this.pendingFailureLog = error;
       this.statusMessages.push(errorStatus(error), now, TRANSIENT_STATUS_MESSAGE_TTL_MS);
-    }
-  }
-
-  /** Renders the most recently collected state, including current pacing time. */
-  async renderUpdate({ consumeDemo = true }: { consumeDemo?: boolean } = {}): Promise<PluginUpdate> {
-    const now = this.options.now?.() ?? new Date();
-    const displayState = this.buildDisplayState(now, consumeDemo);
-    const demoMode = displayState.presentationDemo;
-    const board = await this.resolveBoard();
-    const cachedQuota = this.quotaCache.snapshot();
-    const displayStatusMessage = cachedQuota ? displayState.statusMessage : undefined;
-
-    if (demoMode && this.collectionFailure !== undefined && !cachedQuota && this.demoDurationMs === 0) {
-      this.options.restoreDemoMode?.(demoMode);
-    }
-
-    const renderedQuota = cachedQuota ? applyCodexQuotaDemo(cachedQuota, demoMode) : undefined;
-    const message = cachedQuota
-      ? formatQuota(renderedQuota!, {
-          timeZone: displayState.timeZone,
-          now,
-          showPacing: displayState.showPacing,
-          board,
-          statusMessage: displayStatusMessage,
-          staleWindowIds: displayState.staleWindowIds,
-          resetVisibility: this.quotaWindowHistory.resetVisibilityFor(renderedQuota!)
-        })
-      : formatError(this.collectionFailure ?? new Error("Codex quota has not been collected yet."), {
-          board,
-          statusMessage: this.collectionFailure && isCodexAuthenticationFailure(this.collectionFailure)
-            ? errorStatus(this.collectionFailure)
-            : undefined
-        });
-
-    if (this.pendingFailureLog !== undefined) {
       logQuotaReadFailure(
         this.options.logger,
-        this.pendingFailureLog,
-        this.options.errorPriority,
-        message,
+        error,
+        { text: errorStatus(error) },
         this.quotaCache.state()
       );
-      this.pendingFailureLog = undefined;
     }
-
-    return {
-      priority: displayStatusMessage
-        ? bumpStatusPriority(cachedQuota ? this.options.priority : this.options.errorPriority)
-        : cachedQuota ? this.options.priority : this.options.errorPriority,
-      message
-    };
   }
 
   getDisplayState(now = this.options.now?.() ?? new Date()): CodexQuotaDisplayState {
-    return this.buildDisplayState(now, true);
+    return this.buildDisplayState(now);
   }
 
-  private buildDisplayState(now: Date, consumeDemo: boolean): CodexQuotaDisplayState {
+  /** Captures one immutable ingredient set for every element in a composition. */
+  elementsFor(
+    overrides: Partial<Pick<CodexQuotaDisplayState, "snapshot" | "statusMessage" | "timeZone" | "showPacing">> = {},
+    captured = this.getDisplayState()
+  ): Element[] {
+    const current = captured;
+    const state: CodexQuotaDisplayState = { ...current, ...overrides };
+    return createCodexElements(() => state, () => this.options.now?.() ?? new Date());
+  }
+
+  private buildDisplayState(now: Date): CodexQuotaDisplayState {
     let currentDemo = this.presentationDemo;
-    if (consumeDemo) {
-      const queuedDemo = this.options.takeDemoMode?.();
-      if (queuedDemo) {
-        currentDemo = queuedDemo;
-        if (this.demoDurationMs > 0) {
-          this.presentationDemo = queuedDemo;
-          this.presentationDemoExpiresAt = new Date(now.getTime() + this.demoDurationMs);
-        } else {
-          this.presentationDemo = undefined;
-          this.presentationDemoExpiresAt = undefined;
-        }
-      }
-    }
     if (this.presentationDemoExpiresAt && this.presentationDemoExpiresAt.getTime() <= now.getTime()) {
-      this.presentationDemo = undefined;
-      this.presentationDemoExpiresAt = undefined;
       currentDemo = undefined;
     }
 
     const snapshot = this.quotaCache.snapshot();
+    const displayedSnapshot = snapshot ? applyCodexQuotaDemo(snapshot, currentDemo) : undefined;
     return {
-      snapshot,
+      snapshot: displayedSnapshot,
       statusMessage: this.statusMessages.top(now) ?? this.options.statusMessage?.(),
       staleWindowIds: this.collectionFailure && snapshot ? snapshot.windows.map((window) => window.id) : [],
       resetVisibility: snapshot ? this.quotaWindowHistory.resetVisibilityFor(snapshot) : {},
@@ -194,9 +234,6 @@ export class CodexQuotaPlugin implements Plugin {
     }
   }
 
-  private async resolveBoard(): Promise<VestaboardBoard> {
-    return this.options.board ? await this.options.board() : "note";
-  }
 }
 
 export interface CodexQuotaDisplayState {
@@ -211,46 +248,39 @@ export interface CodexQuotaDisplayState {
 
 export function createCodexQuotaPlugin({
   fixture = false,
-  priority = "normal",
-  errorPriority = "low",
   timeZone,
   showPacing = true,
   autoStartWindow5h = false,
   autoStartWindowWk = false,
-  board,
   statusMessage,
-  takeDemoMode,
-  restoreDemoMode,
-  logger = console,
-  now,
-  demoDurationMs
+    logger = console,
+    now,
+  demoDurationMs,
+  onChanged,
+  readQuota
 }: CodexQuotaPluginOptions & {
-  takeDemoMode?: () => CodexQuotaDemoState | undefined;
-  restoreDemoMode?: (demo: CodexQuotaDemoState) => void;
   logger?: Logger;
   now?: () => Date;
   demoDurationMs?: number;
-} = {}): CodexQuotaPlugin {
+  onChanged?: () => void;
+  readQuota?: QuotaPoller;
+  } = {}): CodexQuotaPlugin {
   const quotaWindowHistory = new QuotaWindowHistory();
-  const readQuota: QuotaPoller = fixture
+  const quotaReader: QuotaPoller = readQuota ?? (fixture
     ? async () => ({ snapshot: await readFixtureQuota() })
     : createCodexQuotaPoller({
         fiveHour: autoStartWindow5h,
         weekly: autoStartWindowWk
-      }, quotaWindowHistory);
-  return new CodexQuotaPlugin(readQuota, {
-    priority,
-    errorPriority,
+      }, quotaWindowHistory));
+  return new CodexQuotaPlugin(quotaReader, {
     timeZone,
     showPacing,
-    board,
     statusMessage,
-    takeDemoMode,
-    restoreDemoMode,
     logger,
     now,
     quotaWindowHistory,
-    demoDurationMs
+    demoDurationMs,
+    onChanged
   });
 }
 

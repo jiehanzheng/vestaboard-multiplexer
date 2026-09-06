@@ -1,18 +1,15 @@
-import type { VestaboardClient, VestaboardMessage } from "./orchestrator.js";
 import type { VestaboardBoard } from "./vestaboardTypes.js";
+import type { LocalMessageTransitionOptions, LocalMessageTransitionStrategy } from "./contracts/config.js";
+export type { LocalMessageTransitionOptions, LocalMessageTransitionStrategy } from "./contracts/config.js";
 
-export type LocalMessageTransitionStrategy =
-  | "column"
-  | "reverse-column"
-  | "edges-to-center"
-  | "row"
-  | "diagonal"
-  | "random";
+export interface VestaboardMessage {
+  text: string;
+  characters?: number[][];
+}
 
-export interface LocalMessageTransitionOptions {
-  strategy: LocalMessageTransitionStrategy;
-  stepIntervalMs: number;
-  stepSize: number;
+export interface VestaboardClient {
+  send(message: VestaboardMessage): Promise<void>;
+  detectBoard?(): Promise<VestaboardBoard | undefined>;
 }
 
 export const DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS: LocalMessageTransitionOptions = {

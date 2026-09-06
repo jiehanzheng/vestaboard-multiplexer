@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigStore, type PublicConfig } from "../src/config.js";
 import { createApplication } from "../src/application.js";
 import type { HAEntity, HomeAssistantClient, HomeAssistantClientOptions } from "../src/homeAssistant.js";
+import { createCodexIntegration } from "../src/plugins/codexQuota/integration.js";
+import type { VestaboardMessage } from "../src/vestaboard.js";
 
 class FakeHomeAssistantClient {
   private entities: HAEntity[] = [];
@@ -29,6 +31,62 @@ class FakeHomeAssistantClient {
 }
 
 const asHomeAssistantClient = (client: FakeHomeAssistantClient): HomeAssistantClient => client as unknown as HomeAssistantClient;
+
+test("server and one-shot share frames, and status/preview cannot collect or deliver", { timeout: 5_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-parity-"));
+  const now = () => new Date("2026-09-06T12:00:00Z");
+  let reads = 0;
+  let collected!: () => void;
+  const firstRead = new Promise<void>((resolve) => { collected = resolve; });
+  const sent: VestaboardMessage[] = [];
+  const dependencies = {
+    now,
+    createVestaboardClient: () => ({ send: async (frame: VestaboardMessage) => { sent.push(frame); } }),
+    createCodexIntegration: (config: Parameters<typeof createCodexIntegration>[0], options: Parameters<typeof createCodexIntegration>[1]) => createCodexIntegration(config, {
+      ...options,
+      readQuota: async () => {
+        reads++;
+        return { snapshot: { windows: [{ id: "primary", remainingRatio: 0.5, durationMins: 300, resetAt: new Date("2026-09-06T15:00:00Z") }] } };
+      }
+    })
+  };
+  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", VESTABOARD_BOARD: "note" });
+  const server = await createApplication(store, directory, true, dependencies);
+  server.onChange(() => { if (server.actions.status().codex.collectedAt) collected(); });
+  try {
+    await server.start();
+    await firstRead;
+    const desired = server.actions.status().desired;
+    const before = { reads, writes: sent.length };
+    const layout = server.actions.elements().defaultLayout!;
+    for (let i = 0; i < 3; i++) {
+      server.actions.status(); server.actions.elements();
+      assert.deepEqual(await server.actions.preview({ layout, board: "note" }), desired);
+    }
+    assert.deepEqual({ reads, writes: sent.length }, before);
+    await server.stop();
+    const once = await createApplication(store, directory, true, dependencies);
+    try {
+      const previousWrites = sent.length;
+      await once.runOnce();
+      assert.equal(sent.length, previousWrites + 1, "one-shot must not send a startup banner");
+      assert.deepEqual(sent.at(-1), desired);
+    } finally { await once.stop(); }
+  } finally { await server.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("invalid environment configuration is visible and blocks delivery", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-env-error-"));
+  await writeFile(join(directory, "config.json"), JSON.stringify({ version: 1, codex: { enabled: false } }));
+  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", ORCHESTRATOR_INTERVAL_MINUTES: "bad" });
+  let writes = 0;
+  const app = await createApplication(store, directory, true, { createVestaboardClient: () => ({ send: async () => { writes++; } }) });
+  try {
+    await app.runOnce();
+    assert.equal(writes, 0);
+    assert.match(app.actions.status().configError ?? "", /environment/i);
+  } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
+});
 
 test("web application can configure an unconnected board and preview without sending", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-app-"));
@@ -109,7 +167,7 @@ test("application exposes constants-only water elements without a Home Assistant
   }
 });
 
-test("same Home Assistant connection applies a newly selected cached pause entity", async () => {
+test("same Home Assistant connection applies a newly selected cached pause entity", { timeout: 5_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-ha-binding-"));
   const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", VESTABOARD_BOARD: "note" });
   const base = store.get();
@@ -142,7 +200,9 @@ test("same Home Assistant connection applies a newly selected cached pause entit
     assert.equal(clients.length, 1);
     assert.equal((app.actions.status() as { paused: boolean }).paused, true);
     persistent.setConnected(true);
+    const resumed = new Promise<void>((resolve) => app.onChange(() => { if (!app.actions.status().paused) resolve(); }));
     await persistent.emit([{ entity_id: "input_boolean.new", state: "off", attributes: {} }]);
+    await resumed;
     assert.equal((app.actions.status() as { paused: boolean }).paused, false);
   } finally {
     await app.stop();
