@@ -39,7 +39,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
   const makeBoard = dependencies.createVestaboardClient ?? createVestaboardClient;
   const ha = new HomeAssistantService({ createClient: dependencies.createHomeAssistantClient, changed: () => changed() });
   const pause = await PauseController.open(directory, ha, requestComposition);
-  const codex = (dependencies.createCodexIntegration ?? createCodexIntegration)(config.codex, { changed: requestComposition, board: () => board, now });
+  const codex = (dependencies.createCodexIntegration ?? createCodexIntegration)(config.codex, { changed: requestComposition, now });
   const water = createWaterHeaterIntegration(config.water, ha, requestComposition);
   const plugins = [codex, water];
   const delivery = new DeliveryController({

@@ -1,5 +1,5 @@
 import type { Element, LayoutEntry } from "../../elements.js";
-import type { VestaboardBoard, VestaboardBoardProvider } from "../../vestaboardTypes.js";
+import type { VestaboardBoard } from "../../vestaboardTypes.js";
 import { defaultCodexLayout } from "./elements.js";
 import { createCodexQuotaPlugin, type CodexQuotaPlugin } from "./plugin.js";
 import type { CodexConfig } from "./config.js";
@@ -7,7 +7,6 @@ import type { Logger, QuotaPoller } from "./types.js";
 
 export interface CodexIntegrationDependencies {
   changed?: () => void;
-  board?: VestaboardBoardProvider;
   now?: () => Date;
   logger?: Logger;
   readQuota?: QuotaPoller;
@@ -34,6 +33,8 @@ export function createCodexIntegration(config: CodexConfig, dependencies: CodexI
   let current = config;
   let demoDrops = 0;
   let polling = false;
+  let stopped = false;
+  let stopTask: Promise<void> | undefined;
   const plugin = createCodexQuotaPlugin({
     fixture: config.source === "fixture",
     timeZone: config.timeZone,
@@ -52,9 +53,11 @@ export function createCodexIntegration(config: CodexConfig, dependencies: CodexI
     slug: "codex" as const,
     get enabled() { return current.enabled; },
     async configure(next) {
+      if (stopped) return;
       if (JSON.stringify(next) === JSON.stringify(current)) return;
       const wasPolling = polling;
       if (wasPolling) await plugin.stopPolling();
+      if (stopped) return;
       current = next;
       plugin.configure({
         fixture: next.source === "fixture",
@@ -70,16 +73,18 @@ export function createCodexIntegration(config: CodexConfig, dependencies: CodexI
       if (wasPolling && next.enabled) void plugin.startPolling(next.pollIntervalSeconds * 1000, dependencies.changed);
     },
     start() {
+      if (stopped) return;
       polling = true;
       if (current.enabled) void plugin.startPolling(current.pollIntervalSeconds * 1000, dependencies.changed);
     },
     async collectInitial() {
-      if (!current.enabled) return;
+      if (stopped || !current.enabled) return;
       await plugin.collect();
       dependencies.changed?.();
     },
-    requestRefresh() { plugin.requestPoll(); },
+    requestRefresh() { if (!stopped) plugin.requestPoll(); },
     demo() {
+      if (stopped) return;
       plugin.activateDemo({ pctDrops: ++demoDrops });
     },
     elements(draftConfig = current) {
@@ -105,8 +110,14 @@ export function createCodexIntegration(config: CodexConfig, dependencies: CodexI
     loginStatus() { return plugin.loginStatus(); },
     loginAction(action) { return plugin.loginAction(action); },
     async stop() {
+      if (stopTask) {
+        await stopTask;
+        return;
+      }
+      stopped = true;
       polling = false;
-      await plugin.stop();
+      stopTask = plugin.stop();
+      await stopTask;
     }
   };
 }

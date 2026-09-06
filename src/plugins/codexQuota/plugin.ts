@@ -2,6 +2,7 @@ import type { Element } from "../../elements.js";
 import { CollectionController } from "../../runtime/collection.js";
 import { CodexLogin } from "./login.js";
 import { applyCodexQuotaDemo, type CodexQuotaDemoState } from "./demo.js";
+import { formatError } from "./display/index.js";
 import {
   autoStartErrorStatus,
   errorStatus,
@@ -12,6 +13,7 @@ import {
   TRANSIENT_STATUS_MESSAGE_TTL_MS,
   StatusMessageStack
 } from "./pluginState.js";
+import { isCodexAuthenticationFailure } from "./failure.js";
 import { QuotaWindowHistory } from "./quotaWindowHistory.js";
 import type { ResetVisibility } from "./quotaWindowHistory.js";
 import { createCodexQuotaPoller, readFixtureQuota } from "./quotaSource.js";
@@ -21,9 +23,10 @@ import type { CodexQuotaPluginOptions, Logger, QuotaPoller, QuotaSnapshot } from
 export class CodexQuotaPlugin {
   readonly id = "codex-quota";
   readonly slug = "codex";
-  private readonly quotaCache = new QuotaSnapshotCache();
-  private readonly statusMessages = new StatusMessageStack();
-  private readonly quotaWindowHistory: QuotaWindowHistory;
+  private quotaCache = new QuotaSnapshotCache();
+  private statusMessages = new StatusMessageStack();
+  private quotaWindowHistory: QuotaWindowHistory;
+  private sourceFixture: boolean | undefined;
   private demoDurationMs: number;
   private presentationDemo: CodexQuotaDemoState | undefined;
   private presentationDemoExpiresAt: Date | undefined;
@@ -42,11 +45,13 @@ export class CodexQuotaPlugin {
       logger?: Logger;
       now?: () => Date;
       quotaWindowHistory?: QuotaWindowHistory;
+      fixture?: boolean;
       demoDurationMs?: number;
       onChanged?: () => void;
     }
   ) {
     this.quotaWindowHistory = options.quotaWindowHistory ?? new QuotaWindowHistory();
+    this.sourceFixture = options.fixture;
     this.demoDurationMs = options.demoDurationMs ?? 0;
     if (!Number.isFinite(this.demoDurationMs) || this.demoDurationMs < 0) {
       throw new Error("Codex demo duration must be a non-negative number.");
@@ -64,6 +69,17 @@ export class CodexQuotaPlugin {
     now?: () => Date;
     readQuota?: QuotaPoller;
   }): void {
+    const sourceChanged = options.fixture !== undefined
+      && this.sourceFixture !== undefined
+      && options.fixture !== this.sourceFixture;
+    if (sourceChanged) {
+      this.quotaCache = new QuotaSnapshotCache();
+      this.statusMessages = new StatusMessageStack();
+      this.quotaWindowHistory = new QuotaWindowHistory();
+      this.collectionFailure = undefined;
+      this.lastCollectedAt = undefined;
+    }
+    if (options.fixture !== undefined) this.sourceFixture = options.fixture;
     if (options.readQuota) {
       this.readQuota = options.readQuota;
     } else if (options.fixture !== undefined || options.autoStartWindow5h !== undefined || options.autoStartWindowWk !== undefined) {
@@ -181,7 +197,9 @@ export class CodexQuotaPlugin {
       logQuotaReadFailure(
         this.options.logger,
         error,
-        { text: errorStatus(error) },
+        formatError(error, {
+          statusMessage: isCodexAuthenticationFailure(error) ? errorStatus(error) : undefined
+        }),
         this.quotaCache.state()
       );
     }
@@ -213,7 +231,7 @@ export class CodexQuotaPlugin {
       snapshot: displayedSnapshot,
       statusMessage: this.statusMessages.top(now) ?? this.options.statusMessage?.(),
       staleWindowIds: this.collectionFailure && snapshot ? snapshot.windows.map((window) => window.id) : [],
-      resetVisibility: snapshot ? this.quotaWindowHistory.resetVisibilityFor(snapshot) : {},
+      resetVisibility: displayedSnapshot ? this.quotaWindowHistory.resetVisibilityFor(displayedSnapshot) : {},
       timeZone: this.options.timeZone,
       showPacing: this.options.showPacing ?? true,
       ...(currentDemo ? { presentationDemo: { ...currentDemo } } : {})
@@ -279,6 +297,7 @@ export function createCodexQuotaPlugin({
     logger,
     now,
     quotaWindowHistory,
+    fixture,
     demoDurationMs,
     onChanged
   });

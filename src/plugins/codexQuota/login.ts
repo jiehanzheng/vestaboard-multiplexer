@@ -14,13 +14,14 @@ export class CodexLogin {
   private task?: Promise<void>;
   private checkAbort?: AbortController;
   private checkTask?: Promise<void>;
+  private stopped = false;
 
   constructor(private readonly changed: () => void, private readonly run = withCodexAppServer) {}
 
   status(): LoginStatus { return { ...this.value }; }
 
   async check(): Promise<void> {
-    if (this.value.pending || this.checkTask) return;
+    if (this.stopped || this.value.pending || this.checkTask) return;
     const abort = new AbortController();
     this.checkAbort = abort;
     let task!: Promise<void>;
@@ -52,7 +53,7 @@ export class CodexLogin {
   }
 
   start(): void {
-    if (this.value.pending || this.checkTask) return;
+    if (this.stopped || this.value.pending || this.checkTask) return;
     this.abort = new AbortController();
     this.value = { pending: true };
     this.changed();
@@ -99,6 +100,7 @@ export class CodexLogin {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     this.checkAbort?.abort();
     await Promise.all([this.cancel(), this.checkTask]);
   }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PauseController, PauseStore } from "../src/pause.js";
@@ -83,6 +83,39 @@ test("independent manual and HA writes keep their latest requested values", asyn
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("a later HA write preserves a manual pause after an earlier write failure", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "vbmux-pause-failure-"));
+  try {
+    const pause = await PauseStore.open(dir);
+    await pause.bindHA("first");
+    await pause.setHA(false, "first");
+    await rm(dir, { recursive: true, force: true });
+    await writeFile(dir, "blocked");
+    await assert.rejects(pause.setManual(true));
+    await rm(dir, { force: true });
+    await mkdir(dir);
+    await pause.setHA(true, "first");
+    const reopened = await PauseStore.open(dir);
+    assert.equal(reopened.status().manualPause, true);
+    assert.equal(reopened.status().haPause, true);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("retrying a failed binding persists the same requested binding", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "vbmux-pause-binding-retry-"));
+  try {
+    const pause = await PauseStore.open(dir);
+    await rm(dir, { recursive: true, force: true });
+    await writeFile(dir, "blocked");
+    await assert.rejects(pause.bindHA("first"));
+    await rm(dir, { force: true });
+    await mkdir(dir);
+    await pause.bindHA("first");
+    await pause.setHA(false, "first");
+    assert.equal(pause.status().paused, false);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("controller consumes exact HA pause states and ignores ordinary HA outages", async () => {
   const dir = await mkdtemp(join(tmpdir(), "vbmux-pause-controller-"));
   const service = new FakeHomeAssistantService();
@@ -111,9 +144,9 @@ test("corrupt pause state stays paused until a successful repair", async () => {
   try {
     await writeFile(join(dir, "pause.json"), "not-json");
     const controller = await PauseController.open(dir, new FakeHomeAssistantService());
-    await controller.configure({ url: "", pause: null });
     assert.equal(controller.status().paused, true);
     assert.match(controller.status().persistenceError ?? "", /invalid/i);
+    await controller.configure({ url: "", pause: null });
     await controller.manual(false);
     assert.equal(controller.status().paused, false);
     assert.equal(controller.status().persistenceError, undefined);

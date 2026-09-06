@@ -209,7 +209,8 @@ test("shares the configured client and closes temporary inspection clients", asy
   temporary.receive({ id: temporarySubscribeId, type: "result", success: true, result: null });
   const temporaryStatesId = temporary.sent.find((message) => message.type === "get_states")?.id as number;
   temporary.receive({ id: temporaryStatesId, type: "result", success: true, result: [] });
-  assert.equal((await draft).connected, true);
+  const draftResult = await draft;
+  assert.equal("connected" in draftResult && draftResult.connected, true);
   assert.equal(temporary.closed, true);
   await service.stop();
   assert.equal(active.closed, true);

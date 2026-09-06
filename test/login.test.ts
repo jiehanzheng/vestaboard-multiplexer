@@ -39,3 +39,18 @@ test("cancelling login owns and settles the active operation", async () => {
   assert.equal(aborted, true);
   assert.deepEqual(login.status(), { pending: false });
 });
+
+test("stopped login does not start new account operations", async () => {
+  let calls = 0;
+  const run = (async () => {
+    calls += 1;
+    throw new Error("unexpected account operation");
+  }) as typeof withCodexAppServer;
+  const login = new CodexLogin(() => {}, run);
+
+  await login.stop();
+  login.start();
+  await login.check();
+
+  assert.equal(calls, 0);
+});

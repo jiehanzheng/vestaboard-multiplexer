@@ -52,3 +52,31 @@ test("an initially disabled integration starts polling after configure enables i
   assert.equal(reads, 1);
   await integration.stop();
 });
+
+test("a Codex source switch clears incompatible readings while outages retain the last good frame", async () => {
+  let failed = false;
+  const integration = createCodexIntegration(config(), {
+    now: () => new Date("2026-06-19T00:00:00Z"),
+    readQuota: async () => {
+      if (failed) throw new Error("temporary quota failure");
+      return { snapshot: { windows: [{ id: "primary", remainingRatio: 0.8, durationMins: 300 }] } };
+    }
+  });
+
+  await integration.collectInitial();
+  const collected = integration.status();
+  const goodFrame = integration.elements().find((element) => element.id === "codex.window-1")!.render(15);
+
+  failed = true;
+  await integration.collectInitial();
+  const outage = integration.status();
+  const retainedFrame = integration.elements().find((element) => element.id === "codex.window-1")!.render(15);
+  assert.equal(outage.collectedAt, collected.collectedAt);
+  assert.notDeepEqual(retainedFrame, goodFrame);
+
+  await integration.configure(config({ source: "app-server" }));
+  assert.deepEqual(integration.status(), {});
+  const clearedFrame = integration.elements().find((element) => element.id === "codex.window-1")!.render(15);
+  assert.notDeepEqual(clearedFrame, retainedFrame);
+  await integration.stop();
+});

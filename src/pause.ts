@@ -61,7 +61,7 @@ export class PauseStore {
 
   setManual(value: boolean): Promise<void> {
     this.requested = { ...this.requested, manualPause: value };
-    return this.enqueue((state) => ({ ...state, manualPause: value }));
+    return this.enqueue({ ...this.requested });
   }
 
   bindHA(key?: string): Promise<void> {
@@ -72,26 +72,22 @@ export class PauseStore {
       // A new binding is fail-closed until its state is persisted and observed.
       this.requested = { ...this.requested, haBinding: key, haPause: true };
     }
-    return this.enqueue((state) => key === undefined
-        ? { ...state, haBinding: undefined, haPause: false }
-        : sameBinding ? state : { ...state, haBinding: key, haPause: true }
-    );
+    return this.enqueue({ ...this.requested });
   }
 
   setHA(value: boolean, key?: string): Promise<void> {
     if (this.requested.haBinding !== key) return Promise.resolve();
     this.requested = { ...this.requested, haPause: value };
-    return this.enqueue((state) => state.haBinding === key ? { ...state, haPause: value } : state);
+    return this.enqueue({ ...this.requested });
   }
 
   flush(): Promise<void> { return this.queue; }
 
-  private enqueue(update: (state: PauseState) => PauseState): Promise<void> {
+  private enqueue(target: PauseState): Promise<void> {
     const task = this.queue.then(async () => {
-      const next = update(this.state);
-      if (!sameState(next, this.state) || this.persistenceError !== undefined) {
-        await this.persist(next);
-        this.state = next;
+      if (!sameState(target, this.state) || this.persistenceError !== undefined) {
+        await this.persist(target);
+        this.state = target;
         this.persistenceError = undefined;
       }
     });

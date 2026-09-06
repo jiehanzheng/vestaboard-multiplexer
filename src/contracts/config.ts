@@ -82,3 +82,5 @@ export const PublicConfigSchema = z.object({
 export type PublicConfig = z.infer<typeof PublicConfigSchema>;
 export type { HAConfig, WaterHeaterConfig };
 export type { CodexConfig };
+
+export { CodexConfigSchema, WaterHeaterConfigSchema };
