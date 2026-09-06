@@ -1,5 +1,14 @@
-import type { VestaboardClient, VestaboardMessage } from "./orchestrator.js";
 import type { VestaboardBoard } from "./vestaboardTypes.js";
+
+export interface VestaboardMessage {
+  text: string;
+  characters?: number[][];
+}
+
+export interface VestaboardClient {
+  send(message: VestaboardMessage): Promise<void>;
+  detectBoard?(): Promise<VestaboardBoard | undefined>;
+}
 
 export type LocalMessageTransitionStrategy =
   | "column"

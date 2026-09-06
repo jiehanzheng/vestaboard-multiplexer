@@ -1,6 +1,5 @@
-import { createCodexQuotaPlugin } from "./plugins/codexQuota/index.js";
+import { LegacyCodexQuotaAdapter } from "./plugins/codexQuota/legacyAdapter.js";
 import { LastSentMessageCache, runForever, tick } from "./orchestrator.js";
-import { RuntimeSignalController } from "./runtimeSignals.js";
 import { sendStartupMessage } from "./startupMessage.js";
 import { boardPreferenceFromEnv, createVestaboardBoardResolver } from "./vestaboardBoard.js";
 import { createVestaboardClient, localMessageTransitionOptionsFromEnv } from "./vestaboard.js";
@@ -12,8 +11,6 @@ const intervalMinutes = Number(process.env.ORCHESTRATOR_INTERVAL_MINUTES ?? "5")
 const startupPollDelayMs = 60_000;
 const vestaboardTransport = process.env.VESTABOARD_LOCAL_API_KEY ? "local" : "cloud";
 const sentMessageCache = new LastSentMessageCache();
-const demoPauseMinutes = Number(process.env.CODEX_QUOTA_DEMO_PAUSE_MINUTES ?? "5");
-const runtimeSignals = new RuntimeSignalController();
 const localMessageTransition = localMessageTransitionOptionsFromEnv(process.env, console);
 
 const vestaboard = createVestaboardClient({
@@ -31,7 +28,7 @@ const boardResolver = createVestaboardBoardResolver({
 });
 
 const plugins = [
-  createCodexQuotaPlugin({
+  new LegacyCodexQuotaAdapter({
     fixture: process.env.CODEX_QUOTA_SOURCE === "fixture",
     priority: process.env.CODEX_QUOTA_PRIORITY ?? "normal",
     errorPriority: process.env.CODEX_QUOTA_ERROR_PRIORITY ?? "low",
@@ -40,9 +37,7 @@ const plugins = [
     board: () => boardResolver.resolve(),
     statusMessage: () => boardResolver.resolution().source === "assumed" ? "VB SIZE PEND" : undefined,
     autoStartWindow5h: envFlag(process.env.CODEX_AUTO_START_WINDOW_5H),
-    autoStartWindowWk: envFlag(process.env.CODEX_AUTO_START_WINDOW_WK),
-    takeDemoMode: () => runtimeSignals.takeDemo(),
-    restoreDemoMode: (demo) => runtimeSignals.restoreDemo(demo)
+    autoStartWindowWk: envFlag(process.env.CODEX_AUTO_START_WINDOW_WK)
   })
 ];
 
@@ -53,8 +48,7 @@ async function run(): Promise<void> {
 if (once) {
   runOnceWithStartup().catch(fail);
 } else {
-  runtimeSignals.install(console);
-  runWithStartupAndRuntimeSignals().catch(fail);
+  runWithStartupAndPolling().catch(fail);
 }
 
 function fail(error: unknown): void {
@@ -62,25 +56,25 @@ function fail(error: unknown): void {
   process.exitCode = 1;
 }
 
-async function runWithRuntimeSignals(): Promise<void> {
-  await runForever({
-    runOnce: run,
-    waitMs: intervalMinutes * 60_000,
-    sleep: async (ms) => {
-      const delayMs = runtimeSignals.takePauseAfterDemoRun() ? demoPauseMinutes * 60_000 : ms;
-      await runtimeSignals.sleep(delayMs);
-    }
-  });
-}
-
 async function runOnceWithStartup(): Promise<void> {
   await startup();
   await run();
 }
 
-async function runWithStartupAndRuntimeSignals(): Promise<void> {
-  await startup();
-  await runWithRuntimeSignals();
+async function runWithStartupAndPolling(): Promise<void> {
+  let stopping = false;
+  const stop = (): void => { stopping = true; };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  try {
+    await startup();
+    if (!stopping) {
+      await runForever({ runOnce: run, waitMs: intervalMinutes * 60_000, shouldContinue: () => !stopping });
+    }
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+  }
 }
 
 async function startup(): Promise<void> {
@@ -92,7 +86,7 @@ async function startup(): Promise<void> {
     timeZone: process.env.CODEX_QUOTA_TIME_ZONE,
     statusLine: localMessageTransition.hasError ? "check logs" : undefined
   });
-  await runtimeSignals.sleep(startupPollDelayMs);
+  await new Promise<void>((resolve) => setTimeout(resolve, startupPollDelayMs));
 }
 
 function envFlag(value: string | undefined): boolean {

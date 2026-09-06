@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import test from "node:test";
 
-import { RuntimeSignalController } from "../src/runtimeSignals.js";
 import {
   CodexAppServerError,
   isMatchingTurnCompletion,
@@ -24,7 +23,6 @@ import {
   type QuotaWindow,
   selectAutoStartModel
 } from "../src/plugins/codexQuota/index.js";
-import { LastSentMessageCache, runForever, tick, type VestaboardMessage } from "../src/orchestrator.js";
 import { BLACK, BLUE, GREEN, ORANGE, RED, VIOLET, WHITE, YELLOW } from "../src/plugins/codexQuota/display/shared.js";
 import { classifyCodexFailure, inspectCodexAuthStorage } from "../src/plugins/codexQuota/failure.js";
 import { StatusMessageStack } from "../src/plugins/codexQuota/pluginState.js";
@@ -41,7 +39,7 @@ import {
 test("renders startup message with date time and enabled plugin slugs for Vestaboard Note", () => {
   const message = formatStartupMessage({
     plugins: [
-      { id: "codex-quota", slug: "codex", getUpdate: async () => ({ priority: "normal", message: { text: "" } }) }
+      { id: "codex-quota", slug: "codex" }
     ],
     now: new Date("2026-06-24T14:19:00-07:00"),
     timeZone: "America/Los_Angeles",
@@ -56,8 +54,8 @@ test("renders startup message with date time and enabled plugin slugs for Vestab
 test("renders comma-separated startup plugin slugs without spaces", () => {
   const message = formatStartupMessage({
     plugins: [
-      { id: "codex-quota", slug: "codex", getUpdate: async () => ({ priority: "normal", message: { text: "" } }) },
-      { id: "weather", getUpdate: async () => ({ priority: "normal", message: { text: "" } }) }
+      { id: "codex-quota", slug: "codex" },
+      { id: "weather" }
     ],
     now: new Date("2026-06-24T21:19:00Z"),
     board: "flagship",
@@ -71,7 +69,7 @@ test("renders comma-separated startup plugin slugs without spaces", () => {
 test("renders startup status on the last physical row", () => {
   const message = formatStartupMessage({
     plugins: [
-      { id: "codex-quota", slug: "codex", getUpdate: async () => ({ priority: "normal", message: { text: "" } }) }
+      { id: "codex-quota", slug: "codex" }
     ],
     now: new Date("2026-06-24T21:19:00Z"),
     board: "flagship",
@@ -358,6 +356,8 @@ test("status message stack prunes expired messages before retaining new ones", (
 
   stack.push("first", new Date("2026-06-19T00:00:00-07:00"), 1_000);
   stack.push("second", new Date("2026-06-19T00:00:02-07:00"), 1_000);
+  assert.equal(stack.top(new Date("2026-06-19T00:00:04-07:00")), undefined);
+  assert.equal(retainedMessages().length, 1);
   stack.pushLow("third", new Date("2026-06-19T00:00:04-07:00"), 1_000);
 
   assert.equal(retainedMessages().length, 1);
@@ -1126,14 +1126,12 @@ test("codex plugin shows full-window reset time after two matching fresh ticks",
       weekly: { remainingRatio: 1, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     });
   }, {
-    priority: "normal",
-    errorPriority: "low",
     timeZone: "America/Los_Angeles",
     now: () => new Date("2026-06-18T21:44:00-07:00")
   });
 
-  const first = await plugin.getUpdate();
-  const second = await plugin.getUpdate();
+  const first = await collectAndRender(plugin);
+  const second = await collectAndRender(plugin);
 
   assert.equal(reads, 2);
   assert.equal(first.message.text.split("\n")[2], "               ");
@@ -1155,16 +1153,14 @@ test("codex plugin hides a changed full-window reset until it repeats", async ()
   ];
   let reads = 0;
   const plugin = testCodexQuotaPlugin(async () => quotaPollResult(snapshots[reads++] ?? snapshots.at(-1)!), {
-    priority: "normal",
-    errorPriority: "low",
     timeZone: "America/Los_Angeles",
     now: () => new Date("2026-06-19T00:00:00-07:00")
   });
 
-  await plugin.getUpdate();
-  await plugin.getUpdate();
-  const changed = await plugin.getUpdate();
-  const repeated = await plugin.getUpdate();
+  await collectAndRender(plugin);
+  await collectAndRender(plugin);
+  const changed = await collectAndRender(plugin);
+  const repeated = await collectAndRender(plugin);
 
   assert.equal(changed.message.text.split("\n")[2], "06/24-1419     ");
   assert.equal(repeated.message.text.split("\n")[2], "0744♥06/24-1419");
@@ -1175,14 +1171,12 @@ test("codex plugin demo drop shows five-hour reset immediately without weekly vi
     fiveHour: { remainingRatio: 1, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
     weekly: { remainingRatio: 1, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
   }), {
-    priority: "normal",
-    errorPriority: "low",
     timeZone: "America/Los_Angeles",
-    takeDemoMode: () => ({ pctDrops: 1 }),
     now: () => new Date("2026-06-18T21:44:00-07:00")
   });
+  plugin.activateDemo({ pctDrops: 1 });
 
-  const update = await plugin.getUpdate();
+  const update = await collectAndRender(plugin);
 
   assert.equal(update.message.text.split("\n")[0], "5HYYYYYYYYYW99%");
   assert.equal(update.message.text.split("\n")[2], "0244           ");
@@ -1190,7 +1184,7 @@ test("codex plugin demo drop shows five-hour reset immediately without weekly vi
 
 test("codex plugin demo drop does not create stable full-window history", async () => {
   let reads = 0;
-  let demoAvailable = true;
+  let now = new Date("2026-06-19T00:00:00-07:00");
   const snapshots = [
     quotaSnapshot({ fiveHour: 1, weekly: 1 }),
     {
@@ -1203,23 +1197,16 @@ test("codex plugin demo drop does not create stable full-window history", async 
     }
   ];
   const plugin = testCodexQuotaPlugin(async () => quotaPollResult(snapshots[reads++] ?? snapshots.at(-1)!), {
-    priority: "normal",
-    errorPriority: "low",
     timeZone: "America/Los_Angeles",
-    takeDemoMode: () => {
-      if (!demoAvailable) {
-        return undefined;
-      }
-
-      demoAvailable = false;
-      return { pctDrops: 1 };
-    },
-    now: () => new Date("2026-06-19T00:00:00-07:00")
+    demoDurationMs: 1,
+    now: () => now
   });
+  plugin.activateDemo({ pctDrops: 1 });
 
-  const demo = await plugin.getUpdate();
-  const changed = await plugin.getUpdate();
-  const repeated = await plugin.getUpdate();
+  const demo = await collectAndRender(plugin);
+  now = new Date("2026-06-19T00:00:00.002-07:00");
+  const changed = await collectAndRender(plugin);
+  const repeated = await collectAndRender(plugin);
 
   assert.equal(demo.message.text.split("\n")[2], "0244           ");
   assert.equal(changed.message.text.split("\n")[2], "06/24-1419     ");
@@ -1236,21 +1223,18 @@ test("codex plugin retains ping status-message messages until expiration", async
   const plugin = testCodexQuotaPlugin(async () => {
     reads += 1;
     return reads === 1 ? { snapshot, statusMessage: "ping gpt5.4minilow" } : quotaPollResult(snapshot);
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", now: () => now });
+  }, {timeZone: "America/Los_Angeles", now: () => now });
 
-  const first = await plugin.getUpdate();
+  const first = await collectAndRender(plugin);
   now = new Date("2026-06-19T00:04:00-07:00");
-  const retained = await plugin.getUpdate();
+  const retained = await collectAndRender(plugin);
   now = new Date("2026-06-19T00:06:00-07:00");
-  const expired = await plugin.getUpdate();
+  const expired = await collectAndRender(plugin);
 
   assert.equal(first.message.text.split("\n")[2], "PING GPT5.4MINI");
   assert.equal(retained.message.text.split("\n")[2], "PING GPT5.4MINI");
   assert.deepEqual(first.message.characters?.[2], [16, 9, 14, 7, 0, 7, 16, 20, 31, 56, 30, 13, 9, 14, 9]);
   assert.equal(expired.message.text.split("\n")[2], "0244♥06/24-1419");
-  assert.equal(first.priority, "high");
-  assert.equal(retained.priority, "high");
-  assert.equal(expired.priority, "normal");
 });
 
 test("codex plugin shows newer fetch failure above retained ping message", async () => {
@@ -1268,14 +1252,12 @@ test("codex plugin shows newer fetch failure above retained ping message", async
 
     reads += 1;
     return reads === 1 ? { snapshot, statusMessage: "ping gpt5.4minilow" } : quotaPollResult(snapshot);
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn() {} }, now: () => now });
+  }, {timeZone: "America/Los_Angeles", logger: { warn() {} }, now: () => now });
 
-  await plugin.getUpdate();
+  await collectAndRender(plugin);
   now = new Date("2026-06-19T00:04:00-07:00");
   fail = true;
-  const fallback = await plugin.getUpdate();
-
-  assert.equal(fallback.priority, "high");
+  const fallback = await collectAndRender(plugin);
   assert.equal(fallback.message.text.split("\n")[2], "TIMEOUT        ");
 });
 
@@ -1296,14 +1278,12 @@ test("codex plugin replaces a two-window snapshot with a complete one-window sna
       },
       statusMessage: "ping gpt5.4minilow"
     };
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn() {} }, now: () => now });
+  }, {timeZone: "America/Los_Angeles", logger: { warn() {} }, now: () => now });
 
-  await plugin.getUpdate();
+  await collectAndRender(plugin);
   now = new Date("2026-06-19T00:04:00-07:00");
   partial = true;
-  const fallback = await plugin.getUpdate();
-
-  assert.equal(fallback.priority, "high");
+  const fallback = await collectAndRender(plugin);
   assert.match(fallback.message.text.split("\n")[0], /^5H/);
   assert.equal(fallback.message.text.split("\n")[1], "               ");
   assert.equal(fallback.message.text.split("\n")[2], "PING GPT5.4MINI");
@@ -1673,11 +1653,9 @@ test("codex plugin keeps fresh quota display when auto-start sidecar fails", asy
       weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     },
     sidecarError: new Error("model/list failed")
-  }), { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn: (...args) => warnings.push(args) } });
+  }), {timeZone: "America/Los_Angeles", logger: { warn: (...args) => warnings.push(args) } });
 
-  const update = await plugin.getUpdate();
-
-  assert.equal(update.priority, "high");
+  const update = await collectAndRender(plugin);
   assert.match(update.message.text.split("\n")[0], /^5H/);
   assert.match(update.message.text.split("\n")[1], /^WK/);
   assert.equal(update.message.text.split("\n")[2], "AUTO PING FAIL ");
@@ -1697,11 +1675,9 @@ test("codex plugin shows reset available when weekly quota is exhausted and rese
       weekly: { remainingRatio: 0, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     },
     rateLimitResetCreditsAvailableCount: 1
-  }), { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles" });
+  }), {timeZone: "America/Los_Angeles" });
 
-  const update = await plugin.getUpdate();
-
-  assert.equal(update.priority, "high");
+  const update = await collectAndRender(plugin);
   assert.equal(update.message.text.split("\n")[2], "RESET AVAILABLE");
 });
 
@@ -1717,18 +1693,14 @@ test("codex plugin expires reset available after a later fetch omits reset credi
       },
       rateLimitResetCreditsAvailableCount: reads === 1 ? 1 : 0
     };
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", now: () => now });
+  }, {timeZone: "America/Los_Angeles", now: () => now });
 
-  const first = await plugin.getUpdate();
-  const retained = await plugin.getUpdate();
+  const first = await collectAndRender(plugin);
+  const retained = await collectAndRender(plugin);
   now = new Date("2026-06-19T00:00:01-07:00");
-  const second = await plugin.getUpdate();
-
-  assert.equal(first.priority, "high");
+  const second = await collectAndRender(plugin);
   assert.equal(first.message.text.split("\n")[2], "RESET AVAILABLE");
-  assert.equal(retained.priority, "high");
   assert.equal(retained.message.text.split("\n")[2], "RESET AVAILABLE");
-  assert.equal(second.priority, "normal");
   assert.equal(second.message.text.split("\n")[2], "0244♥06/24-1419");
 });
 
@@ -1745,20 +1717,17 @@ test("codex plugin keeps stacked refresh message above reset available until it 
       statusMessage: reads === 1 ? "ping gpt5.4minilow" : undefined,
       rateLimitResetCreditsAvailableCount: 1
     };
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", now: () => now });
+  }, {timeZone: "America/Los_Angeles", now: () => now });
 
-  const stacked = await plugin.getUpdate();
+  const stacked = await collectAndRender(plugin);
   now = new Date("2026-06-19T00:04:00-07:00");
-  const retained = await plugin.getUpdate();
+  const retained = await collectAndRender(plugin);
   now = new Date("2026-06-19T00:06:00-07:00");
-  const resetAvailable = await plugin.getUpdate();
+  const resetAvailable = await collectAndRender(plugin);
 
   assert.equal(stacked.message.text.split("\n")[2], "PING GPT5.4MINI");
   assert.equal(retained.message.text.split("\n")[2], "PING GPT5.4MINI");
   assert.equal(resetAvailable.message.text.split("\n")[2], "RESET AVAILABLE");
-  assert.equal(stacked.priority, "high");
-  assert.equal(retained.priority, "high");
-  assert.equal(resetAvailable.priority, "high");
 });
 
 test("codex plugin keeps sidecar error above reset available in the status-message stack", async () => {
@@ -1769,11 +1738,9 @@ test("codex plugin keeps sidecar error above reset available in the status-messa
     },
     sidecarError: new Error("model/list failed"),
     rateLimitResetCreditsAvailableCount: 1
-  }), { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn() {} } });
+  }), {timeZone: "America/Los_Angeles", logger: { warn() {} } });
 
-  const update = await plugin.getUpdate();
-
-  assert.equal(update.priority, "high");
+  const update = await collectAndRender(plugin);
   assert.equal(update.message.text.split("\n")[2], "AUTO PING FAIL ");
 });
 
@@ -1783,11 +1750,9 @@ test("codex plugin shows reset available for an exhausted one-window snapshot", 
       weekly: { remainingRatio: 0, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     },
     rateLimitResetCreditsAvailableCount: 1
-  }), { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn() {} } });
+  }), {timeZone: "America/Los_Angeles", logger: { warn() {} } });
 
-  const update = await plugin.getUpdate();
-
-  assert.equal(update.priority, "high");
+  const update = await collectAndRender(plugin);
   assert.match(update.message.text.split("\n")[0], /^WK/);
   assert.equal(update.message.text.split("\n")[1], "               ");
   assert.equal(update.message.text.split("\n")[2], "RESET AVAILABLE");
@@ -1804,11 +1769,9 @@ test("codex plugin shows reset available when any displayed quota is exhausted",
       }]
     },
     rateLimitResetCreditsAvailableCount: 1
-  }), { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles" });
+  }), {timeZone: "America/Los_Angeles" });
 
-  const update = await plugin.getUpdate();
-
-  assert.equal(update.priority, "high");
+  const update = await collectAndRender(plugin);
   assert.equal(update.message.text.split("\n")[2], "RESET AVAILABLE");
 });
 
@@ -1819,23 +1782,19 @@ test("codex plugin does not show reset available when weekly quota remains", asy
       weekly: { remainingRatio: 0.01, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     },
     rateLimitResetCreditsAvailableCount: 1
-  }), { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles" });
+  }), {timeZone: "America/Los_Angeles" });
 
-  const update = await plugin.getUpdate();
-
-  assert.equal(update.priority, "normal");
+  const update = await collectAndRender(plugin);
   assert.equal(update.message.text.split("\n")[2], "0244♥06/24-1419");
 });
 
-test("codex plugin returns low-priority error message when quota read fails", async () => {
+test("codex plugin returns an error message when quota read fails", async () => {
   const warnings: unknown[][] = [];
   const plugin = testCodexQuotaPlugin(async () => {
     throw new Error("invalid json from codex");
-  }, { priority: "normal", errorPriority: "low", logger: { warn: (...args) => warnings.push(args) } });
+  }, {logger: { warn: (...args) => warnings.push(args) } });
 
-  const update = await plugin.getUpdate();
-
-  assert.equal(update.priority, "low");
+  const update = await collectAndRender(plugin);
   assert.equal(update.message.text.split("\n")[0], "CODEX QUOTA ERR");
   assert.equal(update.message.characters?.every((row) => row.length === 15), true);
   assert.equal(warnings[0]?.[0], "Codex quota read failed.");
@@ -1843,7 +1802,6 @@ test("codex plugin returns low-priority error message when quota read fails", as
     reason: "invalid_json",
     errorName: "Error",
     errorMessage: "invalid json from codex",
-    fallbackPriority: "low",
     cacheState: {
       hasSnapshot: false,
       windowCount: 0,
@@ -1859,13 +1817,11 @@ test("codex plugin renders auth expired with and without cached quota on both bo
     const noCachePlugin = testCodexQuotaPlugin(async () => {
       throw expiredTokenError();
     }, {
-      priority: "normal",
-      errorPriority: "low",
       board: async () => board,
       logger: { warn: (...args) => noCacheWarnings.push(args) }
     });
 
-    const noCache = await noCachePlugin.getUpdate();
+    const noCache = await collectAndRender(noCachePlugin);
     assert.match(noCache.message.text, /AUTH EXPIRED/);
     assert.equal((noCacheWarnings[0]?.[1] as { reason?: string }).reason, "auth_expired");
     assert.equal(
@@ -1881,16 +1837,13 @@ test("codex plugin renders auth expired with and without cached quota on both bo
         weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
       });
     }, {
-      priority: "normal",
-      errorPriority: "low",
       board: async () => board,
       logger: { warn() {} }
     });
 
-    await cachedPlugin.getUpdate();
+    await collectAndRender(cachedPlugin);
     fail = true;
-    const cached = await cachedPlugin.getUpdate();
-    assert.equal(cached.priority, "high");
+    const cached = await collectAndRender(cachedPlugin);
     assert.match(cached.message.text, /AUTH EXPIRED/);
   }
 });
@@ -1907,13 +1860,11 @@ test("codex plugin renders cached quota ingredients when a later quota read fail
       fiveHour: { remainingRatio: 0.8, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
       weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     });
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn: (...args) => warnings.push(args) } });
+  }, {timeZone: "America/Los_Angeles", logger: { warn: (...args) => warnings.push(args) } });
 
-  const good = await plugin.getUpdate();
+  const good = await collectAndRender(plugin);
   fail = true;
-  const fallback = await plugin.getUpdate();
-
-  assert.equal(fallback.priority, "high");
+  const fallback = await collectAndRender(plugin);
   assert.equal(fallback.message.text.split("\n")[0].replace("?", " "), good.message.text.split("\n")[0]);
   assert.equal(fallback.message.text.split("\n")[1].replace("?", " "), good.message.text.split("\n")[1]);
   assert.equal(fallback.message.text.split("\n")[2], "TIMEOUT        ");
@@ -1936,13 +1887,11 @@ test("codex plugin shows fetch fail for generic cached quota read failures", asy
       fiveHour: { remainingRatio: 0.8, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
       weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     });
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn() {} } });
+  }, {timeZone: "America/Los_Angeles", logger: { warn() {} } });
 
-  await plugin.getUpdate();
+  await collectAndRender(plugin);
   fail = true;
-  const fallback = await plugin.getUpdate();
-
-  assert.equal(fallback.priority, "high");
+  const fallback = await collectAndRender(plugin);
   assert.equal(fallback.message.text.split("\n")[2], "FETCH FAIL     ");
 });
 
@@ -1960,13 +1909,11 @@ test("codex plugin does not merge an omitted window from an older snapshot", asy
       fiveHour: { remainingRatio: 0.8, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
       weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     });
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn: (...args) => warnings.push(args) } });
+  }, {timeZone: "America/Los_Angeles", logger: { warn: (...args) => warnings.push(args) } });
 
-  await plugin.getUpdate();
+  await collectAndRender(plugin);
   partial = true;
-  const oneWindow = await plugin.getUpdate();
-
-  assert.equal(oneWindow.priority, "normal");
+  const oneWindow = await collectAndRender(plugin);
   assert.match(oneWindow.message.text.split("\n")[0], /^5H/);
   assert.equal(oneWindow.message.text.split("\n")[1], "               ");
   assert.equal(oneWindow.message.text.split("\n")[2], "0300           ");
@@ -1989,18 +1936,13 @@ test("codex plugin treats a successful empty snapshot as the complete cached sta
 
     throw new Error("Codex app-server error: invalid request");
   }, {
-    priority: "normal",
-    errorPriority: "low",
     logger: { warn() {} }
   });
 
-  await plugin.getUpdate();
-  const empty = await plugin.getUpdate();
-  const fallback = await plugin.getUpdate();
-
-  assert.equal(empty.priority, "normal");
+  await collectAndRender(plugin);
+  const empty = await collectAndRender(plugin);
+  const fallback = await collectAndRender(plugin);
   assert.equal(empty.message.text, "               \n               \n               ");
-  assert.equal(fallback.priority, "high");
   assert.equal(fallback.message.text, "               \n               \nFETCH FAIL     ");
 });
 
@@ -2016,12 +1958,12 @@ test("codex plugin recomputes cached ingredients instead of reusing rendered mes
       fiveHour: { remainingRatio: 0.8, resetAt: new Date("2026-06-19T02:00:00-07:00"), durationMins: 300 },
       weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     });
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn() {} }, now: () => now });
+  }, {timeZone: "America/Los_Angeles", logger: { warn() {} }, now: () => now });
 
-  const good = await plugin.getUpdate();
+  const good = await collectAndRender(plugin);
   fail = true;
   now = new Date("2026-06-19T01:00:00-07:00");
-  const fallback = await plugin.getUpdate();
+  const fallback = await collectAndRender(plugin);
 
   assert.notEqual(fallback.message.text.split("\n")[0], good.message.text.split("\n")[0]);
   assert.equal(fallback.message.text.split("\n")[2], "TIMEOUT        ");
@@ -2040,33 +1982,28 @@ test("codex plugin expires transient error status after the next successful read
       fiveHour: { remainingRatio: 0.8, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
       weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     });
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn() {} }, now: () => now });
+  }, {timeZone: "America/Los_Angeles", logger: { warn() {} }, now: () => now });
 
-  await plugin.getUpdate();
+  await collectAndRender(plugin);
   fail = true;
   now = new Date("2026-06-19T00:01:00-07:00");
-  const error = await plugin.getUpdate();
+  const error = await collectAndRender(plugin);
   now = new Date("2026-06-19T00:01:00.500-07:00");
-  const retained = await plugin.getUpdate();
+  const retained = await collectAndRender(plugin);
   now = new Date("2026-06-19T00:01:01-07:00");
-  const expired = await plugin.getUpdate();
+  const expired = await collectAndRender(plugin);
 
   assert.equal(error.message.text.split("\n")[2], "TIMEOUT        ");
   assert.equal(retained.message.text.split("\n")[2], "TIMEOUT        ");
   assert.equal(expired.message.text.split("\n")[2], "0244♥06/24-1419");
-  assert.equal(error.priority, "high");
-  assert.equal(retained.priority, "high");
-  assert.equal(expired.priority, "normal");
 });
 
 test("codex plugin leaves an unused quota row blank", async () => {
   const plugin = testCodexQuotaPlugin(async () => quotaPollResult({
     fiveHour: { remainingRatio: 0.7, resetAt: new Date("2026-06-19T03:00:00-07:00"), durationMins: 300 }
-  }), { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles", logger: { warn() {} } });
+  }), {timeZone: "America/Los_Angeles", logger: { warn() {} } });
 
-  const update = await plugin.getUpdate();
-
-  assert.equal(update.priority, "normal");
+  const update = await collectAndRender(plugin);
   assert.equal(update.message.text.split("\n")[1], "               ");
   assert.equal(update.message.text.split("\n")[2], "0300           ");
 });
@@ -2076,120 +2013,16 @@ test("codex plugin can show board-size pending status in the Note status lane", 
     fiveHour: { remainingRatio: 0.7, resetAt: new Date("2026-06-19T03:00:00-07:00"), durationMins: 300 },
     weekly: { remainingRatio: 0.6, resetAt: new Date("2026-06-22T00:00:00-07:00"), durationMins: 10_080 }
   }), {
-    priority: "normal",
-    errorPriority: "low",
     timeZone: "America/Los_Angeles",
     board: async () => "note",
     statusMessage: () => "VB SIZE PEND"
   });
 
-  const update = await plugin.getUpdate();
-
-  assert.equal(update.priority, "high");
+  const update = await collectAndRender(plugin);
   assert.equal(update.message.text.split("\n")[2], "VB SIZE PEND   ");
   assert.equal(update.message.characters?.[2].length, 15);
 });
 
-test("orchestrator asks each plugin for priority and message in one call", async () => {
-  let reads = 0;
-  const sent: VestaboardMessage[] = [];
-  const plugin = testCodexQuotaPlugin(async () => {
-    reads += 1;
-    return quotaPollResult({
-      fiveHour: { remainingRatio: 0.5, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
-      weekly: { remainingRatio: 0.5, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
-    });
-  }, { priority: "normal", errorPriority: "low", timeZone: "America/Los_Angeles" });
-
-  await tick({
-    plugins: [plugin],
-    vestaboard: {
-      async send(message) {
-        sent.push(message);
-      }
-    },
-    logger: { info() {}, warn() {} }
-  });
-
-  assert.equal(reads, 1);
-  assert.equal(sent[0]?.text.includes("0244♥06/24-1419"), true);
-});
-
-test("orchestrator accepts numeric priority strings", async () => {
-  const sent: VestaboardMessage[] = [];
-
-  await tick({
-    plugins: [
-      {
-        id: "low-numeric",
-        async getUpdate() {
-          return { priority: "10", message: { text: "low" } };
-        }
-      },
-      {
-        id: "high-numeric",
-        async getUpdate() {
-          return { priority: "75", message: { text: "high" } };
-        }
-      }
-    ],
-    vestaboard: {
-      async send(message) {
-        sent.push(message);
-      }
-    },
-    logger: { info() {}, warn() {} }
-  });
-
-  assert.equal(sent[0]?.text, "high");
-});
-
-test("orchestrator skips Vestaboard send when selected message is unchanged", async () => {
-  const sent: VestaboardMessage[] = [];
-  const sentMessageCache = new LastSentMessageCache();
-  const plugin = {
-    id: "same-message",
-    async getUpdate() {
-      return { priority: "normal", message: { text: "same" } };
-    }
-  };
-
-  const vestaboard = {
-    async send(message: VestaboardMessage) {
-      sent.push(message);
-    }
-  };
-
-  await tick({ plugins: [plugin], vestaboard, sentMessageCache, logger: { info() {}, warn() {} } });
-  await tick({ plugins: [plugin], vestaboard, sentMessageCache, logger: { info() {}, warn() {} } });
-
-  assert.equal(sent.length, 1);
-});
-
-test("orchestrator retries unchanged message after failed send", async () => {
-  let attempts = 0;
-  const sentMessageCache = new LastSentMessageCache();
-  const plugin = {
-    id: "retry-message",
-    async getUpdate() {
-      return { priority: "normal", message: { text: "same" } };
-    }
-  };
-
-  const vestaboard = {
-    async send() {
-      attempts += 1;
-      if (attempts === 1) {
-        throw new Error("temporary failure");
-      }
-    }
-  };
-
-  await tick({ plugins: [plugin], vestaboard, sentMessageCache, logger: { info() {}, warn() {} } });
-  await tick({ plugins: [plugin], vestaboard, sentMessageCache, logger: { info() {}, warn() {} } });
-
-  assert.equal(attempts, 2);
-});
 
 test("board preference defaults to auto and validates explicit values", () => {
   assert.equal(boardPreferenceFromEnv(undefined), "auto");
@@ -2553,74 +2386,14 @@ test("error message is encodable for Vestaboard Note", () => {
   assert.equal(message.characters?.every((row) => row.length === 15), true);
 });
 
-test("main loop waits after each completed tick", async () => {
-  const events: string[] = [];
-  let runs = 0;
 
-  await runForever({
-    waitMs: 300_000,
-    shouldContinue: () => runs < 2,
-    async runOnce() {
-      events.push(`run-${runs}`);
-      runs += 1;
-      events.push(`done-${runs}`);
-    },
-    async sleep(ms) {
-      events.push(`sleep-${ms}`);
-    }
-  });
-
-  assert.deepEqual(events, ["run-0", "done-1", "sleep-300000", "run-1", "done-2"]);
-});
-
-test("runtime signals queue cumulative first-row demos and request a demo pause", () => {
-  const controller = new RuntimeSignalController();
-
-  controller.queue("drop-first-1-pct", { info() {} });
-  assert.deepEqual(controller.takeDemo(), { pctDrops: 1 });
-  assert.equal(controller.takePauseAfterDemoRun(), true);
-  assert.equal(controller.takePauseAfterDemoRun(), false);
-
-  controller.queue("drop-first-1-pct", { info() {} });
-  assert.deepEqual(controller.takeDemo(), { pctDrops: 2 });
-
-  controller.queue("drop-first-1-pct", { info() {} });
-  assert.deepEqual(controller.takeDemo(), { pctDrops: 3 });
-});
-
-test("runtime refresh signal wakes a full loop without creating a demo", async () => {
-  const controller = new RuntimeSignalController();
-  const events: string[] = [];
-  let runs = 0;
-
-  await runForever({
-    waitMs: 300_000,
-    shouldContinue: () => runs < 2,
-    async runOnce() {
-      runs += 1;
-      events.push(`run-${runs}`);
-      if (runs === 1) {
-        controller.queue("refresh-now", { info: (message) => events.push(message) });
-      }
-    },
-    sleep: (ms) => controller.sleep(ms)
-  });
-
-  assert.deepEqual(events, ["run-1", "Queued immediate refresh for all widgets.", "run-2"]);
-  assert.equal(controller.takeDemo(), undefined);
-  assert.equal(controller.takePauseAfterDemoRun(), false);
-});
-
-test("codex plugin restores a queued first-row demo when quota read fails", async () => {
-  const controller = new RuntimeSignalController();
+test("codex plugin keeps an explicitly activated demo while a later quota read fails", async () => {
   let attempts = 0;
-  let fail = true;
-  controller.queue("drop-first-1-pct", { info() {} });
+  let fail = false;
 
   const plugin = testCodexQuotaPlugin(async () => {
     attempts += 1;
     if (fail) {
-      fail = false;
       throw new Error("temporary quota failure");
     }
 
@@ -2629,17 +2402,18 @@ test("codex plugin restores a queued first-row demo when quota read fails", asyn
       weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     });
   }, {
-    priority: "normal",
-    errorPriority: "low",
     timeZone: "America/Los_Angeles",
-    takeDemoMode: () => controller.takeDemo(),
-    restoreDemoMode: (demo) => controller.restoreDemo(demo)
   });
 
-  await plugin.getUpdate();
-  const retry = await plugin.getUpdate();
+  await collectAndRender(plugin);
+  plugin.activateDemo({ pctDrops: 1 });
+  fail = true;
+  const fallback = await collectAndRender(plugin);
+  fail = false;
+  const retry = await collectAndRender(plugin);
 
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 3);
+  assert.equal(fallback.message.text.split("\n")[0].endsWith("75%"), true);
   assert.equal(retry.message.text.split("\n")[0].endsWith("75%"), true);
 });
 
@@ -2681,6 +2455,41 @@ function applyCodexQuotaDemo(snapshot: TestQuotaSnapshot, demo: Parameters<typeo
   return applyCodexQuotaDemoWindows(normalizeQuotaSnapshot(snapshot), demo);
 }
 
+type TestCodexQuotaPlugin = CodexQuotaPlugin & {
+  testBoard: () => Promise<"note" | "flagship">;
+  testNow: () => Date;
+};
+type TestCodexQuotaPluginOptions = ConstructorParameters<typeof CodexQuotaPlugin>[1] & {
+  board?: () => Promise<"note" | "flagship">;
+};
+
+async function collectAndRender(plugin: TestCodexQuotaPlugin) {
+  await plugin.collect();
+  const now = plugin.testNow();
+  const state = plugin.getDisplayState(now);
+  const board = await plugin.testBoard();
+  if (!state.snapshot) {
+    return {
+      message: formatError(
+        new Error(state.statusMessage ?? "Codex quota has not been collected yet."),
+        { board, statusMessage: state.statusMessage }
+      )
+    };
+  }
+
+  return {
+    message: formatQuotaWindows(state.snapshot, {
+      board,
+      timeZone: state.timeZone,
+      now,
+      statusMessage: state.statusMessage,
+      staleWindowIds: state.staleWindowIds,
+      showPacing: state.showPacing,
+      resetVisibility: state.resetVisibility
+    })
+  };
+}
+
 function testCodexQuotaPlugin(
   readQuota: (options?: { now?: Date }) => Promise<{
     snapshot: TestQuotaSnapshot;
@@ -2688,15 +2497,26 @@ function testCodexQuotaPlugin(
     sidecarError?: unknown;
     rateLimitResetCreditsAvailableCount?: number;
   }>,
-  options: ConstructorParameters<typeof CodexQuotaPlugin>[1]
-): CodexQuotaPlugin {
-  return new CodexQuotaPlugin(async (pollOptions) => {
+  options: TestCodexQuotaPluginOptions = {}
+): TestCodexQuotaPlugin {
+  const board = typeof options.board === "function"
+    ? options.board as () => Promise<"note" | "flagship">
+    : async () => "note" as const;
+  const now = typeof options.now === "function"
+    ? options.now as () => Date
+    : () => new Date();
+  const {
+    board: _board,
+    ...pluginOptions
+  } = options;
+  const plugin = new CodexQuotaPlugin(async (pollOptions) => {
     const result = await readQuota(pollOptions);
     return {
       ...result,
       snapshot: normalizeQuotaSnapshot(result.snapshot)
     };
-  }, options);
+  }, pluginOptions as ConstructorParameters<typeof CodexQuotaPlugin>[1]);
+  return Object.assign(plugin, { testBoard: board, testNow: now });
 }
 
 function normalizeQuotaSnapshot(snapshot: TestQuotaSnapshot): QuotaSnapshot {
