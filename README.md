@@ -46,6 +46,8 @@ On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` bann
 
 The Codex plugin reads the aggregate percentage windows from `account/rateLimits/read` and renders up to two duration-labeled quota rows for Vestaboard Note and Flagship.
 
+The default Codex frame is composed from fixed-height elements sized for each board.
+
 | Configuration | Screenshot | What it means |
 | --- | --- | --- |
 | Pacing on | ![Codex quota with pacing colors](docs/images/codex-pacing-on.png) | Colored blocks are quota remaining. Any nonzero quota renders at least one quota block. <br>Green means quota is at or ahead of the time-remaining pace. Yellow, orange, and red mean progressively worse pacing deficits. <br>White is the current time marker and always overrides the quota color. |

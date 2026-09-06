@@ -1,5 +1,5 @@
 import { CollectionController } from "../../runtime/collection.js";
-import { applyCodexQuotaDemo, type CodexQuotaDemoState } from "./demo.js";
+import type { Element } from "../../elements.js";
 import { formatError } from "./display/index.js";
 import {
   autoStartErrorStatus,
@@ -15,6 +15,7 @@ import { isCodexAuthenticationFailure } from "./failure.js";
 import { QuotaWindowHistory } from "./quotaWindowHistory.js";
 import type { ResetVisibility } from "./quotaWindowHistory.js";
 import { createCodexQuotaPoller, readFixtureQuota } from "./quotaSource.js";
+import { createCodexElements } from "./elements.js";
 import type { CodexQuotaPluginOptions, Logger, QuotaPoller, QuotaSnapshot } from "./types.js";
 
 export class CodexQuotaPlugin {
@@ -24,9 +25,6 @@ export class CodexQuotaPlugin {
   private statusMessages = new StatusMessageStack();
   private quotaWindowHistory: QuotaWindowHistory;
   private sourceFixture: boolean | undefined;
-  private demoDurationMs: number;
-  private presentationDemo: CodexQuotaDemoState | undefined;
-  private presentationDemoExpiresAt: Date | undefined;
   private collectionFailure: unknown;
   private lastCollectedAt: Date | undefined;
   private collectTask: Promise<void> | undefined;
@@ -42,16 +40,10 @@ export class CodexQuotaPlugin {
       now?: () => Date;
       quotaWindowHistory?: QuotaWindowHistory;
       fixture?: boolean;
-      demoDurationMs?: number;
-      onChanged?: () => void;
     }
   ) {
     this.quotaWindowHistory = options.quotaWindowHistory ?? new QuotaWindowHistory();
     this.sourceFixture = options.fixture;
-    this.demoDurationMs = options.demoDurationMs ?? 0;
-    if (!Number.isFinite(this.demoDurationMs) || this.demoDurationMs < 0) {
-      throw new Error("Codex demo duration must be a non-negative number.");
-    }
   }
 
   configure(options: {
@@ -60,7 +52,6 @@ export class CodexQuotaPlugin {
     autoStartWindowWk?: boolean;
     timeZone?: string;
     showPacing?: boolean;
-    demoDurationMs?: number;
     now?: () => Date;
     readQuota?: QuotaPoller;
   }): void {
@@ -88,10 +79,6 @@ export class CodexQuotaPlugin {
     if ("timeZone" in options) this.options.timeZone = options.timeZone;
     if ("showPacing" in options && options.showPacing !== undefined) this.options.showPacing = options.showPacing;
     if ("now" in options) this.options.now = options.now;
-    if (options.demoDurationMs !== undefined) {
-      if (!Number.isFinite(options.demoDurationMs) || options.demoDurationMs < 0) throw new Error("Codex demo duration must be a non-negative number.");
-      this.demoDurationMs = options.demoDurationMs;
-    }
   }
 
   startPolling(intervalMs: number, onCollected?: () => Promise<void> | void): Promise<void> {
@@ -134,19 +121,6 @@ export class CodexQuotaPlugin {
     await Promise.all([this.stopPolling(), this.collectTask]);
   }
 
-  activateDemo(demo: CodexQuotaDemoState, now = this.options.now?.() ?? new Date()): void {
-    this.presentationDemo = { ...demo };
-    this.presentationDemoExpiresAt = this.demoDurationMs > 0
-      ? new Date(now.getTime() + this.demoDurationMs)
-      : undefined;
-    this.options.onChanged?.();
-  }
-
-  /**
-   * Refreshes the in-memory quota ingredients without consuming a display demo.
-   * Keeping this separate lets the runtime poll while a presentation override is
-   * on the board and lets a later renderer reuse the same quota history/cache.
-   */
   async collect(): Promise<void> {
     if (this.collectTask) return this.collectTask;
     let task!: Promise<void>;
@@ -196,22 +170,24 @@ export class CodexQuotaPlugin {
     return this.buildDisplayState(now);
   }
 
-  private buildDisplayState(now: Date): CodexQuotaDisplayState {
-    let currentDemo = this.presentationDemo;
-    if (this.presentationDemoExpiresAt && this.presentationDemoExpiresAt.getTime() <= now.getTime()) {
-      currentDemo = undefined;
-    }
+  /** Captures one immutable ingredient set for every element in a composition. */
+  elementsFor(
+    overrides: Partial<Pick<CodexQuotaDisplayState, "snapshot" | "statusMessage" | "timeZone" | "showPacing">> = {},
+    captured = this.getDisplayState()
+  ): Element[] {
+    const state: CodexQuotaDisplayState = { ...captured, ...overrides };
+    return createCodexElements(() => state, () => this.options.now?.() ?? new Date());
+  }
 
+  private buildDisplayState(now: Date): CodexQuotaDisplayState {
     const snapshot = this.quotaCache.snapshot();
-    const displayedSnapshot = snapshot ? applyCodexQuotaDemo(snapshot, currentDemo) : undefined;
     return {
-      snapshot: displayedSnapshot,
+      snapshot,
       statusMessage: this.statusMessages.top(now) ?? this.options.statusMessage?.(),
       staleWindowIds: this.collectionFailure && snapshot ? snapshot.windows.map((window) => window.id) : [],
-      resetVisibility: displayedSnapshot ? this.quotaWindowHistory.resetVisibilityFor(displayedSnapshot) : {},
+      resetVisibility: snapshot ? this.quotaWindowHistory.resetVisibilityFor(snapshot) : {},
       timeZone: this.options.timeZone,
-      showPacing: this.options.showPacing ?? true,
-      ...(currentDemo ? { presentationDemo: { ...currentDemo } } : {})
+      showPacing: this.options.showPacing ?? true
     };
   }
 
@@ -238,7 +214,6 @@ export interface CodexQuotaDisplayState {
   resetVisibility: ResetVisibility;
   timeZone?: string;
   showPacing: boolean;
-  presentationDemo?: CodexQuotaDemoState;
 }
 
 export function createCodexQuotaPlugin({
@@ -250,14 +225,10 @@ export function createCodexQuotaPlugin({
   statusMessage,
     logger = console,
     now,
-  demoDurationMs,
-  onChanged,
   readQuota
 }: CodexQuotaPluginOptions & {
   logger?: Logger;
   now?: () => Date;
-  demoDurationMs?: number;
-  onChanged?: () => void;
   readQuota?: QuotaPoller;
   } = {}): CodexQuotaPlugin {
   const quotaWindowHistory = new QuotaWindowHistory();
@@ -274,9 +245,7 @@ export function createCodexQuotaPlugin({
     logger,
     now,
     quotaWindowHistory,
-    fixture,
-    demoDurationMs,
-    onChanged
+    fixture
   });
 }
 

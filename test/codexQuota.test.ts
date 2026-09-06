@@ -11,7 +11,6 @@ import {
   type RateLimitsResult
 } from "../src/plugins/codexQuota/appServer.js";
 import { CodexAutoStartSidecar } from "../src/plugins/codexQuota/autoStartSidecar.js";
-import { applyCodexQuotaDemo as applyCodexQuotaDemoWindows } from "../src/plugins/codexQuota/demo.js";
 import {
   CodexQuotaPlugin,
   formatError,
@@ -902,35 +901,6 @@ test("renders two Flagship quota blocks when quota reaches into the second bucke
   assert.equal(rows[2].slice(1, 21), "GG                  ");
 });
 
-test("demo mode drops the first displayed quota by one percentage point", () => {
-  const snapshot = applyCodexQuotaDemo(
-    {
-      windows: [
-        { id: "first", remainingRatio: 0.6, durationMins: 10_080 },
-        { id: "second", remainingRatio: 0.76, durationMins: 300 }
-      ]
-    },
-    { pctDrops: 1 }
-  );
-
-  assert.equal(snapshot.windows[0]?.remainingRatio, 0.59);
-  assert.equal(snapshot.windows[1]?.remainingRatio, 0.76);
-});
-
-test("demo mode accumulates repeated drops", () => {
-  const snapshot = applyCodexQuotaDemo(
-    {
-      fiveHour: { remainingRatio: 0.76, resetAt: new Date("2026-06-19T03:00:00-07:00"), durationMins: 300 },
-      weekly: { remainingRatio: 0.6, resetAt: new Date("2026-06-22T00:00:00-07:00"), durationMins: 10_080 }
-    },
-    { pctDrops: 2 }
-  );
-  const message = formatQuota(snapshot, { timeZone: "America/Los_Angeles", now: new Date("2026-06-19T00:00:00-07:00") });
-
-  assert.equal(snapshot.windows[0]?.remainingRatio, 0.74);
-  assert.equal(message.text.split("\n")[0], "5HGGGGGWGG  74%");
-});
-
 test("auto-start model selection skips spark and prefers the last nano model", () => {
   const selection = selectAutoStartModel([
     model("gpt-5.5", ["medium"]),
@@ -1162,53 +1132,6 @@ test("codex plugin hides a changed full-window reset until it repeats", async ()
   const changed = await collectAndRender(plugin);
   const repeated = await collectAndRender(plugin);
 
-  assert.equal(changed.message.text.split("\n")[2], "06/24-1419     ");
-  assert.equal(repeated.message.text.split("\n")[2], "0744♥06/24-1419");
-});
-
-test("codex plugin demo drop shows five-hour reset immediately without weekly visibility", async () => {
-  const plugin = testCodexQuotaPlugin(async () => quotaPollResult({
-    fiveHour: { remainingRatio: 1, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
-    weekly: { remainingRatio: 1, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
-  }), {
-    timeZone: "America/Los_Angeles",
-    now: () => new Date("2026-06-18T21:44:00-07:00")
-  });
-  plugin.activateDemo({ pctDrops: 1 });
-
-  const update = await collectAndRender(plugin);
-
-  assert.equal(update.message.text.split("\n")[0], "5HYYYYYYYYYW99%");
-  assert.equal(update.message.text.split("\n")[2], "0244           ");
-});
-
-test("codex plugin demo drop does not create stable full-window history", async () => {
-  let reads = 0;
-  let now = new Date("2026-06-19T00:00:00-07:00");
-  const snapshots = [
-    quotaSnapshot({ fiveHour: 1, weekly: 1 }),
-    {
-      fiveHour: { remainingRatio: 1, resetAt: new Date("2026-06-19T07:44:00-07:00"), durationMins: 300 },
-      weekly: windowForDuration(quotaSnapshot({ weekly: 1 }), 10_080)
-    },
-    {
-      fiveHour: { remainingRatio: 1, resetAt: new Date("2026-06-19T07:44:00-07:00"), durationMins: 300 },
-      weekly: windowForDuration(quotaSnapshot({ weekly: 1 }), 10_080)
-    }
-  ];
-  const plugin = testCodexQuotaPlugin(async () => quotaPollResult(snapshots[reads++] ?? snapshots.at(-1)!), {
-    timeZone: "America/Los_Angeles",
-    demoDurationMs: 1,
-    now: () => now
-  });
-  plugin.activateDemo({ pctDrops: 1 });
-
-  const demo = await collectAndRender(plugin);
-  now = new Date("2026-06-19T00:00:00.002-07:00");
-  const changed = await collectAndRender(plugin);
-  const repeated = await collectAndRender(plugin);
-
-  assert.equal(demo.message.text.split("\n")[2], "0244           ");
   assert.equal(changed.message.text.split("\n")[2], "06/24-1419     ");
   assert.equal(repeated.message.text.split("\n")[2], "0744♥06/24-1419");
 });
@@ -2387,36 +2310,6 @@ test("error message is encodable for Vestaboard Note", () => {
 });
 
 
-test("codex plugin keeps an explicitly activated demo while a later quota read fails", async () => {
-  let attempts = 0;
-  let fail = false;
-
-  const plugin = testCodexQuotaPlugin(async () => {
-    attempts += 1;
-    if (fail) {
-      throw new Error("temporary quota failure");
-    }
-
-    return quotaPollResult({
-      fiveHour: { remainingRatio: 0.76, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
-      weekly: { remainingRatio: 0.4, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
-    });
-  }, {
-    timeZone: "America/Los_Angeles",
-  });
-
-  await collectAndRender(plugin);
-  plugin.activateDemo({ pctDrops: 1 });
-  fail = true;
-  const fallback = await collectAndRender(plugin);
-  fail = false;
-  const retry = await collectAndRender(plugin);
-
-  assert.equal(attempts, 3);
-  assert.equal(fallback.message.text.split("\n")[0].endsWith("75%"), true);
-  assert.equal(retry.message.text.split("\n")[0].endsWith("75%"), true);
-});
-
 function model(name: string, reasoningEfforts: string[]) {
   return {
     id: name,
@@ -2449,10 +2342,6 @@ function formatQuota(snapshot: TestQuotaSnapshot, options: LegacyFormatOptions =
     staleWindowIds: staleRows?.map((row) => row === "5H" ? "primary" : "secondary"),
     resetVisibility: translatedResetVisibility
   });
-}
-
-function applyCodexQuotaDemo(snapshot: TestQuotaSnapshot, demo: Parameters<typeof applyCodexQuotaDemoWindows>[1]) {
-  return applyCodexQuotaDemoWindows(normalizeQuotaSnapshot(snapshot), demo);
 }
 
 type TestCodexQuotaPlugin = CodexQuotaPlugin & {

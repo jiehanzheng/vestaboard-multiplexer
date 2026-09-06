@@ -1,4 +1,4 @@
-import type { VestaboardMessage } from "../../../orchestrator.js";
+import type { VestaboardMessage } from "../../../vestaboard.js";
 import type { ResetVisibility } from "../quotaWindowHistory.js";
 import { hasQuotaWindowTiming, isLongQuotaWindow, quotaWindowLabel } from "../quotaWindow.js";
 import type { QuotaSnapshot, QuotaWindow } from "../types.js";
