@@ -18,7 +18,7 @@ test("opens defaults when no config file exists and applies environment locks", 
   assert.equal(store.get().codex.showPacing, false);
   const publicConfig = store.getPublic();
   assert.equal(publicConfig.config.transport.token, undefined);
-  assert.deepEqual(publicConfig.hasSecrets, { token: true, localApiKey: false });
+  assert.deepEqual(publicConfig.hasSecrets, { token: true, localApiKey: false, haToken: false });
   assert.deepEqual(publicConfig.locked, ["board", "transport.token", "codex.showPacing"]);
 });
 
@@ -76,4 +76,53 @@ test("rejects invalid time zones before writing", async () => {
     store.save({ ...DEFAULT_APP_CONFIG, codex: { ...DEFAULT_APP_CONFIG.codex, timeZone: "Not/AZone" } }),
     /time zone/i
   );
+});
+
+test("loads Home Assistant and disabled water defaults", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
+  const store = await ConfigStore.open(dataDir, {});
+  assert.deepEqual(store.get().ha, { url: "", pause: null });
+  assert.deepEqual(store.get().water, {
+    remaining: null,
+    capacity: null,
+    temperature: null,
+    target: null,
+    unit: "F",
+    enabled: false
+  });
+  assert.equal(store.getPublic().hasSecrets.haToken, false);
+});
+
+test("validates Home Assistant URL, pause mapping, and numeric water sources", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
+  const store = await ConfigStore.open(dataDir, {});
+  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: { ...DEFAULT_APP_CONFIG.ha, url: "https://user:pass@ha.local" } }), /embedded credentials/i);
+  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: { ...DEFAULT_APP_CONFIG.ha, pause: { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "on" } } }), /distinct/i);
+  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: null as never }), /ha is required/i);
+  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, water: { ...DEFAULT_APP_CONFIG.water, capacity: { constant: 0 } } }), /water\.capacity.*positive/i);
+  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, water: { ...DEFAULT_APP_CONFIG.water, temperature: { entityId: "" } } }), /water\.temperature.*entity/i);
+});
+
+test("preserves and redacts an omitted Home Assistant token", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
+  const first = await ConfigStore.open(dataDir, {});
+  await first.save({ ...DEFAULT_APP_CONFIG, ha: { ...DEFAULT_APP_CONFIG.ha, url: "http://ha.local:8123", token: "ha-secret" } });
+  const second = await ConfigStore.open(dataDir, {});
+  assert.equal(second.getPublic().config.ha.token, undefined);
+  assert.equal(second.getPublic().hasSecrets.haToken, true);
+  await second.save({ ...second.get(), ha: { ...second.get().ha, token: undefined } });
+  assert.equal(second.get().ha.token, "ha-secret");
+});
+
+test("requires a baseline only when the water temperature bar is allocated", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
+  const store = await ConfigStore.open(dataDir, {});
+  const textOnly = {
+    ...DEFAULT_APP_CONFIG,
+    water: { ...DEFAULT_APP_CONFIG.water, enabled: true, temperature: { constant: 125 }, target: { constant: 135 } },
+    layout: [{ elementId: "water.temperature-text", startRow: 0 }]
+  };
+  await store.save(textOnly);
+  await assert.rejects(store.save({ ...textOnly, layout: [{ elementId: "water.temperature-bar", startRow: 0 }] }), /water\.baseline/i);
+  await store.save({ ...textOnly, water: { ...textOnly.water, baseline: 50 }, layout: [{ elementId: "water.temperature-bar", startRow: 0 }] });
 });

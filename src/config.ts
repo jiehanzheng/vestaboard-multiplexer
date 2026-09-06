@@ -1,6 +1,12 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { LayoutEntry } from "./elements.js";
+import type { HAConfig } from "./homeAssistant.js";
+import {
+  DEFAULT_WATER_HEATER_CONFIG,
+  validateWaterHeaterConfig,
+  type WaterHeaterConfig
+} from "./plugins/waterHeater.js";
 import {
   DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS,
   type LocalMessageTransitionOptions,
@@ -11,6 +17,8 @@ export type { LayoutEntry } from "./elements.js";
 
 export interface AppConfig {
   board: "auto" | "note" | "flagship";
+  ha: HAConfig;
+  water: WaterHeaterConfig;
   transport: {
     token?: string;
     localApiKey?: string;
@@ -38,6 +46,7 @@ export interface PublicConfig {
   hasSecrets: {
     token: boolean;
     localApiKey: boolean;
+    haToken: boolean;
   };
   error?: string;
 }
@@ -48,6 +57,11 @@ export interface ConfigEnvironment {
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   board: "auto",
+  ha: {
+    url: "",
+    pause: null
+  },
+  water: { ...DEFAULT_WATER_HEATER_CONFIG },
   transport: {
     cloudUrl: "https://cloud.vestaboard.com/",
     localUrl: "http://vestaboard.local:7000/local-api/message",
@@ -107,10 +121,12 @@ export class ConfigStore {
     const config = cloneConfig(environment.config);
     const hasSecrets = {
       token: Boolean(config.transport.token),
-      localApiKey: Boolean(config.transport.localApiKey)
+      localApiKey: Boolean(config.transport.localApiKey),
+      haToken: Boolean(config.ha.token)
     };
     delete config.transport.token;
     delete config.transport.localApiKey;
+    delete config.ha.token;
 
     return {
       config,
@@ -233,21 +249,39 @@ function setNumber(path: string, raw: string | undefined, apply: (value: number)
 }
 
 function mergeConfig(base: AppConfig, patch: Partial<AppConfig>): AppConfig {
+  const baseConfig = cloneConfig(base);
+  const haPatch = patch.ha;
   const transport: Partial<AppConfig["transport"]> = patch.transport ?? {};
   const codex: Partial<AppConfig["codex"]> = patch.codex ?? {};
+  const ha = haPatch === undefined
+    ? baseConfig.ha
+    : haPatch === null
+      ? null as unknown as HAConfig
+      : {
+          ...baseConfig.ha,
+          ...haPatch,
+          ...(haPatch.token === undefined && baseConfig.ha.token !== undefined ? { token: baseConfig.ha.token } : {})
+        };
+  const water = patch.water === undefined
+    ? baseConfig.water
+    : patch.water === null
+      ? null as unknown as WaterHeaterConfig
+      : { ...baseConfig.water, ...patch.water };
   return {
-    ...cloneConfig(base),
+    ...baseConfig,
     ...patch,
+    ha,
+    water,
     transport: {
-      ...cloneConfig(base).transport,
+      ...baseConfig.transport,
       ...transport,
       localMessageTransition: {
-        ...cloneConfig(base).transport.localMessageTransition,
+        ...baseConfig.transport.localMessageTransition,
         ...(transport.localMessageTransition ?? {})
       }
     },
     codex: {
-      ...cloneConfig(base).codex,
+      ...baseConfig.codex,
       ...codex
     },
     layout: patch.layout === undefined ? cloneConfig(base).layout : patch.layout
@@ -257,6 +291,17 @@ function mergeConfig(base: AppConfig, patch: Partial<AppConfig>): AppConfig {
 function cloneConfig(config: AppConfig): AppConfig {
   return {
     ...config,
+    ha: {
+      ...config.ha,
+      pause: config.ha.pause ? { ...config.ha.pause } : null
+    },
+    water: {
+      ...config.water,
+      remaining: config.water.remaining ? { ...config.water.remaining } : null,
+      capacity: config.water.capacity ? { ...config.water.capacity } : null,
+      temperature: config.water.temperature ? { ...config.water.temperature } : null,
+      target: config.water.target ? { ...config.water.target } : null
+    },
     transport: {
       ...config.transport,
       localMessageTransition: { ...config.transport.localMessageTransition }
@@ -287,6 +332,9 @@ function setConfigPath(config: AppConfig, path: string, value: unknown): void {
 
 function validateConfig(config: AppConfig): AppConfig {
   if (!["auto", "note", "flagship"].includes(config.board)) throw new Error("board must be auto, note, or flagship.");
+  validateHomeAssistantConfig(config.ha);
+  if (!config.water || typeof config.water !== "object") throw new Error("water is required.");
+  for (const error of validateWaterHeaterConfig(config.water)) throw new Error(`water.${error}`);
   if (!config.transport || typeof config.transport !== "object") throw new Error("transport is required.");
   if (typeof config.transport.cloudUrl !== "string" || !config.transport.cloudUrl) throw new Error("transport.cloudUrl is required.");
   if (typeof config.transport.localUrl !== "string" || !config.transport.localUrl) throw new Error("transport.localUrl is required.");
@@ -314,8 +362,36 @@ function validateConfig(config: AppConfig): AppConfig {
         throw new Error("layout entries require an elementId and non-negative integer startRow.");
       }
     }
+    const temperatureBarAllocated = config.water.enabled && config.layout.some((entry) => entry.elementId === "water.temperature-bar");
+    if (temperatureBarAllocated && config.water.baseline === undefined) {
+      throw new Error("water.baseline is required when water.temperature-bar is allocated.");
+    }
   }
   return cloneConfig(config);
+}
+
+function validateHomeAssistantConfig(config: HAConfig): void {
+  if (!config || typeof config !== "object") throw new Error("ha is required.");
+  if (typeof config.url !== "string") throw new Error("ha.url must be a string.");
+  if (config.url !== "") {
+    let parsed: URL;
+    try {
+      parsed = new URL(config.url);
+    } catch {
+      throw new Error("ha.url must be a valid HTTP(S) URL.");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("ha.url must use HTTP or HTTPS.");
+    }
+    if (parsed.username || parsed.password) throw new Error("ha.url must not contain embedded credentials.");
+  }
+  if (config.token !== undefined && typeof config.token !== "string") throw new Error("ha.token must be a string.");
+  if (config.pause === null) return;
+  if (!config.pause || typeof config.pause !== "object") throw new Error("ha.pause must be an object or null.");
+  if (typeof config.pause.entityId !== "string" || !config.pause.entityId.trim()) throw new Error("ha.pause.entityId is required.");
+  if (typeof config.pause.pauseValue !== "string" || !config.pause.pauseValue.trim()) throw new Error("ha.pause.pauseValue is required.");
+  if (typeof config.pause.resumeValue !== "string" || !config.pause.resumeValue.trim()) throw new Error("ha.pause.resumeValue is required.");
+  if (config.pause.pauseValue === config.pause.resumeValue) throw new Error("ha.pause values must be distinct.");
 }
 
 function validateTransition(transition: LocalMessageTransitionOptions): void {

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CSSProperties } from "react";
+import type { HAConfig } from "../../src/homeAssistant";
+import type { WaterHeaterConfig } from "../../src/plugins/waterHeater";
 import {
   cancelLogin,
   checkLogin,
@@ -12,10 +14,12 @@ import {
   startLogin,
   subscribeToEvents
 } from "./api";
+import { HomeAssistantSettings } from "./HomeAssistantSettings";
 import type {
   AppConfig,
   BoardElement,
   BoardKind,
+  ConfigValue,
   ConfigResponse,
   ElementsResponse,
   LayoutEntry,
@@ -48,6 +52,16 @@ const BOARD_OPTIONS: Array<{ value: "auto" | BoardKind; label: string }> = [
   { value: "note", label: "Note · 3 × 15" },
   { value: "flagship", label: "Flagship · 6 × 22" }
 ];
+
+const DEFAULT_HA_CONFIG: HAConfig = { url: "", pause: null };
+const DEFAULT_WATER_CONFIG: WaterHeaterConfig = {
+  remaining: null,
+  capacity: null,
+  temperature: null,
+  target: null,
+  unit: "F",
+  enabled: false
+};
 
 export default function App(): ReactNode {
   const [view, setView] = useState<View>("board");
@@ -132,7 +146,7 @@ export default function App(): ReactNode {
     let active = true;
     const timer = window.setTimeout(() => {
       setPreviewPending(true);
-      void requestPreview(draftLayout, boardPreference)
+      void requestPreview(draftLayout, boardPreference, getPath(draftConfig ?? {}, ["water"]))
         .then((nextPreview) => {
           if (!active) return;
           setDraftPreview(nextPreview);
@@ -150,7 +164,7 @@ export default function App(): ReactNode {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [boardPreference, draftLayout, elementsResponse, layoutError]);
+  }, [boardPreference, draftConfig, draftLayout, elementsResponse, layoutError]);
 
   const updateDraftConfig = useCallback((next: AppConfig) => {
     setDraftConfig(next);
@@ -188,7 +202,7 @@ export default function App(): ReactNode {
       await setPause(!status.manualPause);
       const nextStatus = await getStatus();
       setStatus(nextStatus);
-      setNotice({ tone: "success", message: nextStatus.manualPause ? "Updates paused." : "Updates resumed." });
+      setNotice({ tone: "success", message: nextStatus.manualPause ? "Updates paused." : nextStatus.haPause ? "Manual pause cleared; Home Assistant still holds updates." : "Updates resumed." });
     } catch (error: unknown) {
       setNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not change pause state." });
     }
@@ -248,11 +262,20 @@ export default function App(): ReactNode {
         ) : (
           <ConnectionsScreen
             login={login}
+            status={status}
+            config={draftConfig}
+            configResponse={configResponse}
             dirty={isDirty}
             layoutError={layoutError}
             notice={notice}
             onApply={handleApply}
             onDiscard={handleDiscard}
+            onConfigChange={(ha, water) => {
+              setDraftConfig((current) => current
+                ? setPath(setPath(current, "ha", ha as unknown as ConfigValue), "water", water as unknown as ConfigValue)
+                : current);
+              setNotice(undefined);
+            }}
             onLogin={(nextLogin) => setStatus((current) => current ? { ...current, login: nextLogin } : current)}
             onNotice={setNotice}
           />
@@ -333,7 +356,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
             </div>
             <div className="board-facts">
               {previewPending ? <span>Updating preview…</span> : null}
-              {status?.paused ? <span className="fact-warning">{status.haPause ? (status.manualPause ? "Paused manually + by Home Assistant" : "Paused by Home Assistant") : "Paused manually"}</span> : null}
+              {status?.paused ? <span className="fact-warning">{pauseReason(status)}</span> : null}
             </div>
           </div>
           <div className="message-caption">
@@ -516,7 +539,13 @@ function elementLabel(element: BoardElement | undefined): string {
 
 function RuntimeMessages({ status }: { status: RuntimeStatus | undefined }): ReactNode {
   if (!status) return null;
-  const messages = [status.deliveryError, status.configError, status.codex.error].filter((value): value is string => Boolean(value));
+  const messages = [
+    status.deliveryError,
+    status.configError,
+    status.codex.error,
+    status.homeAssistant?.error ? `Home Assistant: ${status.homeAssistant.error}` : undefined,
+    status.water?.error ? `Water heater: ${status.water.error}` : undefined
+  ].filter((value): value is string => Boolean(value));
   return messages.length > 0 ? (
     <div className="runtime-messages" role="alert">
       {messages.map((message) => <p key={message}>{message}</p>)}
@@ -584,7 +613,20 @@ function ConfigToggle({ label, checked, locked, onChange }: { label: string; che
 
 function LockMark(): ReactNode { return <span className="lock-mark" title="Managed by environment" aria-label="Managed by environment">⌑</span>; }
 
-function ConnectionsScreen({ login, dirty, layoutError, notice, onApply, onDiscard, onLogin, onNotice }: { login: LoginStatus; dirty: boolean; layoutError: string | undefined; notice: Notice; onApply: () => void; onDiscard: () => void; onLogin: (status: LoginStatus) => void; onNotice: (notice: Notice) => void }): ReactNode {
+function ConnectionsScreen({ login, status, config, configResponse, dirty, layoutError, notice, onApply, onDiscard, onConfigChange, onLogin, onNotice }: {
+  login: LoginStatus;
+  status: RuntimeStatus | undefined;
+  config: AppConfig | undefined;
+  configResponse: ConfigResponse | undefined;
+  dirty: boolean;
+  layoutError: string | undefined;
+  notice: Notice;
+  onApply: () => void;
+  onDiscard: () => void;
+  onConfigChange: (ha: HAConfig, water: WaterHeaterConfig) => void;
+  onLogin: (status: LoginStatus) => void;
+  onNotice: (notice: Notice) => void;
+}): ReactNode {
   const [busy, setBusy] = useState(false);
   const act = async (operation: () => Promise<LoginStatus>, success?: string) => {
     setBusy(true);
@@ -604,7 +646,7 @@ function ConnectionsScreen({ login, dirty, layoutError, notice, onApply, onDisca
       <div className="page-heading">
         <div>
           <h1>Connections</h1>
-          <p>Connect Codex to reuse its reading in board rows.</p>
+          <p>Connect Codex and Home Assistant to reuse quota, water, and pause signals in board rows.</p>
         </div>
       </div>
       <section className="connection-section" aria-labelledby="codex-heading">
@@ -622,11 +664,36 @@ function ConnectionsScreen({ login, dirty, layoutError, notice, onApply, onDisca
         </div>
         {login.error ? <p className="inline-message error" role="alert">{login.error}</p> : null}
       </section>
+      <section className="connection-section" aria-labelledby="health-heading">
+        <div className="section-heading">
+          <div><h2 id="health-heading">Live status</h2><p>Connection health and pause signals update in real time.</p></div>
+        </div>
+        <div className="health-grid">
+          <div className="health-card">
+            <span className="health-label">Home Assistant</span>
+            <span className={`connection-badge ${status?.homeAssistant?.connected ? "good" : status?.homeAssistant?.error ? "error" : ""}`}>
+              {status?.homeAssistant?.connected ? "Connected" : status?.homeAssistant?.error ? "Connection error" : "Not connected"}
+            </span>
+            {status?.homeAssistant?.error ? <p className="inline-message error" role="alert">{status.homeAssistant.error}</p> : null}
+          </div>
+          <div className="health-card">
+            <span className="health-label">Water heater</span>
+            <span className={`connection-badge ${status?.water?.error ? "error" : ""}`}>{status?.water?.error ? "Needs attention" : "No errors"}</span>
+            {status?.water?.error ? <p className="inline-message error" role="alert">{status.water.error}</p> : null}
+          </div>
+        </div>
+      </section>
+      <HomeAssistantSettings
+        ha={readHAConfig(config)}
+        water={readWaterConfig(config)}
+        hasToken={Boolean(configResponse?.hasSecrets.haToken)}
+        onChange={onConfigChange}
+      />
       <div className="connection-actions">
         <button className="button secondary" type="button" onClick={onDiscard} disabled={!dirty}>Discard</button>
         <button className="button primary" type="button" onClick={onApply} disabled={!dirty || Boolean(layoutError)}>Apply</button>
       </div>
-      {layoutError ? <p className="inline-message error" role="alert">{layoutError} Fix the board layout before applying these settings.</p> : null}
+      {layoutError ? <p className="inline-message error" role="alert">{layoutError} Fix the board layout before applying these connection settings.</p> : null}
       {notice ? <p className={`inline-message ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.message}</p> : null}
       <section className="connection-note" aria-label="More connections">
         <span className="note-mark" aria-hidden="true">↗</span>
@@ -702,6 +769,46 @@ function rangesOverlap(startA: number, endA: number, startB: number, endB: numbe
 
 function removeRow(layout: LayoutEntry[], index: number): LayoutEntry[] {
   return layout.filter((_, entryIndex) => entryIndex !== index);
+}
+
+function pauseReason(status: RuntimeStatus): string {
+  if (status.manualPause && status.haPause) return "Paused manually + by Home Assistant";
+  if (status.haPause) return "Paused by Home Assistant";
+  if (status.manualPause) return "Paused manually";
+  return "Paused";
+}
+
+function readHAConfig(config: AppConfig | undefined): HAConfig {
+  const value = getPath(config ?? {}, ["ha", "homeAssistant"]);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_HA_CONFIG };
+  const candidate = value as Partial<HAConfig>;
+  const pause = candidate.pause && typeof candidate.pause === "object"
+    ? {
+        entityId: typeof candidate.pause.entityId === "string" ? candidate.pause.entityId : "",
+        pauseValue: typeof candidate.pause.pauseValue === "string" ? candidate.pause.pauseValue : "on",
+        resumeValue: typeof candidate.pause.resumeValue === "string" ? candidate.pause.resumeValue : "off"
+      }
+    : null;
+  return {
+    url: typeof candidate.url === "string" ? candidate.url : "",
+    ...(typeof candidate.token === "string" ? { token: candidate.token } : {}),
+    pause
+  };
+}
+
+function readWaterConfig(config: AppConfig | undefined): WaterHeaterConfig {
+  const value = getPath(config ?? {}, ["water", "waterHeater"]);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_WATER_CONFIG };
+  const candidate = value as Partial<WaterHeaterConfig>;
+  return {
+    remaining: candidate.remaining ?? null,
+    capacity: candidate.capacity ?? null,
+    temperature: candidate.temperature ?? null,
+    target: candidate.target ?? null,
+    unit: candidate.unit === "C" ? "C" : "F",
+    ...(typeof candidate.baseline === "number" ? { baseline: candidate.baseline } : {}),
+    enabled: candidate.enabled === true
+  };
 }
 
 function readBoardPreference(config: AppConfig | undefined): "auto" | BoardKind {

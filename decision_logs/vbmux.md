@@ -7,3 +7,5 @@
 - Board updates have a configurable rate limit independent of plugin collection. The startup banner displays for 30 seconds outside the normal limit, which starts with real data.
 - Platform pause can come from Home Assistant. Retain its last known result when unavailable, including across restarts.
 - Every PR in this change's stack must be independently usable when merged into main in order.
+
+Remember the HA pause binding identity alongside its boolean so a different entity configured while the service is stopped cannot inherit an old unpaused value. Late events from a replaced connection must not resume the new binding. This is persistence metadata, not a separate pause mode.

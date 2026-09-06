@@ -51,10 +51,10 @@ export function getStatus(): Promise<RuntimeStatus> {
   return request<RuntimeStatus>("/api/status");
 }
 
-export function requestPreview(layout: LayoutEntry[], board: BoardKind | "auto"): Promise<PreviewResponse> {
+export function requestPreview(layout: LayoutEntry[], board: BoardKind | "auto", water?: unknown): Promise<PreviewResponse> {
   return request<PreviewResponse>("/api/preview", {
     method: "POST",
-    body: JSON.stringify({ layout, board })
+    body: JSON.stringify({ layout, board, ...(water !== undefined ? { water } : {}) })
   });
 }
 

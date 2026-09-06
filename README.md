@@ -39,7 +39,7 @@ Core environment variables configure the orchestrator and Vestaboard transport. 
 | `VESTABOARD_LOCAL_MESSAGE_STRATEGY` | Local API message transition strategy: `column`, `reverse-column`, `edges-to-center`, `row`, `diagonal`, or `random`. Invalid values log an error, use the default, and show `check logs` on the startup message.<br><br>Default: `row` |
 | `VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS` | Local API transition delay between animation steps. Invalid, non-finite, or non-positive values log an error, use the default, and show `check logs` on the startup message.<br><br>Default: `2000` |
 | `VESTABOARD_LOCAL_MESSAGE_STEP_SIZE` | Local API transition step size. Invalid, non-finite, or non-positive values log an error, use the default, and show `check logs` on the startup message.<br><br>Default: `1` |
-| `VESTABOARD_BOARD` | Board renderer: `auto`, `note`, or `flagship`. In `auto`, the orchestrator reads the current message layout through the configured Vestaboard API and detects Note (`3x15`) or Flagship (`6x22`). If detection cannot determine the board type, it assumes Note for that tick and retries on the next tick.<br><br>Default: `auto` |
+| `VESTABOARD_BOARD` | Board renderer: `auto`, `note`, or `flagship`. In `auto`, the orchestrator reads the current message layout through the configured Vestaboard API and detects Note (`3x15`) or Flagship (`6x22`). If detection cannot determine the board type, it assumes Note; changing the board connection or board setting runs detection again.<br><br>Default: `auto` |
 
 On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` banner with the current `yyyymmdd hhmm` timestamp and enabled plugin slugs. The banner displays for 30 seconds outside the normal write limit, then the latest data is sent. Codex collection continues independently of board writes. Changes coalesce into the newest message; unchanged messages are skipped. Normal attempts, including failed attempts, are separated by `ORCHESTRATOR_INTERVAL_MINUTES`.
 
@@ -56,6 +56,14 @@ Elements span the board width and have a fixed height. Assign their zero-based s
 `codex.window-1` is the longest window and `codex.window-2` is the next longest. Each has a separate two-row `-large` element. `codex.header`, `codex.reset-summary`, and `codex.status` are one-row elements. Renderers use the available width: 15 columns on Note or 22 on Flagship.
 
 ## Plugins
+
+### Water heater / Home Assistant
+
+In **Connections**, enter your Home Assistant URL and long-lived access token, test the connection, then choose entities by name. Remaining hot water, capacity, tank temperature and target each accept a constant or an entity state/numeric attribute. Use US gallons and select one shared temperature unit (F or C). The temperature bar also requires a baseline.
+
+Add `water.remaining`, `water.temperature-bar`, or `water.temperature-text` to any free row. Each occupies one row; the text element shows current/target temperature. Missing initial readings show `N/A`; failed reads keep the last good value and report the error in the interface.
+
+One read-only Home Assistant WebSocket supplies water readings and an optional pause entity. Configure exact pause/resume states for that entity. Manual pause and HA pause combine: either can hold delivery. Both survive restart; a new HA binding starts paused until a recognized state arrives, and an outage retains its last result. Collection continues while paused, including during startup.
 
 ### Codex
 

@@ -22,6 +22,13 @@ export interface RuntimeStatus {
     error?: string;
     collectedAt?: string;
   };
+  homeAssistant?: {
+    connected: boolean;
+    error?: string;
+  };
+  water?: {
+    error?: string;
+  };
   login: LoginStatus;
 }
 
@@ -65,6 +72,7 @@ export interface ConfigResponse {
   hasSecrets: {
     token: boolean;
     localApiKey: boolean;
+    haToken?: boolean;
   };
   error?: string;
 }

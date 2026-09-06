@@ -138,7 +138,8 @@ a { color: inherit; }
 .settings-disclosure[open] summary span { transform: rotate(180deg); }
 .settings-panel { padding: 4px 0 26px; }
 .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 20px; }
-.config-field { display: grid; gap: 7px; }
+.config-field { display: grid; gap: 7px; min-width: 0; margin: 0; border: 0; padding: 0; }
+.config-field legend { padding: 0; color: var(--muted); font-size: 13px; }
 .config-field > span { display: flex; align-items: center; gap: 7px; }
 .config-toggle { display: flex; align-items: center; gap: 9px; min-height: 44px; color: var(--ink); font-size: 14px; }
 .config-toggle input { width: 17px; height: 17px; accent-color: var(--accent); }
@@ -154,6 +155,12 @@ a { color: inherit; }
 .connection-badge { white-space: nowrap; padding: 6px 10px; border: 1px solid #c5beb7; border-radius: 999px; color: var(--muted); font-size: 12px; }
 .connection-badge.good { border-color: rgb(69 163 90 / 0.4); color: #347c44; }
 .connection-badge.pending { border-color: rgb(213 106 91 / 0.5); color: var(--accent-strong); }
+.connection-badge.error { border-color: rgb(180 71 62 / 0.45); color: var(--error); }
+.health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }
+.health-card { display: grid; gap: 10px; min-height: 86px; padding: 16px; border: 1px solid #bdb7b0; border-radius: var(--radius-control); background: rgb(255 253 250 / 0.25); }
+.health-label { color: var(--muted); font-size: 13px; }
+.health-card .connection-badge { width: fit-content; }
+.health-card .inline-message { margin-top: 0; }
 .login-panel { display: grid; grid-template-columns: minmax(180px, 1fr) auto minmax(150px, 1fr); align-items: center; gap: 20px; min-height: 74px; margin-top: 20px; padding: 14px 18px; border: 1px solid #bdb7b0; border-radius: var(--radius-control); background: rgb(255 253 250 / 0.25); }
 .device-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 20px; letter-spacing: 0.08em; }
 .login-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
@@ -206,6 +213,7 @@ a { color: inherit; }
   .settings-grid { grid-template-columns: 1fr; }
   .settings-disclosure { margin-top: 22px; }
   .section-heading { flex-direction: column; gap: 14px; }
+  .health-grid { grid-template-columns: 1fr; }
   .login-panel { grid-template-columns: 1fr; gap: 12px; }
   .login-actions { flex-wrap: wrap; }
   .login-helper { justify-self: start; }
