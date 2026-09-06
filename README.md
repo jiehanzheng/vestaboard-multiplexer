@@ -40,6 +40,8 @@ Core environment variables configure the orchestrator and Vestaboard transport. 
 
 On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` banner with the current `yyyymmdd hhmm` timestamp and enabled plugin slugs, then waits 60 seconds before polling. The loop is serial: it runs one plugin pass, sends the selected message, waits `ORCHESTRATOR_INTERVAL_MINUTES`, then starts the next pass. If the winning message is unchanged from the last successful send, the orchestrator skips the Vestaboard API call.
 
+The Home Assistant runtime foundation is present while the existing daemon remains active until the final UI-enabled runtime cutover.
+
 ## Plugins
 
 ### Codex
