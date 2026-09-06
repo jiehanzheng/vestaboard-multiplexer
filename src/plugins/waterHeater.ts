@@ -140,7 +140,15 @@ export class WaterHeater {
     const remaining = this.readings.remaining;
     const capacity = this.readings.capacity;
     if (remaining === undefined || capacity === undefined || capacity <= 0) return textRow("N/A", width);
-    return barRow(Math.max(0, Math.min(1, remaining / capacity)), width, GREEN);
+    if (width < "HW".length + 1 + 2) return textRow("N/A", width);
+
+    const gallons = displayGallons(remaining, width);
+    const barWidth = Math.max(1, width - "HW".length - gallons.length);
+    return [
+      ...encode("HW"),
+      ...barRow(Math.max(0, Math.min(1, remaining / capacity)), barWidth, GREEN),
+      ...encode(gallons)
+    ];
   }
 
   private temperatureBarRow(width: number): number[] {
@@ -246,4 +254,12 @@ function blankRow(width: number): number[] {
 
 function displayNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(1)));
+}
+
+function displayGallons(value: number, width: number): string {
+  // Reserve one bar cell so unusually large readings cannot push the unit off
+  // the board while retaining the same compact suffix at normal board widths.
+  const maxDigits = Math.max(1, width - "HW".length - 2);
+  const maxGallons = maxDigits >= 16 ? Number.MAX_SAFE_INTEGER : (10 ** maxDigits) - 1;
+  return `${Math.min(Math.round(Math.max(0, value)), maxGallons)}G`;
 }

@@ -44,6 +44,8 @@ The Home Assistant runtime foundation is present while the existing daemon remai
 
 The water heater plugin foundation is present for later runtime wiring and remains disabled by default.
 
+Its remaining element uses an `HW` label, a green capacity bar, and a rounded gallons suffix sized to the board width; unavailable readings continue to show `N/A`.
+
 ## Plugins
 
 ### Codex

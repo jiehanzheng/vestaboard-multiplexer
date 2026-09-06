@@ -4,6 +4,7 @@ import test from "node:test";
 import { WaterHeater, createWaterHeaterIntegration, type WaterHeaterConfig } from "../src/plugins/waterHeater.js";
 import type { HomeAssistantSnapshot } from "../src/homeAssistantService.js";
 import type { HAEntity } from "../src/homeAssistant.js";
+import { encode, GREEN } from "../src/vestaboardCharacters.js";
 
 const baseConfig: WaterHeaterConfig = {
   remaining: { constant: 25 },
@@ -49,6 +50,35 @@ test("renders width-aware remaining, temperature bar, and temperature text eleme
   }
   assert.deepEqual(elements[2]?.render(15)[0]?.slice(0, 4), [27, 28, 31, 59]);
   assert.equal(heater.status().error, undefined);
+});
+
+test("renders remaining as an HW bar with rounded gallons at both board widths", () => {
+  const heater = new WaterHeater({ ...baseConfig, remaining: { constant: 25.6 } });
+  heater.update({ ...baseConfig, remaining: { constant: 25.6 } }, entities);
+  const remaining = heater.elements()[0]!;
+
+  const note = remaining.render(15)[0]!;
+  const flagship = remaining.render(22)[0]!;
+  assert.equal(note.length, 15);
+  assert.equal(flagship.length, 22);
+  assert.deepEqual(note.slice(0, 2), [8, 23]);
+  assert.deepEqual(note.slice(-3), [28, 32, 7]);
+  assert.deepEqual(flagship.slice(-3), [28, 32, 7]);
+  assert.equal(note.filter((cell) => cell === GREEN).length, 3);
+  assert.equal(flagship.filter((cell) => cell === GREEN).length, 5);
+});
+
+test("bounds a large rounded gallons suffix while retaining a bar cell", () => {
+  const config = { ...baseConfig, remaining: { constant: 123456789012 } };
+  const heater = new WaterHeater(config);
+  heater.update(config, entities);
+  const row = heater.elements()[0]!.render(15)[0]!;
+  assert.equal(row.length, 15);
+  assert.deepEqual(row.slice(0, 2), [8, 23]);
+  assert.equal(row.at(-1), 7);
+  assert.equal(row[2], GREEN);
+  assert.deepEqual(row.slice(-12), encode("99999999999G"));
+  assert.equal(heater.elements()[0]!.render(4)[0]!.length, 4);
 });
 
 test("keeps the last valid reading through an unavailable entity and discards it when binding changes", () => {
