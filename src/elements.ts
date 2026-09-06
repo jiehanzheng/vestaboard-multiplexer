@@ -1,13 +1,7 @@
 import type { VestaboardMessage } from "./vestaboard.js";
+import type { LayoutEntry } from "./contracts/config.js";
+export type { LayoutEntry } from "./contracts/config.js";
 import { isValidCharacterCode } from "./vestaboardCharacters.js";
-
-/** Temporary stage-3 shape; the canonical config contract lands with stage 6. */
-export interface LayoutEntry {
-  elementId: string;
-  startRow: number;
-  startColumn?: number;
-  width?: number;
-}
 
 /** A fixed-height contribution to a board layout. */
 export interface Element {

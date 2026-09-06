@@ -5,5 +5,11 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      VBMUX_DATA_DIR: /app/data
     volumes:
+      - vbmux-data:/app/data
       - ${CODEX_HOST_DIR:-${HOME}/.codex}:/home/node/.codex
+
+volumes:
+  vbmux-data:
