@@ -48,14 +48,14 @@ export function createCodexElements(
 export function defaultCodexLayout(board: "note" | "flagship"): LayoutEntry[] {
   return board === "note"
       ? [
-        { elementId: CODEX_WINDOW_2_ID, startRow: 0 },
-        { elementId: CODEX_WINDOW_1_ID, startRow: 1 },
+        { elementId: CODEX_WINDOW_1_ID, startRow: 0 },
+        { elementId: CODEX_WINDOW_2_ID, startRow: 1 },
         { elementId: CODEX_STATUS_ID, startRow: 2 }
       ]
     : [
         { elementId: CODEX_HEADER_ID, startRow: 0 },
-        { elementId: CODEX_WINDOW_2_LARGE_ID, startRow: 1 },
-        { elementId: CODEX_WINDOW_1_LARGE_ID, startRow: 3 },
+        { elementId: CODEX_WINDOW_1_LARGE_ID, startRow: 1 },
+        { elementId: CODEX_WINDOW_2_LARGE_ID, startRow: 3 },
         { elementId: CODEX_STATUS_ID, startRow: 5 }
       ];
 }

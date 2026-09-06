@@ -46,7 +46,7 @@ On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` bann
 
 The Codex plugin reads the aggregate percentage windows from `account/rateLimits/read` and renders up to two duration-labeled quota rows for Vestaboard Note and Flagship.
 
-The default Codex frame is composed from fixed-height elements sized for each board.
+The default Codex frame is composed from fixed-height elements sized for each board, with the longest quota window first. Explicit saved layouts keep their configured order.
 
 | Configuration | Screenshot | What it means |
 | --- | --- | --- |
