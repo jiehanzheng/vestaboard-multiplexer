@@ -21,6 +21,7 @@ export interface CollectionControllerOptions {
 export class CollectionController {
   private readonly now: () => Date;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly usesDefaultSleep: boolean;
   private readonly logger: Pick<Console, "warn">;
   private running = false;
   private stopRequested = false;
@@ -37,6 +38,7 @@ export class CollectionController {
       throw new Error("Collection interval must be a positive number.");
     }
     this.now = options.now ?? (() => new Date());
+    this.usesDefaultSleep = options.sleep === undefined;
     this.sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     this.logger = options.logger ?? console;
   }
@@ -112,14 +114,20 @@ export class CollectionController {
   private async sleepUntilNextCollection(): Promise<void> {
     await new Promise<void>((resolve) => {
       let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const done = (): void => {
         if (settled) return;
         settled = true;
+        if (timer !== undefined) clearTimeout(timer);
         if (this.wake === done) this.wake = undefined;
         resolve();
       };
       this.wake = done;
-      void this.sleep(this.options.intervalMs).then(done, done);
+      if (this.usesDefaultSleep) {
+        timer = setTimeout(done, this.options.intervalMs);
+      } else {
+        void this.sleep(this.options.intervalMs).then(done, done);
+      }
     });
   }
 }
