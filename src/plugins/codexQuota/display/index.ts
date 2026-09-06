@@ -1,4 +1,4 @@
-import type { VestaboardMessage } from "../../../orchestrator.js";
+import type { VestaboardMessage } from "../../../vestaboard.js";
 import type { VestaboardBoard } from "../../../vestaboardTypes.js";
 import { formatFlagshipError, formatFlagshipQuota } from "./flagship.js";
 import { formatNoteError, formatNoteQuota } from "./note.js";

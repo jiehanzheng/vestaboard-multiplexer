@@ -1,6 +1,3 @@
-import type { Priority } from "../../orchestrator.js";
-import type { VestaboardBoardProvider } from "../../vestaboardTypes.js";
-
 export interface QuotaSnapshot {
   windows: QuotaWindow[];
 }
@@ -28,12 +25,9 @@ export type Logger = Pick<Console, "warn">;
 
 export interface CodexQuotaPluginOptions {
   fixture?: boolean;
-  priority?: Priority;
-  errorPriority?: Priority;
   timeZone?: string;
   autoStartWindow5h?: boolean;
   autoStartWindowWk?: boolean;
   showPacing?: boolean;
-  board?: VestaboardBoardProvider;
   statusMessage?: () => string | undefined;
 }

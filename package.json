@@ -5,17 +5,26 @@
   "type": "module",
   "packageManager": "pnpm@10.31.0",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.web.json && vite build",
     "start": "pnpm build && node dist/src/index.js",
     "once": "pnpm build && node dist/src/index.js --once",
     "dry-run": "pnpm build && node dist/src/index.js --once --dry-run",
     "test": "pnpm build && node --test dist/test/*.test.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",
-    "typescript": "^6.0.3"
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.2"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.5.4"
   }
 }
