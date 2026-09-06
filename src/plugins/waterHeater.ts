@@ -1,18 +1,25 @@
 import type { Element } from "../elements.js";
-import { BLANK, BLUE, encode, GREEN } from "./codexQuota/display/shared.js";
-import type { HAEntity } from "../homeAssistant.js";
+import { BLANK, BLUE, encode, GREEN } from "../vestaboardCharacters.js";
+import type { HAEntity } from "../contracts/homeAssistant.js";
+import {
+  DEFAULT_WATER_HEATER_CONFIG,
+  validateWaterHeaterConfig,
+  type Input,
+  type WaterHeaterConfig
+} from "./waterHeater/config.js";
 
-export type Input = { constant: number } | { entityId: string; attribute?: string } | null;
+export {
+  ConstantInputSchema,
+  DEFAULT_WATER_HEATER_CONFIG,
+  EntityInputSchema,
+  InputSchema,
+  validateWaterHeaterConfig,
+  WaterHeaterConfigBaseSchema,
+  WaterHeaterConfigSchema,
+  waterHeaterLayoutIssues
+} from "./waterHeater/config.js";
+export type { ConstantInput, EntityInput, Input, WaterHeaterConfig } from "./waterHeater/config.js";
 
-export interface WaterHeaterConfig {
-  remaining: Input;
-  capacity: Input;
-  temperature: Input;
-  target: Input;
-  unit: "F" | "C";
-  baseline?: number;
-  enabled: boolean;
-}
 
 export interface WaterHeaterStatus {
   error?: string;
@@ -24,15 +31,6 @@ interface WaterReadings {
   temperature?: number;
   target?: number;
 }
-
-export const DEFAULT_WATER_HEATER_CONFIG: WaterHeaterConfig = {
-  remaining: null,
-  capacity: null,
-  temperature: null,
-  target: null,
-  unit: "F",
-  enabled: false
-};
 
 export class WaterHeater {
   private config: WaterHeaterConfig;
@@ -52,8 +50,9 @@ export class WaterHeater {
   update(config: WaterHeaterConfig, entities: readonly HAEntity[] = []): WaterHeaterStatus {
     const nextConfig = cloneConfig(config);
     const errors = validateWaterHeaterConfig(nextConfig);
-    this.config = nextConfig;
+    this.config = errors.length ? cloneConfig({ ...DEFAULT_WATER_HEATER_CONFIG, enabled: false }) : nextConfig;
     this.diagnostic = errors[0];
+    if (errors.length) return this.status();
 
     const entityMap = new Map(entities.map((entity) => [entity.entity_id, entity]));
     for (const field of ["remaining", "capacity", "temperature", "target"] as const) {
@@ -141,40 +140,10 @@ export function createWaterHeater(config: WaterHeaterConfig = DEFAULT_WATER_HEAT
   return new WaterHeater(config);
 }
 
-export function validateWaterHeaterConfig(config: WaterHeaterConfig): string[] {
-  const errors: string[] = [];
-  if (config.unit !== "F" && config.unit !== "C") errors.push("unit must be F or C.");
-  for (const field of ["remaining", "capacity", "temperature", "target"] as const) {
-    const input = config[field];
-    if (input === null) continue;
-    if (typeof input !== "object" || Array.isArray(input)) {
-      errors.push(`${field} must be a constant or entity source.`);
-      continue;
-    }
-    if ("constant" in input) {
-      const value = input.constant;
-      if (!Number.isFinite(value) || (field === "remaining" && value < 0) || (field === "capacity" && value <= 0)) {
-        errors.push(`${field} constant must be finite${field === "remaining" ? " and non-negative" : field === "capacity" ? " and positive" : ""}.`);
-      }
-      continue;
-    }
-    if ("entityId" in input) {
-      if (typeof input.entityId !== "string" || !input.entityId.trim()) errors.push(`${field} entityId is required.`);
-      if (input.attribute !== undefined && (typeof input.attribute !== "string" || !input.attribute.trim())) {
-        errors.push(`${field} attribute must be a non-empty string.`);
-      }
-      continue;
-    }
-    errors.push(`${field} must be a constant or entity source.`);
-  }
-  if (config.baseline !== undefined && !Number.isFinite(config.baseline)) {
-    errors.push("baseline must be a finite number.");
-  }
-  return errors;
-}
-
 function resolveInput(input: Exclude<Input, null>, entities: Map<string, HAEntity>): number | undefined {
+  if (!input || typeof input !== "object") return undefined;
   if ("constant" in input) return input.constant;
+  if (!("entityId" in input) || typeof input.entityId !== "string") return undefined;
   const entity = entities.get(input.entityId);
   if (!entity) return undefined;
   if (!input.attribute && (entity.state === "unknown" || entity.state === "unavailable")) return undefined;
@@ -197,10 +166,7 @@ function validReading(field: keyof WaterReadings, value: number): boolean {
 }
 
 function inputBinding(field: string, input: Input): string {
-  if (input === null) return `${field}:none`;
-  return "constant" in input
-    ? `${field}:constant:${input.constant}`
-    : `${field}:entity:${input.entityId}:${input.attribute ?? ""}`;
+  return JSON.stringify([field, input]);
 }
 
 function cloneConfig(config: WaterHeaterConfig): WaterHeaterConfig {

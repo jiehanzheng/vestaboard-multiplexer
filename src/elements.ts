@@ -1,4 +1,5 @@
 import type { VestaboardMessage } from "./orchestrator.js";
+import { isValidCharacterCode } from "./vestaboardCharacters.js";
 
 /** A fixed-height contribution to a board layout. */
 export interface Element {
@@ -106,7 +107,7 @@ function validateRenderedElement(element: Element, rendered: unknown, width: num
     if (!Array.isArray(row) || row.length !== width) {
       throw new Error(`Element '${element.id}' must render exactly ${width} columns per row.`);
     }
-    if (!row.every((cell) => Number.isInteger(cell) && cell >= 0)) {
+    if (!row.every(isValidCharacterCode)) {
       throw new Error(`Element '${element.id}' rendered an invalid character code.`);
     }
   }

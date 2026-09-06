@@ -1,55 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { LayoutEntry } from "./elements.js";
-import type { HAConfig } from "./homeAssistant.js";
+import { AppConfigSchema, type AppConfig, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, type WaterHeaterConfig, PublicConfigSchema } from "./contracts/config.js";
+import { DEFAULT_WATER_HEATER_CONFIG } from "./plugins/waterHeater/config.js";
 import {
-  DEFAULT_WATER_HEATER_CONFIG,
-  validateWaterHeaterConfig,
-  type WaterHeaterConfig
-} from "./plugins/waterHeater.js";
-import {
-  DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS,
-  type LocalMessageTransitionOptions,
-  type LocalMessageTransitionStrategy
+  DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS
 } from "./vestaboard.js";
 
-export type { LayoutEntry } from "./elements.js";
-
-export interface AppConfig {
-  board: "auto" | "note" | "flagship";
-  ha: HAConfig;
-  water: WaterHeaterConfig;
-  transport: {
-    token?: string;
-    localApiKey?: string;
-    cloudUrl: string;
-    localUrl: string;
-    localMessageTransition: LocalMessageTransitionOptions;
-  };
-  updateIntervalMinutes: number;
-  codex: {
-    enabled: boolean;
-    source: "fixture" | "app-server";
-    pollIntervalSeconds: number;
-    timeZone?: string;
-    showPacing: boolean;
-    autoStartWindow5h: boolean;
-    autoStartWindowWk: boolean;
-    demoPauseMinutes: number;
-  };
-  layout: LayoutEntry[] | null;
-}
-
-export interface PublicConfig {
-  config: AppConfig;
-  locked: string[];
-  hasSecrets: {
-    token: boolean;
-    localApiKey: boolean;
-    haToken: boolean;
-  };
-  error?: string;
-}
+export type { AppConfig, HAConfig, LayoutEntry, LocalMessageTransitionOptions, LocalMessageTransitionStrategy, PublicConfig } from "./contracts/config.js";
+export { AppConfigSchema, PublicConfigSchema } from "./contracts/config.js";
 
 export interface ConfigEnvironment {
   [name: string]: string | undefined;
@@ -181,7 +139,7 @@ export class ConfigStore {
   }
 }
 
-function parseSavedConfig(value: unknown): AppConfig {
+function parseSavedConfig(value: unknown): Partial<AppConfig> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Config must be a JSON object.");
   }
@@ -289,26 +247,7 @@ function mergeConfig(base: AppConfig, patch: Partial<AppConfig>): AppConfig {
 }
 
 function cloneConfig(config: AppConfig): AppConfig {
-  return {
-    ...config,
-    ha: {
-      ...config.ha,
-      pause: config.ha.pause ? { ...config.ha.pause } : null
-    },
-    water: {
-      ...config.water,
-      remaining: config.water.remaining ? { ...config.water.remaining } : null,
-      capacity: config.water.capacity ? { ...config.water.capacity } : null,
-      temperature: config.water.temperature ? { ...config.water.temperature } : null,
-      target: config.water.target ? { ...config.water.target } : null
-    },
-    transport: {
-      ...config.transport,
-      localMessageTransition: { ...config.transport.localMessageTransition }
-    },
-    codex: { ...config.codex },
-    layout: config.layout ? config.layout.map((entry) => ({ ...entry })) : null
-  };
+  return structuredClone(config);
 }
 
 function getConfigPath(config: AppConfig, path: string): unknown {
@@ -330,88 +269,10 @@ function setConfigPath(config: AppConfig, path: string, value: unknown): void {
   target[leaf] = value;
 }
 
-function validateConfig(config: AppConfig): AppConfig {
-  if (!["auto", "note", "flagship"].includes(config.board)) throw new Error("board must be auto, note, or flagship.");
-  validateHomeAssistantConfig(config.ha);
-  if (!config.water || typeof config.water !== "object") throw new Error("water is required.");
-  for (const error of validateWaterHeaterConfig(config.water)) throw new Error(`water.${error}`);
-  if (!config.transport || typeof config.transport !== "object") throw new Error("transport is required.");
-  if (typeof config.transport.cloudUrl !== "string" || !config.transport.cloudUrl) throw new Error("transport.cloudUrl is required.");
-  if (typeof config.transport.localUrl !== "string" || !config.transport.localUrl) throw new Error("transport.localUrl is required.");
-  if (config.transport.token !== undefined && typeof config.transport.token !== "string") throw new Error("transport.token must be a string.");
-  if (config.transport.localApiKey !== undefined && typeof config.transport.localApiKey !== "string") throw new Error("transport.localApiKey must be a string.");
-  validateTransition(config.transport.localMessageTransition);
-  positive(config.updateIntervalMinutes, "updateIntervalMinutes");
-  if (!config.codex || typeof config.codex !== "object") throw new Error("codex is required.");
-  if (!["fixture", "app-server"].includes(config.codex.source)) throw new Error("codex.source must be fixture or app-server.");
-  positive(config.codex.pollIntervalSeconds, "codex.pollIntervalSeconds");
-  positive(config.codex.demoPauseMinutes, "codex.demoPauseMinutes");
-  for (const [path, value] of Object.entries(config.codex)) {
-    if (["enabled", "showPacing", "autoStartWindow5h", "autoStartWindowWk"].includes(path) && typeof value !== "boolean") {
-      throw new Error(`codex.${path} must be a boolean.`);
-    }
-  }
-  if (config.codex.timeZone !== undefined) {
-    if (typeof config.codex.timeZone !== "string") throw new Error("codex.timeZone must be a string.");
-    validateTimeZone(config.codex.timeZone);
-  }
-  if (config.layout !== null) {
-    if (!Array.isArray(config.layout)) throw new Error("layout must be an array or null.");
-    for (const entry of config.layout) {
-      if (!entry || typeof entry.elementId !== "string" || !entry.elementId || !Number.isInteger(entry.startRow) || entry.startRow < 0) {
-        throw new Error("layout entries require an elementId and non-negative integer startRow.");
-      }
-    }
-    const temperatureBarAllocated = config.water.enabled && config.layout.some((entry) => entry.elementId === "water.temperature-bar");
-    if (temperatureBarAllocated && config.water.baseline === undefined) {
-      throw new Error("water.baseline is required when water.temperature-bar is allocated.");
-    }
-  }
-  return cloneConfig(config);
-}
-
-function validateHomeAssistantConfig(config: HAConfig): void {
-  if (!config || typeof config !== "object") throw new Error("ha is required.");
-  if (typeof config.url !== "string") throw new Error("ha.url must be a string.");
-  if (config.url !== "") {
-    let parsed: URL;
-    try {
-      parsed = new URL(config.url);
-    } catch {
-      throw new Error("ha.url must be a valid HTTP(S) URL.");
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error("ha.url must use HTTP or HTTPS.");
-    }
-    if (parsed.username || parsed.password) throw new Error("ha.url must not contain embedded credentials.");
-  }
-  if (config.token !== undefined && typeof config.token !== "string") throw new Error("ha.token must be a string.");
-  if (config.pause === null) return;
-  if (!config.pause || typeof config.pause !== "object") throw new Error("ha.pause must be an object or null.");
-  if (typeof config.pause.entityId !== "string" || !config.pause.entityId.trim()) throw new Error("ha.pause.entityId is required.");
-  if (typeof config.pause.pauseValue !== "string" || !config.pause.pauseValue.trim()) throw new Error("ha.pause.pauseValue is required.");
-  if (typeof config.pause.resumeValue !== "string" || !config.pause.resumeValue.trim()) throw new Error("ha.pause.resumeValue is required.");
-  if (config.pause.pauseValue === config.pause.resumeValue) throw new Error("ha.pause values must be distinct.");
-}
-
-function validateTransition(transition: LocalMessageTransitionOptions): void {
-  if (!transition || !["column", "reverse-column", "edges-to-center", "row", "diagonal", "random"].includes(transition.strategy)) {
-    throw new Error("transport.localMessageTransition.strategy is invalid.");
-  }
-  positive(transition.stepIntervalMs, "transport.localMessageTransition.stepIntervalMs");
-  positive(transition.stepSize, "transport.localMessageTransition.stepSize");
-}
-
-function positive(value: unknown, path: string): asserts value is number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new Error(`${path} must be a positive number.`);
-}
-
-function validateTimeZone(timeZone: string): void {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone }).format();
-  } catch {
-    throw new Error(`Invalid time zone '${timeZone}'.`);
-  }
+export function validateConfig(config: unknown): AppConfig {
+  const result = AppConfigSchema.safeParse(config);
+  if (!result.success) throw new Error(result.error.issues.map((issue) => `${issue.path.join(".") || "config"} ${issue.message}`).join("; "));
+  return cloneConfig(result.data);
 }
 
 function boardFromEnv(value: string): AppConfig["board"] {

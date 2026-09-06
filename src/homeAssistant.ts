@@ -1,19 +1,6 @@
-export interface HAEntity {
-  entity_id: string;
-  state: string;
-  attributes: Record<string, unknown>;
-  last_updated?: string;
-}
+import type { HAConfig, HAEntity, HAStatus } from "./contracts/homeAssistant.js";
 
-export interface HAConfig {
-  url: string;
-  token?: string;
-  pause: {
-    entityId: string;
-    pauseValue: string;
-    resumeValue: string;
-  } | null;
-}
+export type { HAConfig, HAEntity, HAStatus } from "./contracts/homeAssistant.js";
 
 export function haPauseBinding(config: HAConfig): string | undefined {
   const pause = config.pause;
@@ -29,11 +16,6 @@ export function readHAPause(config: HAConfig, entities: readonly HAEntity[]): bo
   if (entity.state === pause.pauseValue) return true;
   if (entity.state === pause.resumeValue) return false;
   return undefined;
-}
-
-export interface HAStatus {
-  connected: boolean;
-  error?: string;
 }
 
 export interface HomeAssistantSocket {

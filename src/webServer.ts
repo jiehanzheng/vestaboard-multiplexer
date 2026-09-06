@@ -1,16 +1,19 @@
 import { createServer, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
+import { ConfigPatchSchema, PublicConfigSchema, type ConfigPatch, type PublicConfig } from "./contracts/config.js";
+import { ElementsResponseSchema, LoginStatusSchema, PauseRequestSchema, PreviewRequestSchema, PreviewResponseSchema, RuntimeStatusSchema, type ElementsResponse, type LoginStatus, type PauseRequest, type PreviewRequest, type PreviewResponse, type RuntimeStatus } from "./contracts/api.js";
+import { HAConnectionTestRequestSchema, HAConnectionTestResponseSchema, HAEntitiesRequestSchema, HAEntitiesResponseSchema, type HAEntitiesRequest, type HAEntitiesResponse, type HAStatus } from "./contracts/homeAssistant.js";
 
 export interface WebActions {
-  status(): unknown;
-  config(): unknown;
-  elements(): unknown;
-  save(value: unknown): Promise<unknown>;
-  preview(value: unknown): unknown | Promise<unknown>;
-  pause(value: unknown): Promise<unknown>;
-  login(action: "start" | "cancel" | "check"): Promise<unknown>;
-  homeAssistant?(action: "test" | "entities", value: unknown): Promise<unknown>;
+  status(): RuntimeStatus;
+  config(): PublicConfig;
+  elements(): ElementsResponse;
+  save(value: ConfigPatch): Promise<PublicConfig>;
+  preview(value: PreviewRequest): PreviewResponse | Promise<PreviewResponse>;
+  pause(value: PauseRequest): Promise<RuntimeStatus>;
+  login(action: "start" | "cancel" | "check"): Promise<LoginStatus>;
+  homeAssistant?(action: "test" | "entities", value: HAEntitiesRequest): Promise<HAStatus | HAEntitiesResponse>;
 }
 
 export async function startWebServer(actions: WebActions, options: {
@@ -19,7 +22,7 @@ export async function startWebServer(actions: WebActions, options: {
   const clients = new Set<ServerResponse>();
   const assets = resolve(options.assets ?? "dist/web");
   const broadcast = (): void => {
-    const event = `data: ${JSON.stringify(actions.status())}\n\n`;
+    const event = `data: ${JSON.stringify(RuntimeStatusSchema.parse(actions.status()))}\n\n`;
     for (const client of clients) {
       // A slow browser reconnects to the current snapshot instead of building an event backlog.
       if (!client.write(event)) { client.destroy(); clients.delete(client); }
@@ -33,18 +36,19 @@ export async function startWebServer(actions: WebActions, options: {
     try {
       const path = new URL(request.url ?? "/", "http://localhost").pathname;
       if (request.method === "GET" && path === "/api/events") {
+        const snapshot = RuntimeStatusSchema.parse(actions.status());
         response.writeHead(200, {
           "Content-Type": "text/event-stream", "Cache-Control": "no-cache",
           "Connection": "keep-alive", "X-Accel-Buffering": "no"
         });
         clients.add(response);
-        response.write(`data: ${JSON.stringify(actions.status())}\n\n`);
+        response.write(`data: ${JSON.stringify(snapshot)}\n\n`);
         request.on("close", () => clients.delete(response));
         return;
       }
-      if (request.method === "GET" && path === "/api/status") return json(200, actions.status());
-      if (request.method === "GET" && path === "/api/config") return json(200, actions.config());
-      if (request.method === "GET" && path === "/api/elements") return json(200, actions.elements());
+      if (request.method === "GET" && path === "/api/status") return json(200, RuntimeStatusSchema.parse(actions.status()));
+      if (request.method === "GET" && path === "/api/config") return json(200, PublicConfigSchema.parse(actions.config()));
+      if (request.method === "GET" && path === "/api/elements") return json(200, ElementsResponseSchema.parse(actions.elements()));
       if (request.method === "POST" && path.startsWith("/api/")) {
         const origin = request.headers.origin;
         if (origin && new URL(origin).host !== request.headers.host) return json(403, { error: "Cross-origin changes are not allowed." });
@@ -55,14 +59,18 @@ export async function startWebServer(actions: WebActions, options: {
           if (Buffer.byteLength(body) > 1_048_576) return json(413, { error: "Request is too large." });
         }
         const value: unknown = body ? JSON.parse(body) : {};
-        if (path === "/api/config") return json(200, await actions.save(value));
-        if (path === "/api/preview") return json(200, await actions.preview(value));
-        if (path === "/api/pause") return json(200, await actions.pause(value));
+        if (path === "/api/config") return json(200, PublicConfigSchema.parse(await actions.save(ConfigPatchSchema.parse(value))));
+        if (path === "/api/preview") return json(200, PreviewResponseSchema.parse(await actions.preview(PreviewRequestSchema.parse(value))));
+        if (path === "/api/pause") return json(200, RuntimeStatusSchema.parse(await actions.pause(PauseRequestSchema.parse(value))));
         for (const action of ["start", "cancel", "check"] as const) {
-          if (path === `/api/login/${action}`) return json(200, await actions.login(action));
+          if (path === `/api/login/${action}`) return json(200, LoginStatusSchema.parse(await actions.login(action)));
         }
         for (const action of ["test", "entities"] as const) {
-          if (path === `/api/ha/${action}` && actions.homeAssistant) return json(200, await actions.homeAssistant(action, value));
+          if (path === `/api/ha/${action}` && actions.homeAssistant) {
+            const input = (action === "test" ? HAConnectionTestRequestSchema : HAEntitiesRequestSchema).parse(value);
+            const result = await actions.homeAssistant(action, input);
+            return json(200, (action === "test" ? HAConnectionTestResponseSchema : HAEntitiesResponseSchema).parse(result));
+          }
         }
       }
       if (path.startsWith("/api/")) return json(404, { error: "Unknown endpoint." });

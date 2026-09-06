@@ -79,6 +79,8 @@ Elements span the board width and have a fixed height. Assign their zero-based s
 
 ## Plugins
 
+Plugin settings use browser-safe Zod schemas shared by configuration validation and the HTTP contracts. Vestaboard encoding belongs to the platform; plugins do not import one another. Existing JSON settings and environment overrides retain their names.
+
 ### Water heater / Home Assistant
 
 In **Connections**, enter your Home Assistant URL and long-lived access token, test the connection, then choose entities by name. Remaining hot water, capacity, tank temperature and target each accept a constant or an entity state/numeric attribute. Use US gallons and select one shared temperature unit (F or C). The temperature bar also requires a baseline.
