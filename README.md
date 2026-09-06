@@ -42,6 +42,8 @@ On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` bann
 
 The Home Assistant runtime foundation is present while the existing daemon remains active until the final UI-enabled runtime cutover.
 
+The water heater plugin foundation is present for later runtime wiring and remains disabled by default.
+
 ## Plugins
 
 ### Codex
