@@ -6,7 +6,24 @@ A small TypeScript service for [Vestaboard](https://web.vestaboard.com/referral?
 
 ## How to Set Up
 
-Docker is the intended runtime path.
+Use `pfm` to reserve host ports before starting a local server or container. These commands require `pfm` and `jq`; Docker is the intended deployment runtime.
+
+### Local preview
+
+With Node 22.12+ and pnpm installed, run from the repository root:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+pfm port reserve vbmux-preview --preferred-port=8787 --host=127.0.0.1
+export VBMUX_PORT="$(pfm status --json | jq -er '.ports[] | select(.role == "vbmux-preview") | .port')"
+echo "Open http://127.0.0.1:$VBMUX_PORT"
+CODEX_QUOTA_SOURCE=fixture VBMUX_DATA_DIR=./data/preview VBMUX_HOST=127.0.0.1 node dist/src/index.js --dry-run
+```
+
+The React app includes Note and Flagship board previews. This command uses sample Codex data, separate preview settings, and no physical board writes. Water readings can use constants without Home Assistant. Keep the command running while using the preview; stop it with Ctrl-C, then release its port with `pfm port release vbmux-preview`.
+
+### Docker
 
 1. Copy the example environment file:
 
@@ -14,13 +31,18 @@ Docker is the intended runtime path.
    cp .env.example .env
    ```
 
-2. Start the app:
+2. Reserve a host port and start the app:
 
    ```sh
+   pfm port reserve vbmux-web --preferred-port=3000 --host=0.0.0.0
+   export VBMUX_PORT="$(pfm status --json | jq -er '.ports[] | select(.role == "vbmux-web") | .port')"
+   echo "Open http://localhost:$VBMUX_PORT"
    docker compose up --build
    ```
 
-3. Open [vbmux](http://localhost:3000), add the board connection in **Board settings**, and sign in under **Connections**. Compose can also reuse your mounted `${HOME}/.codex` credentials; set `CODEX_HOST_DIR` if they live elsewhere.
+3. Open the printed URL, add the board connection in **Board settings**, and sign in under **Connections**. Compose can also reuse your mounted `${HOME}/.codex` credentials; set `CODEX_HOST_DIR` if they live elsewhere.
+
+Use `pfm status` to inspect reservations. After stopping the container, release its host port with `pfm port release vbmux-web`.
 
 The React interface previews layout edits before **Apply**. Live status shows the desired frame, last sent frame, next eligible update, and pause state. **Pause updates** keeps collecting data while holding the physical board. HTTP has no application authentication; manage access through your own network or proxy.
 
@@ -28,7 +50,7 @@ Core environment variables configure the orchestrator and Vestaboard transport. 
 
 | Variable | Description |
 | --- | --- |
-| `VBMUX_PORT` | HTTP port (Compose host port).<br><br>Default: `3000` |
+| `VBMUX_PORT` | Use the host port assigned by `pfm`. Compose keeps the container’s internal HTTP port at `3000`. |
 | `VBMUX_DATA_DIR` | Saved configuration and pause state directory.<br><br>Default: `./data` (`/app/data` in Docker) |
 | `ORCHESTRATOR_INTERVAL_MINUTES` | Minimum time between normal board write attempts. Failed attempts also count.<br><br>Default: `5` |
 | `CODEX_QUOTA_POLL_INTERVAL_SECONDS` | How often Codex collects fresh quota, independently of board writes.<br><br>Default: `60` |
@@ -128,7 +150,7 @@ When any displayed quota row is exhausted at 0% and `account/rateLimits/read` re
 
 #### Runtime Signals
 
-Use fixture mode to validate formatting without an authenticated Codex app-server:
+Use fixture mode to validate formatting without an authenticated Codex app-server. First reserve and export `VBMUX_PORT` using the Docker setup above:
 
 ```sh
 CODEX_QUOTA_SOURCE=fixture docker compose up --build
