@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { AppConfigSchema, type AppConfig, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, type WaterHeaterConfig, PublicConfigSchema } from "./contracts/config.js";
 import { DEFAULT_WATER_HEATER_CONFIG } from "./plugins/waterHeater/config.js";
+import { applyCodexEnvironment, DEFAULT_CODEX_CONFIG } from "./plugins/codexQuota/config.js";
 import {
   DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS
 } from "./vestaboard.js";
@@ -26,15 +27,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     localMessageTransition: { ...DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS }
   },
   updateIntervalMinutes: 5,
-  codex: {
-    enabled: true,
-    source: "app-server",
-    pollIntervalSeconds: 60,
-    showPacing: true,
-    autoStartWindow5h: false,
-    autoStartWindowWk: false,
-    demoPauseMinutes: 5
-  },
+  codex: { ...DEFAULT_CODEX_CONFIG },
   layout: null
 };
 
@@ -180,18 +173,9 @@ function applyEnvironment(base: AppConfig, env: ConfigEnvironment): { config: Ap
   setNumber("updateIntervalMinutes", env.ORCHESTRATOR_INTERVAL_MINUTES, (value) => {
     config.updateIntervalMinutes = value;
   }, locked);
-  set("codex.enabled", env.CODEX_QUOTA_ENABLED, () => { config.codex.enabled = boolFromEnv(env.CODEX_QUOTA_ENABLED!); });
-  set("codex.source", env.CODEX_QUOTA_SOURCE, () => { config.codex.source = sourceFromEnv(env.CODEX_QUOTA_SOURCE!); });
-  setNumber("codex.pollIntervalSeconds", env.CODEX_QUOTA_POLL_INTERVAL_SECONDS, (value) => {
-    config.codex.pollIntervalSeconds = value;
-  }, locked);
-  set("codex.timeZone", env.CODEX_QUOTA_TIME_ZONE, () => { config.codex.timeZone = env.CODEX_QUOTA_TIME_ZONE; });
-  set("codex.showPacing", env.CODEX_QUOTA_SHOW_PACING, () => { config.codex.showPacing = onOffFromEnv(env.CODEX_QUOTA_SHOW_PACING!); });
-  set("codex.autoStartWindow5h", env.CODEX_AUTO_START_WINDOW_5H, () => { config.codex.autoStartWindow5h = boolFromEnv(env.CODEX_AUTO_START_WINDOW_5H!); });
-  set("codex.autoStartWindowWk", env.CODEX_AUTO_START_WINDOW_WK, () => { config.codex.autoStartWindowWk = boolFromEnv(env.CODEX_AUTO_START_WINDOW_WK!); });
-  setNumber("codex.demoPauseMinutes", env.CODEX_QUOTA_DEMO_PAUSE_MINUTES, (value) => {
-    config.codex.demoPauseMinutes = value;
-  }, locked);
+  const codexEnvironment = applyCodexEnvironment(config.codex, env);
+  Object.assign(config.codex, codexEnvironment.config);
+  locked.push(...codexEnvironment.locked);
 
   return { config: validateConfig(config), locked };
 }
@@ -280,24 +264,9 @@ function boardFromEnv(value: string): AppConfig["board"] {
   throw new Error("VESTABOARD_BOARD must be auto, note, or flagship.");
 }
 
-function sourceFromEnv(value: string): AppConfig["codex"]["source"] {
-  if (value === "fixture" || value === "app-server") return value;
-  throw new Error("CODEX_QUOTA_SOURCE must be fixture or app-server.");
-}
-
 function strategyFromEnv(value: string): LocalMessageTransitionStrategy {
   if (["column", "reverse-column", "edges-to-center", "row", "diagonal", "random"].includes(value)) return value as LocalMessageTransitionStrategy;
   throw new Error("VESTABOARD_LOCAL_MESSAGE_STRATEGY is invalid.");
-}
-
-function boolFromEnv(value: string): boolean {
-  if (["1", "true", "on", "yes"].includes(value.toLowerCase())) return true;
-  if (["0", "false", "off", "no"].includes(value.toLowerCase())) return false;
-  throw new Error(`Invalid boolean environment value '${value}'.`);
-}
-
-function onOffFromEnv(value: string): boolean {
-  return boolFromEnv(value);
 }
 
 function errorMessage(error: unknown): string {

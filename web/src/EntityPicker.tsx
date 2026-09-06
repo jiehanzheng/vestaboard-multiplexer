@@ -27,7 +27,7 @@ export function EntityPicker({ id, label, value, entities, loading, error, onCha
   }, [entities, query, selected, value]);
 
   return (
-    <label className="config-field">
+    <label className="config-field" htmlFor={id}>
       <span>{label}</span>
       <input aria-label={`${label} search`} placeholder="Search entities" value={query} onChange={(event) => setQuery(event.target.value)} />
       <select id={id} value={value} onChange={(event) => onChange(event.target.value)}>

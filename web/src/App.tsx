@@ -647,8 +647,8 @@ function SettingsPanel({ config, response, preference, onChange }: SettingsPanel
           <input type="url" value={config.transport.cloudUrl} disabled={isLocked(locked, ["transport.cloudUrl"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, cloudUrl: event.target.value } })} />
         </label>
         <div className="config-field">
-          <span>Cloud token{isLocked(locked, ["transport.token"]) ? <LockMark /> : null}</span>
-          <input type="password" autoComplete="new-password" value={config.transport.token ?? ""} placeholder={hasSecrets?.token ? "Saved token · type to replace" : "Paste token"} disabled={isLocked(locked, ["transport.token"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, token: event.target.value } })} />
+          <label htmlFor="cloud-token">Cloud token{isLocked(locked, ["transport.token"]) ? <LockMark /> : null}</label>
+          <input id="cloud-token" type="password" autoComplete="new-password" value={config.transport.token ?? ""} placeholder={hasSecrets?.token ? "Saved token · type to replace" : "Paste token"} disabled={isLocked(locked, ["transport.token"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, token: event.target.value } })} />
           <button className="button quiet" type="button" disabled={isLocked(locked, ["transport.token"])} onClick={() => onChange({ ...config, transport: { ...config.transport, token: "" } })}>Clear saved token</button>
         </div>
         <label className="config-field">
@@ -656,8 +656,8 @@ function SettingsPanel({ config, response, preference, onChange }: SettingsPanel
           <input type="url" value={config.transport.localUrl} disabled={isLocked(locked, ["transport.localUrl"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, localUrl: event.target.value } })} />
         </label>
         <div className="config-field">
-          <span>Local API key{isLocked(locked, ["transport.localApiKey"]) ? <LockMark /> : null}</span>
-          <input type="password" autoComplete="new-password" value={config.transport.localApiKey ?? ""} placeholder={hasSecrets?.localApiKey ? "Saved key · type to replace" : "Paste key"} disabled={isLocked(locked, ["transport.localApiKey"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, localApiKey: event.target.value } })} />
+          <label htmlFor="local-api-key">Local API key{isLocked(locked, ["transport.localApiKey"]) ? <LockMark /> : null}</label>
+          <input id="local-api-key" type="password" autoComplete="new-password" value={config.transport.localApiKey ?? ""} placeholder={hasSecrets?.localApiKey ? "Saved key · type to replace" : "Paste key"} disabled={isLocked(locked, ["transport.localApiKey"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, localApiKey: event.target.value } })} />
           <button className="button quiet" type="button" disabled={isLocked(locked, ["transport.localApiKey"])} onClick={() => onChange({ ...config, transport: { ...config.transport, localApiKey: "" } })}>Clear saved key</button>
         </div>
       </div>

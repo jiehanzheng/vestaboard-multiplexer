@@ -20,7 +20,7 @@ export async function startWebServer(actions: WebActions, options: {
   port: number; host?: string; assets?: string;
 }): Promise<{ broadcast(): void; close(): Promise<void>; port: number }> {
   const clients = new Set<ServerResponse>();
-  const assets = resolve(options.assets ?? "dist/web");
+  const assets = resolve(options.assets ?? "dist/public");
   const broadcast = (): void => {
     const event = `data: ${JSON.stringify(RuntimeStatusSchema.parse(actions.status()))}\n\n`;
     for (const client of clients) {

@@ -5,7 +5,8 @@ export default defineConfig({
   root: "web",
   plugins: [react()],
   build: {
-    outDir: "../dist/web",
+    // Keep bundled assets separate from tsc output so browser-owned modules imported by tests survive the build.
+    outDir: "../dist/public",
     emptyOutDir: true
   },
   server: {

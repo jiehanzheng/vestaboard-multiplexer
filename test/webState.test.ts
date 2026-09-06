@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import assert from "node:assert/strict";
 import test from "node:test";
 import { reconcileSave } from "../web/src/draftState.js";

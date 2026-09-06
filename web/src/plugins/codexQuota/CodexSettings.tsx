@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { CodexConfig } from "../../../src/contracts/config";
+import type { CodexConfig } from "../../../../src/contracts/config";
 import { ConfigNumber, ConfigToggle } from "../../ConfigControls";
 import { isLocked } from "../../utils";
 
