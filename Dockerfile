@@ -22,5 +22,7 @@ RUN npm install -g @openai/codex && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 
+RUN mkdir -p /app/data && chown node:node /app/data
+
 USER node
 CMD ["node", "dist/src/index.js"]

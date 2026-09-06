@@ -41,6 +41,18 @@ Core environment variables configure the orchestrator and Vestaboard transport. 
 
 On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` banner with the current `yyyymmdd hhmm` timestamp and enabled plugin slugs. The banner displays for 30 seconds outside the normal write limit, then the latest data is sent. Codex collection continues independently of board writes. Changes coalesce into the newest message; unchanged messages are skipped. Normal attempts, including failed attempts, are separated by `ORCHESTRATOR_INTERVAL_MINUTES`.
 
+## Layout configuration
+
+Settings can be saved in `data/config.json` (`VBMUX_DATA_DIR` changes the directory); Docker persists this directory in its `vbmux-data` volume. Existing environment variables override corresponding saved settings. A missing file uses defaults; an invalid file must be repaired before board writes resume.
+
+Elements span the board width and have a fixed height. Assign their zero-based starting row in `layout`; overlapping or out-of-bounds placements are rejected. `null` selects the default Codex layout for the detected board. For example, a minimal saved configuration is:
+
+```json
+{"version":1,"layout":[{"elementId":"codex.window-1","startRow":0},{"elementId":"codex.window-2","startRow":1},{"elementId":"codex.status","startRow":2}]}
+```
+
+`codex.window-1` is the longest window and `codex.window-2` is the next longest. Each has a separate two-row `-large` element. `codex.header`, `codex.reset-summary`, and `codex.status` are one-row elements. Renderers use the available width: 15 columns on Note or 22 on Flagship.
+
 ## Plugins
 
 ### Codex
