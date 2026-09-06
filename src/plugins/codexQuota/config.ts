@@ -25,14 +25,12 @@ export interface CodexEnvironment {
   [name: string]: string | undefined;
 }
 
-/** Decode only Codex-owned environment settings; persistence owns precedence and locks. */
-export function applyCodexEnvironment(base: CodexConfig, env: CodexEnvironment): { config: CodexConfig; locked: string[] } {
+/** Decode Codex-owned environment settings while bootstrapping a missing saved configuration. */
+export function applyCodexEnvironment(base: CodexConfig, env: CodexEnvironment): CodexConfig {
   const config = { ...base };
-  const locked: string[] = [];
-  const set = (path: string, raw: string | undefined, apply: (value: string) => void): void => {
+  const set = (raw: string | undefined, apply: (value: string) => void): void => {
     if (raw !== undefined && raw !== "") {
       apply(raw);
-      locked.push(path);
     }
   };
   const setNumber = (path: string, raw: string | undefined, apply: (value: number) => void): void => {
@@ -40,17 +38,16 @@ export function applyCodexEnvironment(base: CodexConfig, env: CodexEnvironment):
     const value = Number(raw);
     if (!Number.isFinite(value) || value <= 0) throw new Error(`${path} must be a positive number.`);
     apply(value);
-    locked.push(path);
   };
 
-  set("codex.enabled", env.CODEX_QUOTA_ENABLED, (value) => { config.enabled = boolFromEnv(value); });
-  set("codex.source", env.CODEX_QUOTA_SOURCE, (value) => { config.source = sourceFromEnv(value); });
+  set(env.CODEX_QUOTA_ENABLED, (value) => { config.enabled = boolFromEnv(value, "CODEX_QUOTA_ENABLED"); });
+  set(env.CODEX_QUOTA_SOURCE, (value) => { config.source = sourceFromEnv(value); });
   setNumber("codex.pollIntervalSeconds", env.CODEX_QUOTA_POLL_INTERVAL_SECONDS, (value) => { config.pollIntervalSeconds = value; });
-  set("codex.timeZone", env.CODEX_QUOTA_TIME_ZONE, (value) => { config.timeZone = value; });
-  set("codex.showPacing", env.CODEX_QUOTA_SHOW_PACING, (value) => { config.showPacing = boolFromEnv(value); });
-  set("codex.autoStartWindow5h", env.CODEX_AUTO_START_WINDOW_5H, (value) => { config.autoStartWindow5h = boolFromEnv(value); });
-  set("codex.autoStartWindowWk", env.CODEX_AUTO_START_WINDOW_WK, (value) => { config.autoStartWindowWk = boolFromEnv(value); });
-  return { config, locked };
+  set(env.CODEX_QUOTA_TIME_ZONE, (value) => { config.timeZone = value; });
+  set(env.CODEX_QUOTA_SHOW_PACING, (value) => { config.showPacing = boolFromEnv(value, "CODEX_QUOTA_SHOW_PACING"); });
+  set(env.CODEX_AUTO_START_WINDOW_5H, (value) => { config.autoStartWindow5h = boolFromEnv(value, "CODEX_AUTO_START_WINDOW_5H"); });
+  set(env.CODEX_AUTO_START_WINDOW_WK, (value) => { config.autoStartWindowWk = boolFromEnv(value, "CODEX_AUTO_START_WINDOW_WK"); });
+  return config;
 }
 
 export function isValidTimeZone(value: string): boolean {
@@ -67,8 +64,8 @@ function sourceFromEnv(value: string): CodexConfig["source"] {
   throw new Error("CODEX_QUOTA_SOURCE must be fixture or app-server.");
 }
 
-function boolFromEnv(value: string): boolean {
+function boolFromEnv(value: string, name: string): boolean {
   if (["1", "true", "on", "yes"].includes(value.toLowerCase())) return true;
   if (["0", "false", "off", "no"].includes(value.toLowerCase())) return false;
-  throw new Error(`Invalid boolean environment value '${value}'.`);
+  throw new Error(`${name} must be a boolean.`);
 }
