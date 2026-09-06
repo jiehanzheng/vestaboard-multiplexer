@@ -46,3 +46,16 @@ test("shared browser contracts do not reach server implementations", async () =>
   }
   for (const file of await sourceFiles(resolve("src/contracts"))) await visit(file);
 });
+
+test("browser code imports only browser-safe backend contracts", async () => {
+  const root = resolve("web/src");
+  for (const file of await sourceFiles(root)) {
+    for (const specifier of await imports(file)) {
+      assert.ok(!specifier.startsWith("node:"), `${file} imports ${specifier}`);
+      if (!specifier.startsWith(".")) continue;
+      const target = resolve(dirname(file), specifier);
+      if (!relative(root, target).startsWith("..")) continue;
+      assert.ok(target.startsWith(`${resolve("src/contracts")}/`), `Browser imports server implementation: ${target}`);
+    }
+  }
+});

@@ -44,7 +44,7 @@ The React app includes Note and Flagship board previews. This command uses sampl
 
 Use `pfm status` to inspect reservations. After stopping the container, release its host port with `pfm port release vbmux-web`.
 
-The React interface previews layout edits before **Apply**. Live status shows the desired frame, last sent frame, next eligible update, and pause state. **Pause updates** keeps collecting data while holding the physical board. HTTP has no application authentication; manage access through your own network or proxy.
+The React interface previews layout edits before **Apply**. **Discard** returns to saved settings; live updates and saving preserve edits you make while a request is in progress. Live status shows the desired frame, last sent frame, next eligible update, and pause state. **Pause updates** keeps collecting data while holding the physical board. HTTP has no application authentication; manage access through your own network or proxy.
 
 Core environment variables configure the orchestrator and Vestaboard transport. Plugin-specific variables are documented in each plugin section below.
 

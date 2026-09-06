@@ -1,4 +1,6 @@
-import type { AppConfig, ConfigValue, LayoutEntry, BoardElement, BoardKind } from "./types";
+import type { AppConfig, LayoutEntry } from "../../src/contracts/config";
+import type { BoardElement } from "./types";
+import type { BoardKind } from "./types";
 
 export const BOARD_DIMENSIONS: Record<BoardKind, { rows: number; columns: number }> = {
   note: { rows: 3, columns: 15 },
@@ -63,56 +65,6 @@ export function relativeTime(value: number | string | undefined, empty = "No rea
 
 export function cloneConfig(config: AppConfig): AppConfig {
   return JSON.parse(JSON.stringify(config)) as AppConfig;
-}
-
-function isObject(value: unknown): value is Record<string, ConfigValue | undefined> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function getPath(config: AppConfig, paths: string[]): ConfigValue | undefined {
-  for (const path of paths) {
-    const value = path.split(".").reduce<ConfigValue | undefined>((current, key) => {
-      return isObject(current) ? current[key] : undefined;
-    }, config);
-    if (value !== undefined) return value;
-  }
-  return undefined;
-}
-
-export function hasPath(config: AppConfig, paths: string[]): string | undefined {
-  return paths.find((path) => getPath(config, [path]) !== undefined);
-}
-
-export function setPath(config: AppConfig, path: string, value: ConfigValue): AppConfig {
-  const parts = path.split(".");
-  const next = cloneConfig(config);
-  let cursor: Record<string, ConfigValue | undefined> = next;
-  parts.forEach((part, index) => {
-    if (index === parts.length - 1) {
-      cursor[part] = value;
-      return;
-    }
-    const existing = cursor[part];
-    if (!isObject(existing)) cursor[part] = {};
-    cursor = cursor[part] as Record<string, ConfigValue | undefined>;
-  });
-  return next;
-}
-
-export function setLayout(config: AppConfig, layout: LayoutEntry[]): AppConfig {
-  const nestedPath = hasPath(config, ["elements_config.layout", "elementsConfig.layout"]);
-  return setPath(config, nestedPath ?? "layout", layout);
-}
-
-export function getLayout(config: AppConfig): LayoutEntry[] | null | undefined {
-  const value = getPath(config, ["elements_config.layout", "elementsConfig.layout", "layout"]);
-  if (value === null) return null;
-  if (!Array.isArray(value)) return undefined;
-  return value.filter(isObject).flatMap((entry) => {
-    const elementId = entry.elementId;
-    const startRow = entry.startRow;
-    return typeof elementId === "string" && typeof startRow === "number" ? [{ elementId, startRow }] : [];
-  });
 }
 
 export function isLocked(locked: string[], paths: string[]): boolean {

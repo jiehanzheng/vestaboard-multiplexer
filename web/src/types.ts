@@ -1,86 +1,42 @@
+import type { AppConfig, LayoutEntry, PublicConfig, HAConfig, WaterHeaterConfig } from "../../src/contracts/config";
+import type {
+  BoardMessage,
+  ElementsResponse,
+  LoginStatus,
+  PreviewResponse,
+  RuntimeStatus
+} from "../../src/contracts/api";
+import type { HAEntity } from "../../src/contracts/homeAssistant";
+
 export type BoardKind = "note" | "flagship";
 export type BoardPreference = "auto" | BoardKind;
 export type PreviewMode = "desired" | "lastSent";
 
-export interface BoardMessage {
-  text: string;
-  characters: number[][];
-}
+export type {
+  AppConfig,
+  BoardMessage,
+  ElementsResponse,
+  HAConfig,
+  HAEntity,
+  LayoutEntry,
+  LoginStatus,
+  PreviewResponse,
+  RuntimeStatus,
+  WaterHeaterConfig
+};
 
-export interface RuntimeStatus {
-  board: BoardKind;
-  desired?: BoardMessage;
-  lastSent?: BoardMessage;
-  nextAttemptAt: number;
-  lastSentAt?: number;
-  manualPause: boolean;
-  haPause: boolean;
-  paused: boolean;
-  deliveryError?: string;
-  configError?: string;
-  codex: {
-    error?: string;
-    collectedAt?: string;
-  };
-  homeAssistant?: {
-    connected: boolean;
-    error?: string;
-  };
-  water?: {
-    error?: string;
-  };
-  login: LoginStatus;
-}
-
-export interface LoginStatus {
-  pending: boolean;
-  account?: string;
-  error?: string;
-  userCode?: string;
-  verificationUrl?: string;
-}
-
-export interface BoardElement {
-  id: string;
-  label: string;
-  height: number;
-  preview: number[][];
-}
-
-export interface LayoutEntry {
-  elementId: string;
-  startRow: number;
-}
-
-export interface ElementsResponse {
-  elements: BoardElement[];
-  defaultLayout?: LayoutEntry[];
-}
-
-export type ConfigValue = string | number | boolean | null | ConfigObject | unknown[];
-export interface ConfigObject {
-  [key: string]: ConfigValue | undefined;
-}
-
-export interface AppConfig {
-  [key: string]: ConfigValue | undefined;
-}
-
-export interface ConfigResponse {
-  config: AppConfig;
-  locked: string[];
-  hasSecrets: {
-    token: boolean;
-    localApiKey: boolean;
-    haToken?: boolean;
-  };
-  error?: string;
-}
-
-export interface PreviewResponse extends BoardMessage {}
+export type ConfigResponse = PublicConfig;
+export type BoardElement = ElementsResponse["elements"][number];
 
 export interface EventConnectionState {
   connected: boolean;
+  error?: string;
+}
+
+export interface EntityCatalogState {
+  items: HAEntity[];
+  loading: boolean;
+  loadedAt?: number;
   error?: string;
 }
 

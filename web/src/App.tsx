@@ -1,25 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CSSProperties } from "react";
-import type { HAConfig } from "../../src/homeAssistant";
-import type { WaterHeaterConfig } from "../../src/plugins/waterHeater";
+import type { HAConfig, WaterHeaterConfig, AppConfig } from "../../src/contracts/config";
+import type { HAEntity } from "../../src/contracts/homeAssistant";
 import {
-  cancelLogin,
-  checkLogin,
   getConfig,
   getElements,
   getStatus,
+  getHomeAssistantEntities,
   requestPreview,
   saveConfig,
   setPause,
-  startLogin,
   subscribeToEvents
 } from "./api";
-import { HomeAssistantSettings } from "./HomeAssistantSettings";
+import { ConnectionsSettings } from "./ConnectionsSettings";
+import { CodexLoginSettings } from "./plugins/codexQuota/CodexLoginSettings";
+import { CodexSettings } from "./plugins/codexQuota/CodexSettings";
+import { ConfigNumber, ConfigSelect, LockMark } from "./ConfigControls";
+import { reconcileSave } from "./draftState";
 import type {
-  AppConfig,
+  BoardMessage,
   BoardElement,
   BoardKind,
-  ConfigValue,
   ConfigResponse,
   ElementsResponse,
   LayoutEntry,
@@ -27,6 +28,7 @@ import type {
   PreviewMode,
   RuntimeStatus
 } from "./types";
+import type { EntityCatalogState } from "./types";
 import {
   BOARD_DIMENSIONS,
   characterLabel,
@@ -34,12 +36,8 @@ import {
   elementById,
   formatDate,
   getBoardMatrix,
-  getLayout,
-  getPath,
   isLocked,
   relativeTime,
-  setLayout,
-  setPath,
   tileColor,
   validateLayout
 } from "./utils";
@@ -53,35 +51,29 @@ const BOARD_OPTIONS: Array<{ value: "auto" | BoardKind; label: string }> = [
   { value: "flagship", label: "Flagship · 6 × 22" }
 ];
 
-const DEFAULT_HA_CONFIG: HAConfig = { url: "", pause: null };
-const DEFAULT_WATER_CONFIG: WaterHeaterConfig = {
-  remaining: null,
-  capacity: null,
-  temperature: null,
-  target: null,
-  unit: "F",
-  enabled: false
-};
-
 export default function App(): ReactNode {
   const [view, setView] = useState<View>("board");
   const [status, setStatus] = useState<RuntimeStatus>();
   const [configResponse, setConfigResponse] = useState<ConfigResponse>();
   const [elementsResponse, setElementsResponse] = useState<ElementsResponse>();
   const [draftConfig, setDraftConfig] = useState<AppConfig>();
-  const [savedConfig, setSavedConfig] = useState<AppConfig>();
-  const [draftLayout, setDraftLayout] = useState<LayoutEntry[]>([]);
-  const [savedLayout, setSavedLayout] = useState<LayoutEntry[]>([]);
   const [selectedRow, setSelectedRow] = useState(0);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("desired");
-  const [draftPreview, setDraftPreview] = useState<{ text: string; characters: number[][] }>();
+  const [draftPreview, setDraftPreview] = useState<BoardMessage>();
   const [previewError, setPreviewError] = useState<string>();
   const [previewPending, setPreviewPending] = useState(false);
   const [events, setEvents] = useState<{ connected: boolean; error?: string }>({ connected: false, error: "Connecting to live updates…" });
   const [notice, setNotice] = useState<Notice>();
   const [loadError, setLoadError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [entityCatalog, setEntityCatalog] = useState<EntityCatalogState>({ items: [], loading: false });
   const loadedOnce = useRef(false);
+  const draftConfigRef = useRef<AppConfig | undefined>(undefined);
+  const draftRevisionRef = useRef(0);
+  const entityRequestRevisionRef = useRef(0);
+  const entitySourceKeyRef = useRef("");
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -89,17 +81,12 @@ export default function App(): ReactNode {
     void Promise.all([getConfig(), getElements(), getStatus()])
       .then(([nextConfig, nextElements, nextStatus]) => {
         if (!active) return;
-        const configuredLayout = getLayout(nextConfig.config);
-        const nextLayout = configuredLayout === null || configuredLayout === undefined
-          ? (nextElements.defaultLayout ?? [])
-          : configuredLayout;
         setConfigResponse(nextConfig);
         setElementsResponse(nextElements);
         setStatus(nextStatus);
         setDraftConfig(cloneConfig(nextConfig.config));
-        setSavedConfig(cloneConfig(nextConfig.config));
-        setDraftLayout(nextLayout);
-        setSavedLayout(nextLayout);
+        draftConfigRef.current = cloneConfig(nextConfig.config);
+        draftRevisionRef.current = 0;
         setLoadError(nextConfig.error);
         loadedOnce.current = true;
       })
@@ -128,25 +115,59 @@ export default function App(): ReactNode {
     }
   }, []);
 
-  const boardPreference = readBoardPreference(draftConfig);
+  const refreshEntities = useCallback(async () => {
+    const requestRevision = entityRequestRevisionRef.current + 1;
+    entityRequestRevisionRef.current = requestRevision;
+    const ha = draftConfig?.ha;
+    if (!ha?.url.trim()) {
+      setEntityCatalog({ items: [], loading: false, error: "Enter a Home Assistant URL first." });
+      return;
+    }
+    const sourceKey = `${ha.url}\u0000${ha.token ?? ""}`;
+    setEntityCatalog((current) => ({ ...current, loading: true, error: undefined }));
+    try {
+      const response = await getHomeAssistantEntities({ url: ha.url, ...(ha.token ? { token: ha.token } : {}) });
+      if (entityRequestRevisionRef.current === requestRevision && entitySourceKeyRef.current === sourceKey) {
+        setEntityCatalog({ items: response.entities, loading: false, loadedAt: Date.now() });
+      }
+    } catch (error: unknown) {
+      if (entityRequestRevisionRef.current === requestRevision && entitySourceKeyRef.current === sourceKey) {
+        setEntityCatalog((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : "Could not load Home Assistant entities." }));
+      }
+    }
+  }, [draftConfig?.ha]);
+
+  const entitySourceKey = `${draftConfig?.ha?.url ?? ""}\u0000${draftConfig?.ha?.token ?? ""}`;
+  useEffect(() => {
+    if (entitySourceKeyRef.current && entitySourceKeyRef.current !== entitySourceKey) {
+      entityRequestRevisionRef.current += 1;
+      setEntityCatalog({ items: [], loading: false });
+    }
+    entitySourceKeyRef.current = entitySourceKey;
+  }, [entitySourceKey]);
+
+  const boardPreference = draftConfig?.board ?? "auto";
   const board = boardPreference === "auto" ? (status?.board ?? "note") : boardPreference;
   const elements = elementsResponse?.elements ?? [];
+  const defaultLayout = elementsResponse?.defaultLayouts?.[board] ?? elementsResponse?.defaultLayout ?? [];
+  const draftLayout = draftConfig?.layout ?? defaultLayout;
   const layoutError = validateLayout(draftLayout, elements, board);
   const isDirty = useMemo(() => {
-    if (!draftConfig || !savedConfig) return draftLayout.length > 0;
-    return JSON.stringify(draftConfig) !== JSON.stringify(savedConfig) || JSON.stringify(draftLayout) !== JSON.stringify(savedLayout);
-  }, [draftConfig, draftLayout, savedConfig, savedLayout]);
+    if (!draftConfig || !configResponse) return Boolean(draftConfig);
+    return JSON.stringify(draftConfig) !== JSON.stringify(configResponse.config);
+  }, [configResponse, draftConfig]);
 
   useEffect(() => {
-    if (!loadedOnce.current || !elementsResponse || layoutError) {
+    if (!loadedOnce.current || !elementsResponse || layoutError || !isDirty) {
       setDraftPreview(undefined);
       setPreviewError(layoutError);
+      setPreviewPending(false);
       return;
     }
     let active = true;
     const timer = window.setTimeout(() => {
       setPreviewPending(true);
-      void requestPreview(draftLayout, boardPreference, getPath(draftConfig ?? {}, ["water"]))
+      void requestPreview(draftLayout, boardPreference, draftConfig?.water, draftConfig?.codex)
         .then((nextPreview) => {
           if (!active) return;
           setDraftPreview(nextPreview);
@@ -164,37 +185,70 @@ export default function App(): ReactNode {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [boardPreference, draftConfig, draftLayout, elementsResponse, layoutError]);
+  }, [boardPreference, draftConfig, draftLayout, elementsResponse, isDirty, layoutError, status]);
 
   const updateDraftConfig = useCallback((next: AppConfig) => {
+    draftRevisionRef.current += 1;
+    draftConfigRef.current = next;
     setDraftConfig(next);
     setNotice(undefined);
   }, []);
 
-  const handleApply = useCallback(async () => {
-    if (!draftConfig || layoutError) return;
+  const updateDraftLayout = useCallback((next: LayoutEntry[]) => {
+    draftRevisionRef.current += 1;
+    setDraftConfig((current) => {
+      if (!current) return current;
+      const updated = { ...current, layout: next };
+      draftConfigRef.current = updated;
+      return updated;
+    });
     setNotice(undefined);
+  }, []);
+
+  const handleApply = useCallback(async () => {
+    if (!draftConfig || layoutError || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setNotice(undefined);
+    const revisionAtSend = draftRevisionRef.current;
+    const currentDraftConfig = draftConfigRef.current ?? draftConfig;
+    const submittedConfig = cloneConfig(currentDraftConfig);
     try {
-      const response = await saveConfig(setLayout(draftConfig, draftLayout));
-      const nextElements = await getElements();
+      const response = await saveConfig(submittedConfig);
       setConfigResponse(response);
-      setElementsResponse(nextElements);
-      setDraftConfig(cloneConfig(response.config));
-      setSavedConfig(cloneConfig(response.config));
-      setSavedLayout(draftLayout);
-      setNotice({ tone: "success", message: "Changes saved." });
+      const reconciled = reconcileSave({
+        acknowledgement: cloneConfig(response.config),
+        currentDraftConfig: draftConfigRef.current ?? draftConfig,
+        submittedRevision: revisionAtSend,
+        currentRevision: draftRevisionRef.current
+      });
+      if (draftRevisionRef.current === revisionAtSend) {
+        draftConfigRef.current = reconciled.draftConfig;
+        setDraftConfig(reconciled.draftConfig);
+      }
+      try {
+        setElementsResponse(await getElements());
+        setNotice({ tone: "success", message: "Changes saved." });
+      } catch {
+        setNotice({ tone: "info", message: "Changes saved. Board elements could not be refreshed yet." });
+      }
     } catch (error: unknown) {
       setNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not save changes." });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
-  }, [draftConfig, draftLayout, layoutError]);
+  }, [defaultLayout, draftConfig, layoutError]);
 
   const handleDiscard = useCallback(() => {
-    if (!savedConfig) return;
-    setDraftConfig(cloneConfig(savedConfig));
-    setDraftLayout(savedLayout);
+    if (!configResponse) return;
+    draftRevisionRef.current += 1;
+    const nextDraft = cloneConfig(configResponse.config);
+    draftConfigRef.current = nextDraft;
+    setDraftConfig(nextDraft);
     setSelectedRow(0);
     setNotice({ tone: "info", message: "Draft changes discarded." });
-  }, [savedConfig, savedLayout]);
+  }, [configResponse]);
 
   const handlePause = useCallback(async () => {
     if (!status) return;
@@ -229,6 +283,7 @@ export default function App(): ReactNode {
         <div className={events.connected ? "live-status is-live" : "live-status"} role="status">
           <span className="status-dot" aria-hidden="true" />
           <span>{events.connected ? "Live updates" : "Reconnecting"}</span>
+          {events.error ? <span className="live-error" role="status">{events.error}</span> : null}
         </div>
       </header>
 
@@ -242,7 +297,7 @@ export default function App(): ReactNode {
             draftLayout={draftLayout}
             selectedRow={selectedRow}
             setSelectedRow={setSelectedRow}
-            setDraftLayout={(next) => { setDraftLayout(next); setNotice(undefined); }}
+            setDraftLayout={updateDraftLayout}
             previewMode={previewMode}
             setPreviewMode={setPreviewMode}
             preview={previewMode === "desired" && isDirty && draftPreview ? draftPreview : previewMode === "desired" ? status?.desired : status?.lastSent}
@@ -255,6 +310,7 @@ export default function App(): ReactNode {
             onPause={handlePause}
             onApply={handleApply}
             onDiscard={handleDiscard}
+            saving={saving}
             dirty={isDirty}
             layoutError={layoutError}
             notice={notice}
@@ -270,11 +326,13 @@ export default function App(): ReactNode {
             notice={notice}
             onApply={handleApply}
             onDiscard={handleDiscard}
+            saving={saving}
+            entities={entityCatalog.items}
+            entitiesLoading={entityCatalog.loading}
+            entitiesError={entityCatalog.error}
+            onRefreshEntities={() => void refreshEntities()}
             onConfigChange={(ha, water) => {
-              setDraftConfig((current) => current
-                ? setPath(setPath(current, "ha", ha as unknown as ConfigValue), "water", water as unknown as ConfigValue)
-                : current);
-              setNotice(undefined);
+              if (draftConfig) updateDraftConfig({ ...draftConfig, ha, water });
             }}
             onLogin={(nextLogin) => setStatus((current) => current ? { ...current, login: nextLogin } : current)}
             onNotice={setNotice}
@@ -296,7 +354,7 @@ interface BoardScreenProps {
   setDraftLayout: (layout: LayoutEntry[]) => void;
   previewMode: PreviewMode;
   setPreviewMode: (mode: PreviewMode) => void;
-  preview: { text: string; characters: number[][] } | undefined;
+  preview: BoardMessage | undefined;
   previewPending: boolean;
   previewError: string | undefined;
   draftConfig: AppConfig | undefined;
@@ -306,6 +364,7 @@ interface BoardScreenProps {
   onPause: () => void;
   onApply: () => void;
   onDiscard: () => void;
+  saving: boolean;
   dirty: boolean;
   layoutError: string | undefined;
   notice: Notice;
@@ -315,7 +374,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
   const {
     board, boardPreference, status, elements, draftLayout, selectedRow, setSelectedRow, setDraftLayout,
     previewMode, setPreviewMode, preview, previewPending, previewError, draftConfig, updateDraftConfig,
-    configResponse, onRefreshElements, onPause, onApply, onDiscard, dirty, layoutError, notice
+    configResponse, onRefreshElements, onPause, onApply, onDiscard, saving, dirty, layoutError, notice
   } = props;
   const selectedEntryIndex = draftLayout.findIndex((entry) => {
     const element = elementById(elements, entry.elementId);
@@ -401,8 +460,8 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
             </div>
           </div>
           <div className="editor-actions">
-            <button className="button secondary" onClick={onDiscard} disabled={!dirty}>Discard</button>
-            <button className="button primary" onClick={onApply} disabled={!dirty || Boolean(layoutError)}>Apply</button>
+            <button className="button secondary" onClick={onDiscard} disabled={!dirty || saving}>Discard</button>
+            <button className="button primary" onClick={onApply} disabled={!dirty || saving || Boolean(layoutError)}>{saving ? "Saving…" : "Apply"}</button>
           </div>
           {layoutError ? <p className="inline-message error" role="alert">{layoutError}</p> : null}
           {previewError && !layoutError ? <p className="inline-message error" role="alert">{previewError}</p> : null}
@@ -426,7 +485,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
 
 interface BoardPreviewProps {
   board: BoardKind;
-  message: { text: string; characters: number[][] } | undefined;
+  message: BoardMessage | undefined;
   selectedRow: number;
   layout: LayoutEntry[];
   elements: BoardElement[];
@@ -491,7 +550,7 @@ function RowEditor({ board, elements, layout, selectedRow, onSelectRow, onChange
     <div className="row-list" role="list" aria-label="Board rows">
       {layout.map((entry, index) => {
         const element = elementById(elements, entry.elementId);
-        const label = elementLabel(element) || `row ${index + 1}`;
+        const label = element?.label ?? `Row ${entry.startRow + 1}`;
         return (
           <div className={selectedRow >= entry.startRow && selectedRow < entry.startRow + (element?.height ?? 1) ? "row-item selected" : "row-item"} key={`${entry.elementId}-${index}`} role="listitem">
             <button className="row-main" onClick={() => onSelectRow(entry.startRow)} aria-label={`Edit ${label} at board row ${entry.startRow + 1}`}>
@@ -542,6 +601,7 @@ function RuntimeMessages({ status }: { status: RuntimeStatus | undefined }): Rea
   const messages = [
     status.deliveryError,
     status.configError,
+    status.persistenceError,
     status.codex.error,
     status.homeAssistant?.error ? `Home Assistant: ${status.homeAssistant.error}` : undefined,
     status.water?.error ? `Water heater: ${status.water.error}` : undefined
@@ -568,17 +628,6 @@ interface SettingsPanelProps {
 function SettingsPanel({ config, response, preference, onChange }: SettingsPanelProps): ReactNode {
   if (!config) return null;
   const locked = response?.locked ?? [];
-  const setValue = (paths: string[], value: string | number | boolean) => {
-    const path = paths.find((candidate) => {
-      const existing = getPath(config, [candidate]);
-      return typeof existing === "string" || typeof existing === "number" || typeof existing === "boolean";
-    }) ?? paths[0];
-    onChange(setPath(config, path, value));
-  };
-  const textValue = (paths: string[]) => {
-    const value = getPath(config, paths);
-    return value === undefined || value === null ? "" : String(value);
-  };
   const hasSecrets = response?.hasSecrets;
   const transportValue = hasSecrets?.localApiKey ? "local" : hasSecrets?.token ? "cloud" : "";
   const transportLocked = isLocked(locked, ["transport.token", "transport.localApiKey"]);
@@ -586,34 +635,38 @@ function SettingsPanel({ config, response, preference, onChange }: SettingsPanel
   return (
     <div className="settings-panel">
       <div className="settings-grid">
-        <ConfigSelect label="Transport" value={transportValue} options={[{ value: "cloud", label: "Cloud" }, { value: "local", label: "Local" }]} locked={transportLocked} onChange={() => undefined} />
-        <ConfigSelect label="Board" value={preference} options={BOARD_OPTIONS} locked={isLocked(locked, ["board", "boardPreference", "vestaboard.board"])} onChange={(value) => setValue(["boardPreference", "board", "vestaboard.board"], value)} />
-        <ConfigNumber label="Poll interval (seconds)" value={textValue(["pollIntervalSeconds", "codexPollIntervalSeconds", "codex.pollIntervalSeconds"])} locked={isLocked(locked, ["pollIntervalSeconds", "codexPollIntervalSeconds", "codex.pollIntervalSeconds"])} onChange={(value) => setValue(["pollIntervalSeconds", "codexPollIntervalSeconds", "codex.pollIntervalSeconds"], value)} />
-        <ConfigNumber label="Delivery interval (minutes)" value={textValue(["updateIntervalMinutes", "intervalMinutes", "deliveryIntervalMinutes", "delivery.intervalMinutes"])} locked={isLocked(locked, ["updateIntervalMinutes", "intervalMinutes", "deliveryIntervalMinutes", "delivery.intervalMinutes"])} onChange={(value) => setValue(["updateIntervalMinutes", "intervalMinutes", "deliveryIntervalMinutes", "delivery.intervalMinutes"], value)} />
-        <ConfigToggle label="Show pacing" checked={Boolean(getPath(config, ["showPacing", "codex.showPacing"]))} locked={isLocked(locked, ["showPacing", "codex.showPacing"])} onChange={(checked) => setValue(["showPacing", "codex.showPacing"], checked)} />
-        <ConfigToggle label="Auto-start 5h window" checked={Boolean(getPath(config, ["autoStartWindow5h", "codex.autoStartWindow5h"]))} locked={isLocked(locked, ["autoStartWindow5h", "codex.autoStartWindow5h"])} onChange={(checked) => setValue(["autoStartWindow5h", "codex.autoStartWindow5h"], checked)} />
-        <ConfigToggle label="Auto-start weekly window" checked={Boolean(getPath(config, ["autoStartWindowWk", "codex.autoStartWindowWk"]))} locked={isLocked(locked, ["autoStartWindowWk", "codex.autoStartWindowWk"])} onChange={(checked) => setValue(["autoStartWindowWk", "codex.autoStartWindowWk"], checked)} />
+        <div className="config-field">
+          <span>Active transport</span>
+          <output>{transportValue === "local" ? "Local API" : transportValue === "cloud" ? "Cloud API" : "Not configured"}{transportLocked ? " · environment managed" : ""}</output>
+        </div>
+        <ConfigSelect label="Board" value={preference} options={BOARD_OPTIONS} locked={isLocked(locked, ["board"])} onChange={(value) => onChange({ ...config, board: value as AppConfig["board"] })} />
+        <ConfigNumber label="Delivery interval (minutes)" value={String(config.updateIntervalMinutes)} locked={isLocked(locked, ["updateIntervalMinutes"])} onChange={(value) => onChange({ ...config, updateIntervalMinutes: value })} />
+        <CodexSettings value={config.codex} locked={locked} onChange={(codex) => onChange({ ...config, codex })} />
+        <label className="config-field">
+          <span>Cloud API URL{isLocked(locked, ["transport.cloudUrl"]) ? <LockMark /> : null}</span>
+          <input type="url" value={config.transport.cloudUrl} disabled={isLocked(locked, ["transport.cloudUrl"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, cloudUrl: event.target.value } })} />
+        </label>
+        <div className="config-field">
+          <span>Cloud token{isLocked(locked, ["transport.token"]) ? <LockMark /> : null}</span>
+          <input type="password" autoComplete="new-password" value={config.transport.token ?? ""} placeholder={hasSecrets?.token ? "Saved token · type to replace" : "Paste token"} disabled={isLocked(locked, ["transport.token"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, token: event.target.value } })} />
+          <button className="button quiet" type="button" disabled={isLocked(locked, ["transport.token"])} onClick={() => onChange({ ...config, transport: { ...config.transport, token: "" } })}>Clear saved token</button>
+        </div>
+        <label className="config-field">
+          <span>Local API URL{isLocked(locked, ["transport.localUrl"]) ? <LockMark /> : null}</span>
+          <input type="url" value={config.transport.localUrl} disabled={isLocked(locked, ["transport.localUrl"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, localUrl: event.target.value } })} />
+        </label>
+        <div className="config-field">
+          <span>Local API key{isLocked(locked, ["transport.localApiKey"]) ? <LockMark /> : null}</span>
+          <input type="password" autoComplete="new-password" value={config.transport.localApiKey ?? ""} placeholder={hasSecrets?.localApiKey ? "Saved key · type to replace" : "Paste key"} disabled={isLocked(locked, ["transport.localApiKey"])} onChange={(event) => onChange({ ...config, transport: { ...config.transport, localApiKey: event.target.value } })} />
+          <button className="button quiet" type="button" disabled={isLocked(locked, ["transport.localApiKey"])} onClick={() => onChange({ ...config, transport: { ...config.transport, localApiKey: "" } })}>Clear saved key</button>
+        </div>
       </div>
       <p className="settings-secret"><span className="secret-dot" aria-hidden="true" />{secretText}. Environment managed values are locked here.</p>
     </div>
   );
 }
 
-function ConfigSelect({ label, value, options, locked, onChange }: { label: string; value: string; options: Array<{ value: string; label: string }>; locked: boolean; onChange: (value: string) => void }): ReactNode {
-  return <label className="config-field"><span>{label}{locked ? <LockMark /> : null}</span><select value={value} disabled={locked} onChange={(event) => onChange(event.target.value)}><option value="">Not set</option>{options.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>;
-}
-
-function ConfigNumber({ label, value, locked, onChange }: { label: string; value: string; locked: boolean; onChange: (value: number) => void }): ReactNode {
-  return <label className="config-field"><span>{label}{locked ? <LockMark /> : null}</span><input type="number" min={0} value={value} disabled={locked} placeholder="Not set" onChange={(event) => onChange(Number(event.target.value))} /></label>;
-}
-
-function ConfigToggle({ label, checked, locked, onChange }: { label: string; checked: boolean; locked: boolean; onChange: (value: boolean) => void }): ReactNode {
-  return <label className="config-toggle"><input type="checkbox" checked={checked} disabled={locked} onChange={(event) => onChange(event.target.checked)} /><span>{label}</span>{locked ? <LockMark /> : null}</label>;
-}
-
-function LockMark(): ReactNode { return <span className="lock-mark" title="Managed by environment" aria-label="Managed by environment">⌑</span>; }
-
-function ConnectionsScreen({ login, status, config, configResponse, dirty, layoutError, notice, onApply, onDiscard, onConfigChange, onLogin, onNotice }: {
+function ConnectionsScreen({ login, status, config, configResponse, dirty, layoutError, notice, onApply, onDiscard, saving, onConfigChange, entities, entitiesLoading, entitiesError, onRefreshEntities, onLogin, onNotice }: {
   login: LoginStatus;
   status: RuntimeStatus | undefined;
   config: AppConfig | undefined;
@@ -623,24 +676,15 @@ function ConnectionsScreen({ login, status, config, configResponse, dirty, layou
   notice: Notice;
   onApply: () => void;
   onDiscard: () => void;
+  saving: boolean;
   onConfigChange: (ha: HAConfig, water: WaterHeaterConfig) => void;
+  entities: readonly HAEntity[];
+  entitiesLoading: boolean;
+  entitiesError?: string;
+  onRefreshEntities: () => void;
   onLogin: (status: LoginStatus) => void;
   onNotice: (notice: Notice) => void;
 }): ReactNode {
-  const [busy, setBusy] = useState(false);
-  const act = async (operation: () => Promise<LoginStatus>, success?: string) => {
-    setBusy(true);
-    onNotice(undefined);
-    try {
-      const nextLogin = await operation();
-      onLogin(nextLogin);
-      if (success) onNotice({ tone: "success", message: success });
-    } catch (error: unknown) {
-      onNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not update Codex login." });
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <>
       <div className="page-heading">
@@ -649,21 +693,7 @@ function ConnectionsScreen({ login, status, config, configResponse, dirty, layou
           <p>Connect Codex and Home Assistant to reuse quota, water, and pause signals in board rows.</p>
         </div>
       </div>
-      <section className="connection-section" aria-labelledby="codex-heading">
-        <div className="section-heading">
-          <div><h2 id="codex-heading">Codex</h2><p>Sign in to read usage and quota updates.</p></div>
-          <span className={login.account ? "connection-badge good" : login.pending ? "connection-badge pending" : "connection-badge"}>{login.account ? "Account connected" : login.pending ? "Sign-in pending" : login.error ? "Not connected" : "Account not checked"}</span>
-        </div>
-        <div className="login-panel">
-          {login.pending && login.userCode ? <code className="device-code">{login.userCode}</code> : <span className="login-state">{login.account ? login.account : login.pending ? "Preparing device sign-in…" : login.error ? "Codex account not connected" : "Check status to verify the account"}</span>}
-          <div className="login-actions">
-            {login.pending && login.verificationUrl ? <a className="button secondary" href={login.verificationUrl} target="_blank" rel="noreferrer">Open device sign-in</a> : <button className="button secondary" onClick={() => void act(startLogin)} disabled={busy}>{busy ? "Starting…" : "Start device sign-in"}</button>}
-            {login.pending ? <button className="button quiet" onClick={() => void act(cancelLogin, "Device sign-in cancelled.")} disabled={busy}>Cancel</button> : <button className="button quiet" onClick={() => void act(checkLogin)} disabled={busy}>Check status</button>}
-          </div>
-          <span className={login.pending ? "login-helper" : "login-helper muted"}>{login.pending ? "Waiting for approval" : login.error ?? ""}</span>
-        </div>
-        {login.error ? <p className="inline-message error" role="alert">{login.error}</p> : null}
-      </section>
+      <CodexLoginSettings login={login} onLogin={onLogin} onNotice={onNotice} />
       <section className="connection-section" aria-labelledby="health-heading">
         <div className="section-heading">
           <div><h2 id="health-heading">Live status</h2><p>Connection health and pause signals update in real time.</p></div>
@@ -683,15 +713,19 @@ function ConnectionsScreen({ login, status, config, configResponse, dirty, layou
           </div>
         </div>
       </section>
-      <HomeAssistantSettings
-        ha={readHAConfig(config)}
-        water={readWaterConfig(config)}
+      <ConnectionsSettings
+        ha={config?.ha ?? { url: "", pause: null }}
+        water={config?.water ?? { remaining: null, capacity: null, temperature: null, target: null, unit: "F", enabled: false }}
         hasToken={Boolean(configResponse?.hasSecrets.haToken)}
+        entities={entities}
+        entitiesLoading={entitiesLoading}
+        entitiesError={entitiesError}
         onChange={onConfigChange}
+        onRefreshEntities={onRefreshEntities}
       />
       <div className="connection-actions">
-        <button className="button secondary" type="button" onClick={onDiscard} disabled={!dirty}>Discard</button>
-        <button className="button primary" type="button" onClick={onApply} disabled={!dirty || Boolean(layoutError)}>Apply</button>
+        <button className="button secondary" type="button" onClick={onDiscard} disabled={!dirty || saving}>Discard</button>
+        <button className="button primary" type="button" onClick={onApply} disabled={!dirty || saving || Boolean(layoutError)}>{saving ? "Saving…" : "Apply"}</button>
       </div>
       {layoutError ? <p className="inline-message error" role="alert">{layoutError} Fix the board layout before applying these connection settings.</p> : null}
       {notice ? <p className={`inline-message ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.message}</p> : null}
@@ -776,45 +810,4 @@ function pauseReason(status: RuntimeStatus): string {
   if (status.haPause) return "Paused by Home Assistant";
   if (status.manualPause) return "Paused manually";
   return "Paused";
-}
-
-function readHAConfig(config: AppConfig | undefined): HAConfig {
-  const value = getPath(config ?? {}, ["ha", "homeAssistant"]);
-  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_HA_CONFIG };
-  const candidate = value as Partial<HAConfig>;
-  const pause = candidate.pause && typeof candidate.pause === "object"
-    ? {
-        entityId: typeof candidate.pause.entityId === "string" ? candidate.pause.entityId : "",
-        pauseValue: typeof candidate.pause.pauseValue === "string" ? candidate.pause.pauseValue : "on",
-        resumeValue: typeof candidate.pause.resumeValue === "string" ? candidate.pause.resumeValue : "off"
-      }
-    : null;
-  return {
-    url: typeof candidate.url === "string" ? candidate.url : "",
-    ...(typeof candidate.token === "string" ? { token: candidate.token } : {}),
-    pause
-  };
-}
-
-function readWaterConfig(config: AppConfig | undefined): WaterHeaterConfig {
-  const value = getPath(config ?? {}, ["water", "waterHeater"]);
-  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_WATER_CONFIG };
-  const candidate = value as Partial<WaterHeaterConfig>;
-  return {
-    remaining: candidate.remaining ?? null,
-    capacity: candidate.capacity ?? null,
-    temperature: candidate.temperature ?? null,
-    target: candidate.target ?? null,
-    unit: candidate.unit === "C" ? "C" : "F",
-    ...(typeof candidate.baseline === "number" ? { baseline: candidate.baseline } : {}),
-    enabled: candidate.enabled === true
-  };
-}
-
-function readBoardPreference(config: AppConfig | undefined): "auto" | BoardKind {
-  for (const path of ["boardPreference", "board", "vestaboard.board"]) {
-    const value = getPath(config ?? {}, [path]);
-    if (value === "note" || value === "flagship" || value === "auto") return value;
-  }
-  return "auto";
 }
