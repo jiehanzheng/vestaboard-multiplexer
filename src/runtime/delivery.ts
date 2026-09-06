@@ -101,6 +101,12 @@ export class DeliveryController {
     return this.lastSentFrame;
   }
 
+  clearLastSent(): void {
+    this.sentMessageKey = undefined;
+    this.lastSentFrame = undefined;
+    this.lastSuccessfulAt = undefined;
+  }
+
   async stop(): Promise<void> {
     this.running = false;
     this.lastOutcome = "stopped";

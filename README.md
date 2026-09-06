@@ -14,25 +14,27 @@ Docker is the intended runtime path.
    cp .env.example .env
    ```
 
-2. Set `VESTABOARD_TOKEN` in `.env` to a Vestaboard Cloud Read/Write API token.
-
-3. Make sure Docker can see your Codex auth. By default, Compose mounts `${HOME}/.codex` into `/home/node/.codex`, which lets `codex app-server` reuse persisted auth. If your Codex config lives somewhere else, set `CODEX_HOST_DIR` in `.env`.
-
-4. Start the orchestrator:
+2. Start the app:
 
    ```sh
    docker compose up --build
    ```
 
+3. Open [vbmux](http://localhost:3000), add the board connection in **Board settings**, and sign in under **Connections**. Compose can also reuse your mounted `${HOME}/.codex` credentials; set `CODEX_HOST_DIR` if they live elsewhere.
+
+The React interface previews layout edits before **Apply**. Live status shows the desired frame, last sent frame, next eligible update, and pause state. **Pause updates** keeps collecting data while holding the physical board. HTTP has no application authentication; manage access through your own network or proxy.
+
 Core environment variables configure the orchestrator and Vestaboard transport. Plugin-specific variables are documented in each plugin section below.
 
 | Variable | Description |
 | --- | --- |
+| `VBMUX_PORT` | HTTP port (Compose host port).<br><br>Default: `3000` |
+| `VBMUX_DATA_DIR` | Saved configuration and pause state directory.<br><br>Default: `./data` (`/app/data` in Docker) |
 | `ORCHESTRATOR_INTERVAL_MINUTES` | Minimum time between normal board write attempts. Failed attempts also count.<br><br>Default: `5` |
 | `CODEX_QUOTA_POLL_INTERVAL_SECONDS` | How often Codex collects fresh quota, independently of board writes.<br><br>Default: `60` |
-| `VESTABOARD_TOKEN` | Vestaboard Cloud Read/Write API token.<br><br>Default: **You MUST set either this or VESTABOARD_LOCAL_API_KEY** |
+| `VESTABOARD_TOKEN` | Vestaboard Cloud Read/Write API token.<br><br>Default: configure this or a local API key in the web interface |
 | `VESTABOARD_CLOUD_URL` | Vestaboard Cloud API endpoint.<br><br>Default: `https://cloud.vestaboard.com/` |
-| `VESTABOARD_LOCAL_API_KEY` | Local API key. If set, this is preferred over the cloud API.<br><br>Default: **You MUST set either this or VESTABOARD_TOKEN** |
+| `VESTABOARD_LOCAL_API_KEY` | Local API key. If set, this is preferred over the cloud API.<br><br>Default: configure this or a cloud token in the web interface |
 | `VESTABOARD_LOCAL_URL` | Local API endpoint.<br><br>Default: `http://vestaboard.local:7000/local-api/message` |
 | `VESTABOARD_LOCAL_MESSAGE_STRATEGY` | Local API message transition strategy: `column`, `reverse-column`, `edges-to-center`, `row`, `diagonal`, or `random`. Invalid values log an error, use the default, and show `check logs` on the startup message.<br><br>Default: `row` |
 | `VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS` | Local API transition delay between animation steps. Invalid, non-finite, or non-positive values log an error, use the default, and show `check logs` on the startup message.<br><br>Default: `2000` |
@@ -43,7 +45,7 @@ On startup, the orchestrator sends a `vbmux via local` or `vbmux via cloud` bann
 
 ## Layout configuration
 
-Settings can be saved in `data/config.json` (`VBMUX_DATA_DIR` changes the directory); Docker persists this directory in its `vbmux-data` volume. Existing environment variables override corresponding saved settings. A missing file uses defaults; an invalid file must be repaired before board writes resume.
+The interface saves settings in `data/config.json` (`VBMUX_DATA_DIR` changes the directory); Docker persists this directory in its `vbmux-data` volume. Existing environment variables override corresponding saved settings. A missing file uses defaults; an invalid file leaves the interface available for repair and prevents board writes.
 
 Elements span the board width and have a fixed height. Assign their zero-based starting row in `layout`; overlapping or out-of-bounds placements are rejected. `null` selects the default Codex layout for the detected board. For example, a minimal saved configuration is:
 
@@ -84,7 +86,7 @@ If Codex is temporarily unavailable after a successful read, the plugin can reus
 
 #### Codex Login
 
-The app-server quota source needs a Codex login in the directory Docker mounts into the container.
+Use **Connections → Sign in with Codex** for device-code login, or reuse credentials in the directory Docker mounts into the container. Device-code login must be enabled in your ChatGPT security settings. The interface owns the login process and supports cancellation; Codex persists and refreshes its credentials.
 
 Codex-managed ChatGPT authentication persists and normally refreshes its tokens automatically. If a quota read still returns `401 Unauthorized` or `token_expired`, the orchestrator asks the same app-server process to refresh the managed token and retries the quota read once. If that recovery also fails, cached quota remains visible when available, the board shows `AUTH EXPIRED`, and logs report only safe credential-file metadata plus the recovery command. The regular collection interval does not change.
 
@@ -105,8 +107,6 @@ If the host login directory is somewhere else, set `CODEX_HOST_DIR` in `.env` to
 | Variable | Description |
 | --- | --- |
 | `CODEX_QUOTA_SOURCE` | Use `fixture` for offline formatting checks.<br><br>Default: `app-server` |
-| `CODEX_QUOTA_PRIORITY` | Plugin priority: `low`, `normal`, `high`, `urgent`, or a number.<br><br>Default: `normal` |
-| `CODEX_QUOTA_ERROR_PRIORITY` | Priority used when the plugin can only render an error or cached quota.<br><br>Default: `low` |
 | `CODEX_QUOTA_TIME_ZONE` | Time zone used for reset labels.<br><br>Default: local process timezone |
 | `CODEX_QUOTA_SHOW_PACING` | `on` overlays red/blue pacing blocks; `off` shows only green quota blocks and blanks.<br><br>Default: `on` |
 | `CODEX_HOST_DIR` | Host Codex config directory mounted into Docker at `/home/node/.codex`.<br><br>Default: `${HOME}/.codex` |
