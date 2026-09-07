@@ -1,5 +1,5 @@
 import type { Element } from "../elements.js";
-import { BLANK, BLUE, encode, GREEN } from "../vestaboardCharacters.js";
+import { BLANK, BLUE, encode } from "../vestaboardCharacters.js";
 import type { HAEntity } from "../contracts/homeAssistant.js";
 import type { HomeAssistantService } from "../homeAssistantService.js";
 import {
@@ -146,7 +146,7 @@ export class WaterHeater {
     const barWidth = Math.max(1, width - "HW".length - gallons.length);
     return [
       ...encode("HW"),
-      ...barRow(Math.max(0, Math.min(1, remaining / capacity)), barWidth, GREEN),
+      ...barRow(Math.max(0, Math.min(1, remaining / capacity)), barWidth, BLUE),
       ...encode(gallons)
     ];
   }
@@ -253,7 +253,7 @@ function blankRow(width: number): number[] {
 }
 
 function displayNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(1)));
+  return String(Math.round(value));
 }
 
 function displayGallons(value: number, width: number): string {

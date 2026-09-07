@@ -4,7 +4,7 @@ import test from "node:test";
 import { WaterHeater, createWaterHeaterIntegration, type WaterHeaterConfig } from "../src/plugins/waterHeater.js";
 import type { HomeAssistantSnapshot } from "../src/homeAssistantService.js";
 import type { HAEntity } from "../src/homeAssistant.js";
-import { encode, GREEN } from "../src/vestaboardCharacters.js";
+import { encode, BLUE } from "../src/vestaboardCharacters.js";
 
 const baseConfig: WaterHeaterConfig = {
   remaining: { constant: 25 },
@@ -17,8 +17,8 @@ const baseConfig: WaterHeaterConfig = {
 };
 
 const entities: HAEntity[] = [
-  { entity_id: "sensor.tank", state: "125", attributes: {}, last_updated: "2026-01-01T00:00:00Z" },
-  { entity_id: "sensor.target", state: "unknown", attributes: { value: 135 }, last_updated: "2026-01-01T00:00:00Z" }
+  { entity_id: "sensor.tank", state: "124.6", attributes: {}, last_updated: "2026-01-01T00:00:00Z" },
+  { entity_id: "sensor.target", state: "unknown", attributes: { value: 135.2 }, last_updated: "2026-01-01T00:00:00Z" }
 ];
 
 test("water owns HA source replacement and unsubscribes on stop", () => {
@@ -48,7 +48,7 @@ test("renders width-aware remaining, temperature bar, and temperature text eleme
       assert.equal(element.render(width)[0]?.length, width);
     }
   }
-  assert.deepEqual(elements[2]?.render(15)[0]?.slice(0, 4), [27, 28, 31, 59]);
+  assert.deepEqual(elements[2]?.render(15)[0]?.slice(0, 8), encode("125/135F"));
   assert.equal(heater.status().error, undefined);
 });
 
@@ -64,8 +64,8 @@ test("renders remaining as an HW bar with rounded gallons at both board widths",
   assert.deepEqual(note.slice(0, 2), [8, 23]);
   assert.deepEqual(note.slice(-3), [28, 32, 7]);
   assert.deepEqual(flagship.slice(-3), [28, 32, 7]);
-  assert.equal(note.filter((cell) => cell === GREEN).length, 3);
-  assert.equal(flagship.filter((cell) => cell === GREEN).length, 5);
+  assert.equal(note.filter((cell) => cell === BLUE).length, 3);
+  assert.equal(flagship.filter((cell) => cell === BLUE).length, 5);
 });
 
 test("bounds a large rounded gallons suffix while retaining a bar cell", () => {
@@ -76,7 +76,7 @@ test("bounds a large rounded gallons suffix while retaining a bar cell", () => {
   assert.equal(row.length, 15);
   assert.deepEqual(row.slice(0, 2), [8, 23]);
   assert.equal(row.at(-1), 7);
-  assert.equal(row[2], GREEN);
+  assert.equal(row[2], BLUE);
   assert.deepEqual(row.slice(-12), encode("99999999999G"));
   assert.equal(heater.elements()[0]!.render(4)[0]!.length, 4);
 });
