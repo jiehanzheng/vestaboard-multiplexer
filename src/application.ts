@@ -10,7 +10,7 @@ import { createVestaboardBoardResolver } from "./vestaboardBoard.js";
 import { formatStartupMessage } from "./startupMessage.js";
 import type { HomeAssistantClient, HomeAssistantClientOptions } from "./homeAssistant.js";
 import type { VestaboardBoard } from "./vestaboardTypes.js";
-import type { PreviewRequest } from "./contracts/api.js";
+import type { PreviewRequest, RuntimeStatus } from "./contracts/api.js";
 import type { WebActions } from "./webServer.js";
 
 export interface ApplicationDependencies {
@@ -96,9 +96,9 @@ export async function createApplication(store: ConfigStore, directory: string, d
     ready = true;
     requestComposition();
   }
-  function status() {
+  function status(): RuntimeStatus {
     return {
-      board, desired: delivery.currentFrame(), lastSent: delivery.lastSent(),
+      board, dryRun, desired: delivery.currentFrame(), lastSent: delivery.lastSent(),
       nextAttemptAt: delivery.status().nextAttemptAt?.getTime() ?? 0,
       lastSentAt: delivery.status().lastSuccessfulAt?.getTime(),
       ...pause.status(), pauseReason: delivery.status().pauseReason,

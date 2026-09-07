@@ -73,6 +73,7 @@ test("server and one-shot share frames, and status/preview cannot collect or del
   try {
     await server.start();
     await firstRead;
+    assert.equal(server.actions.status().dryRun, true);
     const desired = server.actions.status().desired;
     const before = { reads, writes: sent.length };
     const layout = server.actions.elements().defaultLayout!;
@@ -113,6 +114,7 @@ test("web application can configure an unconnected board and preview without sen
   try {
     await app.start();
     const initial = app.actions.status() as { configError?: string; lastSent?: unknown };
+    assert.equal(app.actions.status().dryRun, false);
     assert.match(initial.configError!, /board connection/);
     assert.equal(initial.lastSent, undefined);
     const before = store.get();
