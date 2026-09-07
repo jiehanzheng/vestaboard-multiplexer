@@ -48,6 +48,8 @@ The Codex plugin reads the aggregate percentage windows from `account/rateLimits
 
 The default Codex frame is composed from fixed-height elements sized for each board, with the longest quota window first. Explicit saved layouts keep their configured order.
 
+Saved layout entries may set `startColumn` and `width` for a rectangular placement; omitted values preserve the existing full-row placement. Elements declare a minimum width and reject allocations that are too narrow.
+
 | Configuration | Screenshot | What it means |
 | --- | --- | --- |
 | Pacing on | ![Codex quota with pacing colors](docs/images/codex-pacing-on.png) | Colored blocks are quota remaining. Any nonzero quota renders at least one quota block. <br>Green means quota is at or ahead of the time-remaining pace. Yellow, orange, and red mean progressively worse pacing deficits. <br>White is the current time marker and always overrides the quota color. |

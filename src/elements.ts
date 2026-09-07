@@ -5,6 +5,8 @@ import { isValidCharacterCode } from "./vestaboardCharacters.js";
 export interface LayoutEntry {
   elementId: string;
   startRow: number;
+  startColumn?: number;
+  width?: number;
 }
 
 /** A fixed-height contribution to a board layout. */
@@ -12,6 +14,7 @@ export interface Element {
   id: string;
   label: string;
   height: number;
+  minWidth?: number;
   render(width: number): number[][];
 }
 
@@ -50,13 +53,16 @@ export function composeElements(
     if (!Number.isInteger(element.height) || element.height <= 0) {
       throw new Error(`Element '${element.id}' must have a positive integer height.`);
     }
+    if (element.minWidth !== undefined && (!Number.isInteger(element.minWidth) || element.minWidth <= 0)) {
+      throw new Error(`Element '${element.id}' must have a positive integer minWidth.`);
+    }
     if (typeof element.render !== "function") {
       throw new Error(`Element '${element.id}' must provide render(width).`);
     }
     elementsById.set(element.id, element);
   }
 
-  const occupied = new Set<number>();
+  const occupied = new Set<string>();
   const board = Array.from({ length: dimensions.height }, () => Array(dimensions.width).fill(0));
   for (const entry of layout) {
     const element = elementsById.get(entry.elementId);
@@ -66,21 +72,38 @@ export function composeElements(
     if (!Number.isInteger(entry.startRow) || entry.startRow < 0) {
       throw new Error(`Layout start row for '${entry.elementId}' must be a non-negative integer.`);
     }
+    const startColumn = entry.startColumn ?? 0;
+    if (!Number.isInteger(startColumn) || startColumn < 0) {
+      throw new Error(`Layout start column for '${entry.elementId}' must be a non-negative integer.`);
+    }
+    const width = entry.width ?? dimensions.width - startColumn;
+    if (!Number.isInteger(width) || width <= 0) {
+      throw new Error(`Layout width for '${entry.elementId}' must be a positive integer.`);
+    }
+    if (element.minWidth !== undefined && width < element.minWidth) {
+      throw new Error(`Element '${entry.elementId}' requires at least ${element.minWidth} columns.`);
+    }
     if (entry.startRow + element.height > dimensions.height) {
       throw new Error(`Element '${entry.elementId}' is out of bounds at row ${entry.startRow}.`);
     }
-
-    for (let row = entry.startRow; row < entry.startRow + element.height; row += 1) {
-      if (occupied.has(row)) {
-        throw new Error(`Element '${entry.elementId}' overlaps another element at row ${row}.`);
-      }
-      occupied.add(row);
+    if (startColumn + width > dimensions.width) {
+      throw new Error(`Element '${entry.elementId}' is out of bounds at column ${startColumn}.`);
     }
 
-    const rendered = element.render(dimensions.width);
-    validateRenderedElement(element, rendered, dimensions.width);
+    for (let row = entry.startRow; row < entry.startRow + element.height; row += 1) {
+      for (let column = startColumn; column < startColumn + width; column += 1) {
+        const cell = `${row}:${column}`;
+        if (occupied.has(cell)) {
+          throw new Error(`Element '${entry.elementId}' overlaps another element at row ${row}, column ${column}.`);
+        }
+        occupied.add(cell);
+      }
+    }
+
+    const rendered = element.render(width);
+    validateRenderedElement(element, rendered, width);
     for (const [rowOffset, row] of rendered.entries()) {
-      board[entry.startRow + rowOffset] = [...row];
+      board[entry.startRow + rowOffset]!.splice(startColumn, width, ...row);
     }
   }
 

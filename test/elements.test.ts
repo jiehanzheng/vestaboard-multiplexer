@@ -37,6 +37,23 @@ test("rejects unknown, overlapping, out-of-bounds, and malformed element layouts
   assert.throws(() => composeElements([{ ...element, render: () => [[1]] }], [{ elementId: "one", startRow: 0 }], { width: 2, height: 1 }), /columns/);
 });
 
+test("composes partial-width elements with rectangular occupancy", () => {
+  const elements = [
+    { id: "left", label: "Left", height: 2, minWidth: 2, render: (width: number) => [Array(width).fill(1), Array(width).fill(1)] },
+    { id: "right", label: "Right", height: 2, render: (width: number) => [Array(width).fill(2), Array(width).fill(2)] }
+  ];
+  const result = composeElements(elements, [
+    { elementId: "left", startRow: 0, startColumn: 1, width: 2 },
+    { elementId: "right", startRow: 0, startColumn: 3, width: 1 }
+  ], { width: 4, height: 2 });
+  assert.deepEqual(result.characters, [[0, 1, 1, 2], [0, 1, 1, 2]]);
+  assert.throws(() => composeElements(elements, [{ elementId: "left", startRow: 0, startColumn: 1, width: 1 }], { width: 4, height: 2 }), /at least 2/);
+  assert.throws(() => composeElements(elements, [
+    { elementId: "left", startRow: 0, startColumn: 1, width: 2 },
+    { elementId: "right", startRow: 0, startColumn: 2, width: 2 }
+  ], { width: 4, height: 2 }), /overlaps/);
+});
+
 test("Codex element IDs include compact and large window variants", () => {
   const state: CodexQuotaDisplayState = {
     staleWindowIds: [],
@@ -59,8 +76,12 @@ test("Codex element IDs include compact and large window variants", () => {
   const status = elements.find(({ id }) => id === CODEX_STATUS_ID)!;
   assert.equal(compact.render(15).length, 1);
   assert.equal(compact.render(22)[0]?.length, 22);
+  assert.equal(compact.minWidth, 6);
+  assert.equal(compact.render(6)[0]?.length, 6);
   assert.equal(large.render(15).length, 2);
   assert.equal(large.render(22)[0]?.length, 22);
+  assert.equal(large.minWidth, 6);
+  assert.ok(large.render(6).every((row) => row.length === 6));
   assert.equal(status.render(15)[0]?.length, 15);
 });
 

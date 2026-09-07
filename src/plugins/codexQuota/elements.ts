@@ -65,13 +65,10 @@ function createCompactWindow(id: string, index: number, getDisplayState: () => C
       id,
       label: `Codex window ${index + 1}`,
       height: 1,
+      minWidth: 6,
       render: (width) => {
         const state = getDisplayState();
-        if (width >= 22) {
-          return [compactWindowRow(state, index, width, now)];
-        }
-        const message = formatForWindow(state, index, width, now);
-        return [fitRow(message?.characters?.[0] ?? [], width)];
+        return [compactWindowRow(state, index, width, now)];
       }
   };
 }
@@ -81,6 +78,7 @@ function createLargeWindow(id: string, index: number, getDisplayState: () => Cod
     id,
     label: `Codex large window ${index + 1}`,
     height: 2,
+    minWidth: 6,
       render: (width) => {
         const state = getDisplayState();
         if (width >= 22) {
