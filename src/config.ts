@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { AppConfigSchema, type AppConfig, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, type WaterHeaterConfig, PublicConfigSchema } from "./contracts/config.js";
-import { DEFAULT_WATER_HEATER_CONFIG } from "./plugins/waterHeater/config.js";
+import { DEFAULT_WATER_HEATER_CONFIG, normalizeLegacyWaterHeaterConfig } from "./plugins/waterHeater/config.js";
 import { applyCodexEnvironment, DEFAULT_CODEX_CONFIG } from "./plugins/codexQuota/config.js";
 import {
   DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS
@@ -169,9 +169,9 @@ function parseSavedConfig(raw: string): Partial<AppConfig> {
   const { version: _version, ...config } = record;
   if (config.codex && typeof config.codex === "object" && !Array.isArray(config.codex)) {
     const { demoPauseMinutes: _demoPauseMinutes, ...codex } = config.codex as Record<string, unknown>;
-    return { ...config, codex } as unknown as AppConfig;
+    return normalizeLegacyWaterHeaterConfig({ ...config, codex }) as Partial<AppConfig>;
   }
-  return config as unknown as AppConfig;
+  return normalizeLegacyWaterHeaterConfig(config) as Partial<AppConfig>;
 }
 
 function legacyConfig(env: ConfigEnvironment): AppConfig {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -157,6 +157,7 @@ test("loads Home Assistant and disabled water defaults", async () => {
     temperature: null,
     target: null,
     emvPosition: null,
+    heating: null,
     unit: "F",
     enabled: false
   });
@@ -201,15 +202,33 @@ test("preserves and redacts an omitted Home Assistant token", async () => {
   assert.equal(second.get().ha.token, "ha-secret");
 });
 
-test("requires a baseline only when the water temperature bar is allocated", async () => {
+test("drops legacy water baseline and temperature bar placements while loading", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
-  const store = await ConfigStore.open(dataDir, {});
-  const textOnly = {
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(join(dataDir, "config.json"), JSON.stringify({
+    version: 1,
     ...DEFAULT_APP_CONFIG,
-    water: { ...DEFAULT_APP_CONFIG.water, enabled: true, temperature: { constant: 125 }, target: { constant: 135 } },
-    layout: [{ elementId: "water.temperature-text", startRow: 0 }]
-  };
-  await store.save(textOnly);
-  await assert.rejects(store.save({ ...textOnly, layout: [{ elementId: "water.temperature-bar", startRow: 0 }] }), /water\.baseline/i);
-  await store.save({ ...textOnly, water: { ...textOnly.water, baseline: 50 }, layout: [{ elementId: "water.temperature-bar", startRow: 0 }] });
+    water: { ...DEFAULT_APP_CONFIG.water, baseline: 50 },
+    layout: [
+      { elementId: "water.temperature-bar", startRow: 0 },
+      { elementId: "water.temperature-text", startRow: 1 }
+    ]
+  }));
+  const store = await ConfigStore.open(dataDir, {});
+  assert.equal("baseline" in store.get().water, false);
+  assert.deepEqual(store.get().layout, [{ elementId: "water.temperature-text", startRow: 1 }]);
+});
+
+test("keeps malformed saved layouts invalid and leaves the file untouched", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-invalid-layout-"));
+  const raw = JSON.stringify({
+    version: 1,
+    ...DEFAULT_APP_CONFIG,
+    layout: [null, { elementId: "water.temperature-bar", startRow: 0 }]
+  });
+  await writeFile(join(dataDir, "config.json"), raw);
+  const store = await ConfigStore.open(dataDir, {});
+  assert.match(store.repairError ?? "", /layout/i);
+  assert.equal(await readFile(join(dataDir, "config.json"), "utf8"), raw);
+  assert.equal(store.get().layout, null);
 });

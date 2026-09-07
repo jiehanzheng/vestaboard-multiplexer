@@ -2,7 +2,7 @@ import { z } from "zod";
 import { HttpUrlSchema } from "./url.js";
 import { HAConfigSchema, type HAConfig } from "./homeAssistant.js";
 import { CodexConfigSchema, type CodexConfig } from "../plugins/codexQuota/config.js";
-import { WaterHeaterConfigBaseSchema, WaterHeaterConfigSchema, type WaterHeaterConfig, waterHeaterLayoutIssues } from "../plugins/waterHeater/config.js";
+import { WaterHeaterConfigBaseSchema, WaterHeaterConfigSchema, type WaterHeaterConfig } from "../plugins/waterHeater/config.js";
 
 export const LayoutEntrySchema = z.object({
   elementId: z.string().min(1),
@@ -40,12 +40,8 @@ const appConfigShape = {
   layout: z.array(LayoutEntrySchema).nullable()
 };
 
-function addAppConfigIssues(config: { water: WaterHeaterConfig; layout: LayoutEntry[] | null }, context: z.RefinementCtx): void {
-  for (const issue of waterHeaterLayoutIssues(config.water, config.layout)) context.addIssue({ code: "custom", path: issue.path, message: issue.message });
-}
-
 const AppConfigBaseSchema = z.object(appConfigShape).strict();
-export const AppConfigSchema = AppConfigBaseSchema.superRefine(addAppConfigIssues);
+export const AppConfigSchema = AppConfigBaseSchema;
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 
@@ -55,7 +51,7 @@ export const PublicAppConfigSchema = z.object({
   ...appConfigShape,
   ha: publicHASchema,
   transport: publicTransportSchema
-}).strict().superRefine(addAppConfigIssues);
+}).strict();
 
 export type PublicAppConfig = z.infer<typeof PublicAppConfigSchema>;
 
