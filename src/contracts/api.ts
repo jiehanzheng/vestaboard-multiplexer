@@ -4,8 +4,8 @@ import { CodexConfigSchema } from "../plugins/codexQuota/config.js";
 import { HAStatusSchema, HAEntitySchema } from "./homeAssistant.js";
 import { WaterHeaterConfigSchema } from "../plugins/waterHeater/config.js";
 import { isValidCharacterCode } from "../vestaboardCharacters.js";
-export { LogEntrySchema, LogsResponseSchema } from "../logger.js";
-export type { LogEntry, LogsResponse } from "../logger.js";
+export { LogEntrySchema, LogsResponseSchema } from "./logs.js";
+export type { LogEntry, LogsResponse } from "./logs.js";
 
 const cell = z.number().refine(isValidCharacterCode, "must be a valid Vestaboard character code");
 

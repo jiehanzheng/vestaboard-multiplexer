@@ -167,7 +167,6 @@ export class DeliveryController {
 
     const message = this.frame;
     if (this.sentMessageKey === messageKey(message)) {
-      this.logger.info("Skipped unchanged Vestaboard message.");
       return this.finish("unchanged");
     }
 

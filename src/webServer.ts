@@ -137,7 +137,7 @@ export async function startWebServer(actions: WebActions, options: {
         resolve();
       });
     });
-  } catch (error) { clearInterval(heartbeat); throw error; }
+  } catch (error) { clearInterval(heartbeat); unsubscribeLogs?.(); throw error; }
   return {
     broadcast,
     port: (server.address() as { port: number }).port,

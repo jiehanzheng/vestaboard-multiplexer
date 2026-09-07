@@ -1,23 +1,12 @@
-import { z } from "zod";
-
-export const LogEntrySchema = z.object({
-  timestamp: z.string(),
-  level: z.enum(["info", "warn", "error"]),
-  source: z.string().min(1),
-  message: z.string().max(2048)
-}).strict();
-
-export const LogsResponseSchema = z.object({ entries: z.array(LogEntrySchema).max(200) }).strict();
-
-export type LogEntry = z.infer<typeof LogEntrySchema>;
-export type LogsResponse = z.infer<typeof LogsResponseSchema>;
-export type LogLevel = LogEntry["level"];
+import { LogEntrySchema, LogsResponseSchema, type LogEntry, type LogLevel, type LogsResponse } from "./contracts/logs.js";
+export { LogEntrySchema, LogsResponseSchema } from "./contracts/logs.js";
+export type { LogEntry, LogLevel, LogsResponse } from "./contracts/logs.js";
 export type ConsoleSink = Pick<Console, "info" | "warn" | "error">;
 
 export interface Logger {
-  info(message: unknown): void;
-  warn(message: unknown): void;
-  error(message: unknown): void;
+  info(message: unknown, ...details: unknown[]): void;
+  warn(message: unknown, ...details: unknown[]): void;
+  error(message: unknown, ...details: unknown[]): void;
 }
 
 /** Bounded in-memory diagnostics; Docker remains the durable log owner. */
@@ -29,24 +18,26 @@ export class LogBuffer {
   constructor(private readonly sink: ConsoleSink = console, private readonly now: () => Date = () => new Date()) {}
 
   setSecrets(values: readonly unknown[]): void {
-    this.secrets = [...new Set(values.filter((value): value is string => typeof value === "string" && value.length >= 3))]
+    this.secrets = [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))]
       .sort((left, right) => right.length - left.length);
   }
 
   child(source: string): Logger {
     return {
-      info: (message) => this.write("info", source, message),
-      warn: (message) => this.write("warn", source, message),
-      error: (message) => this.write("error", source, message)
+      info: (message, ...details) => this.write("info", source, [message, ...details]),
+      warn: (message, ...details) => this.write("warn", source, [message, ...details]),
+      error: (message, ...details) => this.write("error", source, [message, ...details])
     };
   }
 
-  write(level: LogLevel, source: string, message: unknown): void {
-    const safeMessage = truncateMessage(redact(formatMessage(message), this.secrets));
+  write(level: LogLevel, source: string, message: unknown | readonly unknown[]): void {
+    const values = Array.isArray(message) ? message : [message];
+    const safeMessage = truncateMessage(redact(values.map(formatMessage).join(" "), this.secrets));
     const entry = LogEntrySchema.parse({ timestamp: this.now().toISOString(), level, source, message: safeMessage });
     this.entries.push(entry);
     if (this.entries.length > 200) this.entries.splice(0, this.entries.length - 200);
-    this.sink[level](`[${source}] ${safeMessage}`);
+    try { this.sink[level](`${entry.timestamp} ${entry.level} [${source}] ${safeMessage}`); }
+    catch { /* console sinks are observational and cannot break runtime work */ }
     for (const listener of this.listeners) {
       try { listener(); } catch { /* log observers cannot break the runtime */ }
     }
@@ -74,7 +65,6 @@ function formatMessage(message: unknown): string {
 }
 
 function truncateMessage(message: string): string {
-  if (message.length <= 2048) return message;
   let result = message.slice(0, 2048);
   while (result && new TextEncoder().encode(result).byteLength > 2048) result = result.slice(0, -1);
   return result;

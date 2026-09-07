@@ -81,3 +81,31 @@ test("HTTP actions validate JSON/origin and SSE reconnect receives current snaps
     assert.deepEqual(requests[3], { action: "entities", value: { url: "http://ha.local:8123", token: "" } });
   } finally { await server.close(); }
 });
+
+test("serves bounded logs and emits named log snapshots without runtime events", { concurrency: false }, async () => {
+  let entries = [{ timestamp: "2026-09-06T12:00:00.000Z", level: "info" as const, source: "test", message: "first" }];
+  const listeners = new Set<() => void>();
+  const status = () => ({ board: "note" as const, nextAttemptAt: 1, manualPause: false, haPause: false, paused: false, codex: {}, login: { pending: false } });
+  const server = await startWebServer({
+    status, config: () => ({ config: DEFAULT_APP_CONFIG, legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false } }),
+    elements: () => ({ elements: [], defaultLayout: [] }), save: async () => ({} as never), preview: () => ({ text: "", characters: [] }), pause: async () => status(), login: async () => ({ pending: false }),
+    logs: () => ({ entries }),
+    subscribeLogs: (listener) => { listeners.add(listener); return () => listeners.delete(listener); }
+  }, { port: 0, host: "127.0.0.1" });
+  const url = `http://127.0.0.1:${server.port}`;
+  try {
+    assert.deepEqual(await (await fetch(`${url}/api/logs`)).json(), { entries });
+    const response = await fetch(`${url}/api/events`);
+    const reader = response.body!.getReader();
+    let initial = "";
+    while (!initial.includes("event: logs")) initial += new TextDecoder().decode((await reader.read()).value);
+    assert.match(initial, /data:/);
+    assert.match(initial, /event: logs/);
+    entries = [{ ...entries[0]!, message: "second" }];
+    for (const listener of listeners) listener();
+    const update = new TextDecoder().decode((await reader.read()).value);
+    assert.match(update, /event: logs/);
+    assert.match(update, /second/);
+    await reader.cancel();
+  } finally { await server.close(); }
+});

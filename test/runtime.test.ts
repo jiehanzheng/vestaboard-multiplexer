@@ -72,20 +72,30 @@ test("delivery shortens a pending deadline from the last normal attempt", async 
 test("unchanged frames skip a write without blocking the next changed frame", async () => {
   let nowMs = 0;
   let sends = 0;
+  let shouldFail = false;
+  const infos: unknown[] = [];
+  const warnings: unknown[] = [];
   const delivery = new DeliveryController({
     intervalMs: 60_000,
     now: () => new Date(nowMs),
-    send: async () => { sends += 1; },
-    logger: { info() {}, warn() {} }
+    send: async () => { sends += 1; if (shouldFail) throw new Error("board unavailable"); },
+    logger: { info: (message) => infos.push(message), warn: (message) => warnings.push(message) }
   });
   delivery.updateFrame(message("same"));
   assert.equal((await delivery.attempt()).outcome, "sent");
   nowMs = 60_000;
   assert.equal((await delivery.attempt()).outcome, "unchanged");
+  assert.deepEqual(infos, ["Sent latest Vestaboard frame."]);
   assert.equal(sends, 1);
   delivery.updateFrame(message("changed"));
   assert.equal((await delivery.attempt()).outcome, "sent");
+  assert.equal(infos.length, 2);
   assert.equal(sends, 2);
+  shouldFail = true;
+  nowMs = 120_000;
+  delivery.updateFrame(message("failure"));
+  assert.equal((await delivery.attempt()).outcome, "failed");
+  assert.equal(warnings.length, 1);
 });
 
 test("startup bypasses the normal limiter and holds the next attempt only after success", async () => {
