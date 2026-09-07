@@ -153,12 +153,26 @@ export class DeliveryController {
     }
   }
 
-  private async performAttempt(): Promise<DeliveryAttempt> {
+  /** Sends the latest frame once for a successful explicit settings save. */
+  async attemptManual(): Promise<DeliveryAttempt> {
+    if (this.inFlight) {
+      await this.inFlight;
+      return this.attemptManual();
+    }
+    this.inFlight = this.performAttempt(true);
+    try {
+      return await this.inFlight;
+    } finally {
+      this.inFlight = undefined;
+    }
+  }
+
+  private async performAttempt(manual = false): Promise<DeliveryAttempt> {
     if (!this.running) return this.finish("stopped");
     if (this.paused) return this.finish("paused");
 
     const now = this.now();
-    const eligibleAt = this.nextEligibleAt();
+    const eligibleAt = manual ? this.startupHoldUntil : this.nextEligibleAt();
     if (eligibleAt && now.getTime() < eligibleAt.getTime()) {
       return this.finish("limited");
     }
@@ -178,7 +192,7 @@ export class DeliveryController {
       this.sentMessageKey = messageKey(message);
       this.lastSentFrame = message;
       this.lastSuccessfulAt = new Date(this.now());
-      this.logger.info("Sent latest Vestaboard frame.");
+      this.logger.info(manual ? "Sent latest Vestaboard frame after settings save." : "Sent latest Vestaboard frame.");
       return this.finish("sent");
     } catch (error) {
       this.logger.warn("Vestaboard frame send failed.", error);

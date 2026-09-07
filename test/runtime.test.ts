@@ -126,6 +126,116 @@ test("startup bypasses the normal limiter and holds the next attempt only after 
   assert.equal(sends, 3);
 });
 
+test("manual delivery bypasses the normal interval once and starts a new interval", async () => {
+  let nowMs = 0;
+  let sends = 0;
+  const delivery = new DeliveryController({
+    intervalMs: 300_000,
+    now: () => new Date(nowMs),
+    send: async () => { sends += 1; },
+    logger: { info() {}, warn() {} }
+  });
+
+  delivery.updateFrame(message("first"));
+  assert.equal((await delivery.attempt()).outcome, "sent");
+  nowMs = 1_000;
+  delivery.updateFrame(message("saved"));
+  assert.equal((await delivery.attemptManual()).outcome, "sent");
+  nowMs = 300_999;
+  delivery.updateFrame(message("automatic"));
+  assert.equal((await delivery.attempt()).outcome, "limited");
+  nowMs = 301_000;
+  assert.equal((await delivery.attempt()).outcome, "sent");
+  assert.equal(sends, 3);
+});
+
+test("manual failure consumes the normal interval", async () => {
+  let nowMs = 0;
+  let sends = 0;
+  let shouldFail = true;
+  const delivery = new DeliveryController({
+    intervalMs: 60_000,
+    now: () => new Date(nowMs),
+    send: async () => {
+      sends += 1;
+      if (shouldFail) throw new Error("manual unavailable");
+    },
+    logger: { info() {}, warn() {} }
+  });
+
+  delivery.updateFrame(message("saved"));
+  assert.equal((await delivery.attemptManual()).outcome, "failed");
+  nowMs = 59_999;
+  shouldFail = false;
+  delivery.updateFrame(message("automatic"));
+  assert.equal((await delivery.attempt()).outcome, "limited");
+  nowMs = 60_000;
+  assert.equal((await delivery.attempt()).outcome, "sent");
+  assert.equal(sends, 2);
+});
+
+test("manual delivery skips unchanged and paused frames without writing", async () => {
+  let sends = 0;
+  const delivery = new DeliveryController({
+    intervalMs: 60_000,
+    send: async () => { sends += 1; },
+    logger: { info() {}, warn() {} }
+  });
+
+  delivery.updateFrame(message("same"));
+  assert.equal((await delivery.attempt()).outcome, "sent");
+  assert.equal((await delivery.attemptManual()).outcome, "unchanged");
+  delivery.updateFrame(message("paused"));
+  delivery.pause("operator");
+  assert.equal((await delivery.attemptManual()).outcome, "paused");
+  assert.equal(sends, 1);
+});
+
+test("manual delivery waits for an in-flight write and sends the latest frame", async () => {
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => { release = resolve; });
+  const sent: string[] = [];
+  const delivery = new DeliveryController({
+    intervalMs: 60_000,
+    send: async (frame) => {
+      sent.push(frame.text);
+      if (frame.text === "old") await started;
+    },
+    logger: { info() {}, warn() {} }
+  });
+
+  delivery.updateFrame(message("old"));
+  const first = delivery.attempt();
+  await Promise.resolve();
+  delivery.updateFrame(message("latest"));
+  const manual = delivery.attemptManual();
+  await Promise.resolve();
+  assert.deepEqual(sent, ["old"]);
+  release();
+  assert.equal((await first).outcome, "sent");
+  assert.equal((await manual).outcome, "sent");
+  assert.deepEqual(sent, ["old", "latest"]);
+});
+
+test("manual delivery respects the startup hold", async () => {
+  let nowMs = 0;
+  let sends = 0;
+  const delivery = new DeliveryController({
+    intervalMs: 300_000,
+    now: () => new Date(nowMs),
+    send: async () => { sends += 1; },
+    logger: { info() {}, warn() {} }
+  });
+
+  assert.equal((await delivery.deliverStartup(message("banner"), 30_000)).outcome, "sent");
+  delivery.updateFrame(message("saved"));
+  nowMs = 29_999;
+  assert.equal((await delivery.attemptManual()).outcome, "limited");
+  nowMs = 30_000;
+  assert.equal((await delivery.attemptManual()).outcome, "sent");
+  assert.equal(sends, 2);
+});
+
 test("paused delivery exposes status and resumes with the latest frame", async () => {
   let nowMs = 0;
   const sent: string[] = [];
