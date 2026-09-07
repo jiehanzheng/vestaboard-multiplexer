@@ -61,6 +61,7 @@ export type LoginStatus = z.infer<typeof LoginStatusSchema>;
 
 export const RuntimeStatusSchema = z.object({
   board: z.enum(["note", "flagship"]),
+  dryRun: z.boolean().optional(),
   desired: BoardMessageSchema.optional(),
   lastSent: BoardMessageSchema.optional(),
   nextAttemptAt: z.number(),
