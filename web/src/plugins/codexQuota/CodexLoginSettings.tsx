@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { LoginStatus } from "../../../../src/contracts/api";
 import { cancelLogin, checkLogin, startLogin } from "../../api";
 
-export function CodexLoginSettings({ login, onLogin, onNotice, settings }: { login: LoginStatus; onLogin: (status: LoginStatus) => void; onNotice: (notice: { tone: "success" | "error" | "info"; message: string } | undefined) => void; settings?: ReactNode }): ReactNode {
+export function CodexLoginSettings({ login, quotaError, onLogin, onNotice, settings }: { login: LoginStatus; quotaError?: string; onLogin: (status: LoginStatus) => void; onNotice: (notice: { tone: "success" | "error" | "info"; message: string } | undefined) => void; settings?: ReactNode }): ReactNode {
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [hasChecked, setHasChecked] = useState(Boolean(login.account || login.error));
@@ -66,10 +66,11 @@ export function CodexLoginSettings({ login, onLogin, onNotice, settings }: { log
     }
   };
   const error = login.error ?? checkError;
+  const attention = error ?? quotaError;
   const intro = checking
     ? "Checking mounted Codex credentials for quota access."
     : login.account
-      ? "Usage and quota updates are ready."
+      ? quotaError ? "Codex account is connected, but quota updates need attention." : "Usage and quota updates are ready."
       : error
         ? "Codex account status could not be verified."
         : hasChecked
@@ -78,7 +79,7 @@ export function CodexLoginSettings({ login, onLogin, onNotice, settings }: { log
   const badge = checking
     ? "Checking account…"
     : login.account
-      ? "Account connected"
+      ? attention ? "Needs attention" : "Account connected"
       : login.pending
         ? "Sign-in pending"
         : error
@@ -86,7 +87,7 @@ export function CodexLoginSettings({ login, onLogin, onNotice, settings }: { log
           : hasChecked
             ? "Signed out"
             : "Account not checked";
-  const badgeClass = login.account ? "connection-badge good" : login.pending || checking ? "connection-badge pending" : error ? "connection-badge error" : "connection-badge";
+  const badgeClass = login.account && !attention ? "connection-badge good" : login.pending || checking ? "connection-badge pending" : attention ? "connection-badge error" : "connection-badge";
   return (
     <section className="connection-section" aria-labelledby="codex-heading">
       <div className="section-heading">
@@ -99,9 +100,10 @@ export function CodexLoginSettings({ login, onLogin, onNotice, settings }: { log
           {login.pending && login.verificationUrl ? <a className="button secondary" href={login.verificationUrl} target="_blank" rel="noreferrer">Open device sign-in</a> : login.account ? <button className="button secondary" onClick={() => void act(startLogin)} disabled={busy || checking}>{busy ? "Switching…" : "Switch account"}</button> : !error && hasChecked ? <button className="button secondary" onClick={() => void act(startLogin)} disabled={busy || checking}>{busy ? "Starting…" : "Start device sign-in"}</button> : null}
           {login.pending ? <button className="button quiet" onClick={() => void act(cancelLogin, "Device sign-in cancelled.")} disabled={busy}>Cancel</button> : <button className="button quiet" onClick={() => void act(checkLogin, undefined, true)} disabled={busy || checking}>{checking ? "Checking…" : error ? "Retry status check" : "Check status"}</button>}
         </div>
-        <span className={checking || login.pending ? "login-helper" : "login-helper muted"}>{checking ? "Reading mounted credentials" : login.pending ? "Waiting for approval" : error ?? ""}</span>
+        <span className={checking || login.pending || quotaError ? "login-helper" : "login-helper muted"}>{checking ? "Reading mounted credentials" : login.pending ? "Waiting for approval" : quotaError ? `Quota: ${quotaError}` : error ?? ""}</span>
       </div>
       {error ? <p className="inline-message error" role="alert">{error}</p> : null}
+      {quotaError ? <p className="inline-message warning" role="status">Quota updates: {quotaError}</p> : null}
       {settings ? <div className="settings-panel codex-settings-panel" aria-label="Codex quota settings">
         <div className="subheading-row"><h3>Quota settings</h3></div>
         <p className="screen-footnote">Choose how Codex collects and displays usage for board rows.</p>

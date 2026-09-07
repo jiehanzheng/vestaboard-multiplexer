@@ -11,7 +11,7 @@ import {
   type RuntimeStatus
 } from "../../src/contracts/api";
 import { HAConnectionTestResponseSchema, HAEntitiesResponseSchema, type HAConnectionTestRequest, type HAConnectionTestResponse, type HAEntitiesRequest, type HAEntitiesResponse } from "../../src/contracts/homeAssistant";
-import type { AppConfig, ConfigPatch, LayoutEntry, PublicConfig, WaterHeaterConfig } from "../../src/contracts/config";
+import { ConfigSaveResponseSchema, type AppConfig, type ConfigPatch, type ConfigSaveResponse, type LayoutEntry, type PublicConfig, type WaterHeaterConfig } from "../../src/contracts/config";
 import { LogsResponseSchema, type LogsResponse } from "../../src/contracts/logs.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -72,8 +72,8 @@ export function requestPreview(layout: LayoutEntry[], board: AppConfig["board"],
   });
 }
 
-export function saveConfig(config: ConfigPatch): Promise<PublicConfig> {
-  return request("/api/config", ConfigResponseSchema, {
+export function saveConfig(config: ConfigPatch): Promise<ConfigSaveResponse> {
+  return request("/api/config", ConfigSaveResponseSchema, {
     method: "POST",
     body: JSON.stringify(config)
   });

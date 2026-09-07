@@ -1,12 +1,12 @@
-import type { AppConfig, LayoutEntry, PublicConfig, HAConfig, WaterHeaterConfig } from "../../src/contracts/config";
+import type { AppConfig, LayoutEntry, PublicConfig, HAConfig, WaterHeaterConfig } from "../../src/contracts/config.js";
 import type {
   BoardMessage,
   ElementsResponse,
   LoginStatus,
   PreviewResponse,
   RuntimeStatus
-} from "../../src/contracts/api";
-import type { HAEntity } from "../../src/contracts/homeAssistant";
+} from "../../src/contracts/api.js";
+import type { HAEntity } from "../../src/contracts/homeAssistant.js";
 
 export type BoardKind = "note" | "flagship";
 export type BoardPreference = "auto" | BoardKind;

@@ -1,11 +1,6 @@
-import type { AppConfig, LayoutEntry } from "../../src/contracts/config";
-import type { BoardElement } from "./types";
-import type { BoardKind } from "./types";
-
-export const BOARD_DIMENSIONS: Record<BoardKind, { rows: number; columns: number }> = {
-  note: { rows: 3, columns: 15 },
-  flagship: { rows: 6, columns: 22 }
-};
+import type { AppConfig } from "../../src/contracts/config.js";
+import type { BoardKind } from "./types.js";
+import { BOARD_DIMENSIONS } from "./layoutUtils.js";
 
 export const EMPTY_MATRIX = (rows: number, columns: number): number[][] =>
   Array.from({ length: rows }, () => Array.from({ length: columns }, () => 0));
@@ -16,31 +11,6 @@ export function getBoardMatrix(characters: number[][] | undefined, board: BoardK
     return EMPTY_MATRIX(dimensions.rows, dimensions.columns);
   }
   return characters;
-}
-
-export function elementById(elements: BoardElement[], id: string): BoardElement | undefined {
-  return elements.find((element) => element.id === id);
-}
-
-export function validateLayout(layout: LayoutEntry[], elements: BoardElement[], board: BoardKind): string | undefined {
-  const occupied = new Map<number, string>();
-  const maxRows = BOARD_DIMENSIONS[board].rows;
-  for (const entry of layout) {
-    const element = elementById(elements, entry.elementId);
-    if (!element) return `The selected element for row ${layout.indexOf(entry) + 1} is unavailable.`;
-    if (!Number.isInteger(entry.startRow) || entry.startRow < 0) {
-      return `${element.label} needs a valid start row.`;
-    }
-    if (entry.startRow + element.height > maxRows) {
-      return `${element.label} is ${entry.startRow + element.height - maxRows} row${entry.startRow + element.height - maxRows === 1 ? "" : "s"} too tall for this board.`;
-    }
-    for (let row = entry.startRow; row < entry.startRow + element.height; row += 1) {
-      const previous = occupied.get(row);
-      if (previous) return `${element.label} overlaps ${previous} on row ${row + 1}.`;
-      occupied.set(row, element.label);
-    }
-  }
-  return undefined;
 }
 
 export function formatDate(value: number | string | undefined, empty = "No reading yet"): string {

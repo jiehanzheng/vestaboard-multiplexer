@@ -1,4 +1,4 @@
-import type { AppConfig, ConfigPatch, PublicAppConfig, PublicConfig } from "../../src/contracts/config.js";
+import type { AppConfig, ConfigPatch, ConfigSaveResponse, PublicAppConfig } from "../../src/contracts/config.js";
 
 export type ConfigSection = "codex" | "water" | "ha" | "pause" | "board" | "layout";
 
@@ -53,7 +53,7 @@ export function replaceSection(draft: AppConfig, saved: PublicAppConfig, section
 
 export function reconcileSectionSave(input: {
   section: ConfigSection;
-  acknowledgement: PublicConfig;
+  acknowledgement: ConfigSaveResponse;
   submittedDraft: AppConfig;
   currentDraft: AppConfig;
 }): SaveReconciliation<AppConfig> {

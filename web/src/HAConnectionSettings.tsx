@@ -35,7 +35,7 @@ export function HAConnectionSettings({ value, hasToken, saved, status, onChange,
       setFeedbackTone(connected ? "success" : "error");
       setTestedKey(keyAtStart);
       setFeedback(connected
-        ? (saved ? "Connection works." : "Connection works. Save Home Assistant to keep these values.")
+        ? (saved ? "Connection test passed." : "Connection test passed. Save Home Assistant to use these settings.")
         : result.error ?? "Home Assistant could not be connected.");
       onTest?.(connected, result.error);
     } catch (error: unknown) {

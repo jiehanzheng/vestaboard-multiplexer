@@ -5,6 +5,17 @@ import { DEFAULT_APP_CONFIG } from "../src/config.js";
 import { configPatchForSection, reconcileSectionSave, sectionIsDirty } from "../web/src/draftState.js";
 import { createLogDownloadLifecycle, filterLogEntries } from "../web/src/logUtils.js";
 import { WaterHeaterStatusSchema, waterElementIssue } from "../src/plugins/waterHeater/status.js";
+import { sortLayoutIndexes } from "../web/src/layoutUtils.js";
+import { createLatestPreviewQueue, createLatestPreviewScheduler } from "../web/src/previewScheduler.js";
+
+test("row editor order follows board rows while preserving stored ties", () => {
+  const layout = [
+    { elementId: "water.remaining", startRow: 1 },
+    { elementId: "codex.status", startRow: 0 },
+    { elementId: "water.temperature-text", startRow: 1 }
+  ];
+  assert.deepEqual(sortLayoutIndexes(layout), [1, 0, 2]);
+});
 
 test("section patches isolate saves and preserve an explicit credential clear", () => {
   const config = structuredClone(DEFAULT_APP_CONFIG);
@@ -31,7 +42,8 @@ test("section reconciliation preserves later edits and unrelated drafts", () => 
   const acknowledgement = {
     config: structuredClone(DEFAULT_APP_CONFIG),
     legacyEnvironmentVariables: [],
-    hasSecrets: { token: false, localApiKey: false, haToken: false }
+    hasSecrets: { token: false, localApiKey: false, haToken: false },
+    delivery: "sent" as const
   };
   acknowledgement.config.codex.enabled = true;
   const result = reconcileSectionSave({ section: "codex", acknowledgement, submittedDraft, currentDraft });
@@ -47,7 +59,8 @@ test("a section acknowledgement accepts server normalization when untouched", ()
   const acknowledgement = {
     config: structuredClone(DEFAULT_APP_CONFIG),
     legacyEnvironmentVariables: [],
-    hasSecrets: { token: false, localApiKey: false, haToken: false }
+    hasSecrets: { token: false, localApiKey: false, haToken: false },
+    delivery: "sent" as const
   };
   acknowledgement.config.codex.enabled = false;
   const result = reconcileSectionSave({ section: "codex", acknowledgement, submittedDraft, currentDraft: structuredClone(submittedDraft) });
@@ -60,7 +73,7 @@ test("HA save keeps a concurrent pause edit", () => {
   submittedDraft.ha.url = "http://saved.example";
   const currentDraft = structuredClone(submittedDraft);
   currentDraft.ha.pause = { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "off" };
-  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false } };
+  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
   const result = reconcileSectionSave({ section: "ha", acknowledgement, submittedDraft, currentDraft });
   assert.deepEqual(result.draftConfig.ha.pause, currentDraft.ha.pause);
 });
@@ -71,10 +84,73 @@ test("pause save keeps concurrent Home Assistant URL and token edits", () => {
   const currentDraft = structuredClone(submittedDraft);
   currentDraft.ha.url = "http://new.example";
   currentDraft.ha.token = "new-token";
-  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false } };
+  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
   const result = reconcileSectionSave({ section: "pause", acknowledgement, submittedDraft, currentDraft });
   assert.equal(result.draftConfig.ha.url, "http://new.example");
   assert.equal(result.draftConfig.ha.token, "new-token");
+});
+
+test("live preview scheduling uses the latest dirty reading without debounce starvation", () => {
+  const timers: Array<{ callback: () => void; delay: number }> = [];
+  const rendered: string[] = [];
+  const scheduler = createLatestPreviewScheduler({
+    delayMs: 180,
+    schedule: (callback, delay) => {
+      timers.push({ callback, delay });
+      return timers.length;
+    },
+    cancel: () => undefined
+  });
+
+  scheduler.schedule(() => rendered.push("first"));
+  scheduler.schedule(() => rendered.push("latest after live reading"));
+  scheduler.schedule(() => rendered.push("latest after another live reading"));
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0]?.delay, 180);
+  timers[0]?.callback();
+  assert.deepEqual(rendered, ["latest after another live reading"]);
+});
+
+test("slow live preview responses publish and stale draft responses are ignored", async () => {
+  const timers: Array<() => void> = [];
+  const resolvers: Array<(value: string) => void> = [];
+  const committed: string[] = [];
+  const queue = createLatestPreviewQueue<string>({
+    delayMs: 180,
+    schedule: (callback) => {
+      timers.push(callback);
+      return timers.length;
+    },
+    cancel: () => undefined
+  });
+  let payloadRevision = 1;
+  const scheduleRequest = (value: string, revision: number): void => queue.schedule({
+    task: () => new Promise<string>((resolve) => resolvers.push(resolve)),
+    onSuccess: (result) => { if (payloadRevision === revision) committed.push(result); },
+    onError: () => undefined,
+    onSettled: () => undefined
+  });
+
+  scheduleRequest("old live reading", payloadRevision);
+  timers.shift()?.();
+  scheduleRequest("latest live reading", payloadRevision);
+  timers.shift()?.();
+  resolvers.shift()?.("live reading preview");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(committed, ["live reading preview"]);
+
+  payloadRevision = 2;
+  scheduleRequest("new draft", payloadRevision);
+  timers.shift()?.();
+  payloadRevision = 3;
+  scheduleRequest("latest draft", payloadRevision);
+  timers.shift()?.();
+  resolvers.shift()?.("stale draft preview");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  timers.shift()?.();
+  resolvers.shift()?.("latest draft preview");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(committed, ["live reading preview", "latest draft preview"]);
 });
 
 test("log filters combine source, severity, and message text", () => {
