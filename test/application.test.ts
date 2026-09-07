@@ -157,8 +157,15 @@ test("application exposes constants-only water elements without a Home Assistant
     assert.deepEqual(elementIds.filter((id) => id.startsWith("water.")), [
       "water.remaining",
       "water.temperature-bar",
-      "water.temperature-text"
+      "water.temperature-text",
+      "water.emv-position"
     ]);
+    const elementMetadata = (app.actions.elements() as { elements: Array<{ id: string; minWidth?: number }> }).elements;
+    assert.equal(elementMetadata.find((element) => element.id === "codex.window-1")?.minWidth, 6);
+    assert.equal(elementMetadata.find((element) => element.id === "water.remaining")?.minWidth, 6);
+    assert.equal(elementMetadata.find((element) => element.id === "water.temperature-text")?.minWidth, 8);
+    assert.equal(elementMetadata.find((element) => element.id === "water.emv-position")?.minWidth, 6);
+    assert.equal(elementMetadata.find((element) => element.id === "water.temperature-bar")?.minWidth, undefined);
     assert.deepEqual((app.actions.status() as { water?: { error?: string } }).water, {});
 
     const draftWater = {

@@ -111,7 +111,13 @@ export async function createApplication(store: ConfigStore, directory: string, d
   const actions: WebActions = {
     status, config: () => store.getPublic(),
     elements: () => ({
-      elements: elements().map((element) => ({ id: element.id, label: element.label, height: element.height, preview: element.render(dimensions().width) })),
+      elements: elements().map((element) => ({
+        id: element.id,
+        label: element.label,
+        height: element.height,
+        ...(element.minWidth === undefined ? {} : { minWidth: element.minWidth }),
+        preview: element.render(dimensions().width)
+      })),
       defaultLayout: defaultLayout(),
       defaultLayouts: { note: defaultLayout("note"), flagship: defaultLayout("flagship") }
     }),
