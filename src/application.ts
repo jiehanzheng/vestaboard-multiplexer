@@ -6,7 +6,7 @@ import { HomeAssistantService } from "./homeAssistantService.js";
 import { PauseController } from "./pause.js";
 import { DeliveryController, type DeliveryAttempt } from "./runtime/delivery.js";
 import { createVestaboardClient } from "./vestaboard.js";
-import { createVestaboardBoardResolver } from "./vestaboardBoard.js";
+import { createVestaboardBoardResolver, type VestaboardBoardResolver } from "./vestaboardBoard.js";
 import { formatStartupMessage } from "./startupMessage.js";
 import type { HomeAssistantClient, HomeAssistantClientOptions } from "./homeAssistant.js";
 import type { VestaboardBoard } from "./vestaboardTypes.js";
@@ -19,6 +19,8 @@ export interface ApplicationDependencies {
   createHomeAssistantClient?: (options: HomeAssistantClientOptions) => HomeAssistantClient;
   createCodexIntegration?: typeof createCodexIntegration;
   createVestaboardClient?: typeof createVestaboardClient;
+  setInterval?: typeof setInterval;
+  clearInterval?: typeof clearInterval;
   now?: () => Date;
   logger?: LogBuffer;
 }
@@ -38,7 +40,12 @@ export async function createApplication(store: ConfigStore, directory: string, d
   let onceTask: Promise<DeliveryAttempt | undefined> | undefined;
   let stopTask: Promise<void> | undefined;
   let saveQueue: Promise<unknown> = Promise.resolve();
+  let boardResolver: VestaboardBoardResolver | undefined;
+  let boardResolverCanDetect = false;
+  let boardResolutionTask: Promise<void> | undefined;
   const now = dependencies.now ?? (() => new Date());
+  const setIntervalImpl = dependencies.setInterval ?? setInterval;
+  const clearIntervalImpl = dependencies.clearInterval ?? clearInterval;
   const logs = dependencies.logger ?? new LogBuffer(console, now);
   const applicationLog = logs.child("application");
   logs.setSecrets([config.transport.token, config.transport.localApiKey, config.ha.token]);
@@ -82,10 +89,15 @@ export async function createApplication(store: ConfigStore, directory: string, d
   function configurationError() {
     return store.getPublic().error ?? (!dryRun && !config.transport.token && !config.transport.localApiKey ? "Add a board connection in Board settings." : undefined);
   }
+  function boardDetectionPending(): boolean {
+    return boardResolverCanDetect && boardResolver?.resolution().source === "assumed";
+  }
   let lastDeliveryPauseReason: string | undefined;
   function syncPause() {
     const state = pause.status();
-    const reason = configurationError() ?? saveError ?? renderError ?? state.persistenceError ?? (state.paused ? state.pauseReason ?? "Updates paused" : undefined);
+    const reason = configurationError() ?? saveError ?? renderError ?? state.persistenceError
+      ?? (boardDetectionPending() ? "Board size detection pending." : undefined)
+      ?? (state.paused ? state.pauseReason ?? "Updates paused" : undefined);
     if (reason) delivery.pause(reason); else delivery.resume();
     const effectiveReason = delivery.status().paused ? delivery.status().pauseReason ?? reason ?? "paused" : undefined;
     if (effectiveReason && effectiveReason !== lastDeliveryPauseReason) logs.child("pause").warn(`Updates paused: ${effectiveReason}`);
@@ -99,15 +111,44 @@ export async function createApplication(store: ConfigStore, directory: string, d
     syncPause();
     changed();
   }
-  async function resolveBoard(settings: AppConfig) {
+  async function resolveBoard(settings: AppConfig): Promise<{ board: VestaboardBoard; resolver: VestaboardBoardResolver; canDetect: boolean }> {
     const client = makeBoard({ dryRun: true, ...settings.transport, logger: logs.child("vestaboard") });
-    return createVestaboardBoardResolver({ preference: settings.board, detectBoard: client.detectBoard, logger: logs.child("vestaboard") }).resolve();
+    const resolver = createVestaboardBoardResolver({ preference: settings.board, detectBoard: client.detectBoard, logger: logs.child("vestaboard") });
+    return { board: await resolver.resolve(), resolver, canDetect: settings.board === "auto" && Boolean(client.detectBoard) };
+  }
+  function retryBoardDetection(): void {
+    if (!ready || boardResolutionTask || stopped || !boardResolver || !boardResolverCanDetect || boardResolver.resolution().source === "confirmed") return;
+    const resolver = boardResolver;
+    const resolution = saveQueue.then(async () => {
+      if (stopped || !ready || resolver !== boardResolver || resolver.resolution().source === "confirmed") return;
+      const nextBoard = await resolver.resolve();
+      if (stopped || resolver !== boardResolver || resolver.resolution().source !== "confirmed") return;
+      if (nextBoard === board) return;
+      // Hold the delivery queue while the target changes so a Note frame cannot
+      // be written after detection confirms a Flagship board (or vice versa).
+      ready = false;
+      board = nextBoard;
+      await delivery.resetTarget();
+      if (stopped || resolver !== boardResolver) return;
+      ready = true;
+    });
+    let ownedResolution!: Promise<void>;
+    ownedResolution = resolution.finally(() => {
+      if (boardResolutionTask !== ownedResolution) return;
+      boardResolutionTask = undefined;
+      if (!stopped && ready) requestComposition();
+    });
+    boardResolutionTask = ownedResolution;
+    saveQueue = ownedResolution.catch(() => {});
   }
   async function prepare() {
     await pause.configure(config.ha);
     if (stopped) return;
     await ha.configure(config.ha);
-    board = await resolveBoard(config);
+    const resolved = await resolveBoard(config);
+    board = resolved.board;
+    boardResolver = resolved.resolver;
+    boardResolverCanDetect = resolved.canDetect;
     if (stopped) return;
     ready = true;
     requestComposition();
@@ -153,8 +194,19 @@ export async function createApplication(store: ConfigStore, directory: string, d
         // Validate against the new board before saving: an auto-detected Note
         // must not inherit a persisted six-row Flagship layout.
         let candidateBoard: VestaboardBoard;
+        let candidateResolver: VestaboardBoardResolver | undefined;
+        let candidateResolverCanDetect = false;
         try {
-          candidateBoard = targetChanged ? await resolveBoard(candidate) : board;
+          if (targetChanged) {
+            const resolved = await resolveBoard(candidate);
+            candidateBoard = resolved.board;
+            candidateResolver = resolved.resolver;
+            candidateResolverCanDetect = resolved.canDetect;
+          } else {
+            candidateBoard = board;
+            candidateResolver = boardResolver;
+            candidateResolverCanDetect = boardResolverCanDetect;
+          }
           compose(candidate.layout, candidateBoard, candidate);
         } catch (error) {
           applicationLog.error(configurationFailure(error));
@@ -173,7 +225,13 @@ export async function createApplication(store: ConfigStore, directory: string, d
           await codex.configure(config.codex);
           water.configure(config.water);
           await ha.configure(config.ha);
-          if (targetChanged) { await delivery.resetTarget(); board = candidateBoard; }
+          if (targetChanged) {
+            ready = false;
+            await delivery.resetTarget();
+            board = candidateBoard;
+            boardResolver = candidateResolver;
+            boardResolverCanDetect = candidateResolverCanDetect;
+          }
           delivery.setInterval(config.updateIntervalMinutes * 60_000);
           applicationLog.info(`Configuration applied for sections: ${configSections(input).join(", ")}.`);
         } catch (error) {
@@ -204,10 +262,15 @@ export async function createApplication(store: ConfigStore, directory: string, d
         ha.start();
         codex.start();
         syncPause();
-        await delivery.deliverStartup(formatStartupMessage({ plugins: plugins.filter((plugin) => plugin.enabled), now: now(), board, transport: config.transport.localApiKey ? "local" : "cloud", timeZone: config.codex.timeZone }), 30_000);
+        if (!boardDetectionPending()) {
+          await delivery.deliverStartup(formatStartupMessage({ plugins: plugins.filter((plugin) => plugin.enabled), now: now(), board, transport: config.transport.localApiKey ? "local" : "cloud", timeZone: config.codex.timeZone }), 30_000);
+        }
         if (stopped) return;
         requestComposition();
-        minute = setInterval(requestComposition, 60_000);
+        minute = setIntervalImpl(() => {
+          retryBoardDetection();
+          requestComposition();
+        }, 60_000);
         void delivery.startScheduler();
         applicationLog.info("Application started.");
       })();
@@ -230,12 +293,12 @@ export async function createApplication(store: ConfigStore, directory: string, d
       if (stopTask) return stopTask;
       stopped = true;
       applicationLog.info("Stopping application.");
-      clearInterval(minute);
+      clearIntervalImpl(minute);
       const stopDelivery = delivery.stop();
       water.stop();
       const stopModules = Promise.all([codex.stop(), ha.stop()]);
       stopTask = (async () => {
-        await Promise.all([startTask?.catch(() => {}), onceTask?.catch(() => {}), saveQueue, stopModules]);
+        await Promise.all([startTask?.catch(() => {}), onceTask?.catch(() => {}), saveQueue, boardResolutionTask, stopModules]);
         await Promise.all([stopDelivery, pause.stop()]);
       })();
       return stopTask;
