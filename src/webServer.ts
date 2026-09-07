@@ -1,7 +1,7 @@
 import { createServer, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
-import { ConfigPatchSchema, PublicConfigSchema, type ConfigPatch, type PublicConfig } from "./contracts/config.js";
+import { ConfigPatchSchema, ConfigSaveResponseSchema, PublicConfigSchema, type ConfigPatch, type ConfigSaveResponse, type PublicConfig } from "./contracts/config.js";
 import { ElementsResponseSchema, LoginStatusSchema, PauseRequestSchema, PreviewRequestSchema, PreviewResponseSchema, RuntimeStatusSchema, type ElementsResponse, type LoginStatus, type PauseRequest, type PreviewRequest, type PreviewResponse, type RuntimeStatus } from "./contracts/api.js";
 import { HAConnectionTestRequestSchema, HAConnectionTestResponseSchema, HAEntitiesRequestSchema, HAEntitiesResponseSchema, type HAEntitiesRequest, type HAEntitiesResponse, type HAStatus } from "./contracts/homeAssistant.js";
 import { LogsResponseSchema, type LogsResponse } from "./logger.js";
@@ -10,7 +10,7 @@ export interface WebActions {
   status(): RuntimeStatus;
   config(): PublicConfig;
   elements(): ElementsResponse;
-  save(value: ConfigPatch): Promise<PublicConfig>;
+  save(value: ConfigPatch): Promise<ConfigSaveResponse>;
   preview(value: PreviewRequest): PreviewResponse | Promise<PreviewResponse>;
   pause(value: PauseRequest): Promise<RuntimeStatus>;
   login(action: "start" | "cancel" | "check"): Promise<LoginStatus>;
@@ -89,7 +89,7 @@ export async function startWebServer(actions: WebActions, options: {
           if (Buffer.byteLength(body) > 1_048_576) return json(413, { error: "Request is too large." });
         }
         const value: unknown = body ? JSON.parse(body) : {};
-        if (path === "/api/config") return json(200, PublicConfigSchema.parse(await actions.save(ConfigPatchSchema.parse(value))));
+        if (path === "/api/config") return json(200, ConfigSaveResponseSchema.parse(await actions.save(ConfigPatchSchema.parse(value))));
         if (path === "/api/preview") return json(200, PreviewResponseSchema.parse(await actions.preview(PreviewRequestSchema.parse(value))));
         if (path === "/api/pause") return json(200, RuntimeStatusSchema.parse(await actions.pause(PauseRequestSchema.parse(value))));
         for (const action of ["start", "cancel", "check"] as const) {

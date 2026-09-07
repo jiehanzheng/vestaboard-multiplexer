@@ -28,7 +28,7 @@ test("HTTP actions validate JSON/origin and SSE reconnect receives current snaps
   const config = () => ({ config: { ...DEFAULT_APP_CONFIG, transport: { ...DEFAULT_APP_CONFIG.transport, token: "server-only" }, ha: { ...DEFAULT_APP_CONFIG.ha, token: "ha-server-only" } }, legacyEnvironmentVariables: [], hasSecrets: { token: true, localApiKey: false, haToken: true } });
   const server = await startWebServer({
     status, config, elements: () => ({ elements: [], defaultLayout: [] }),
-    save: async () => { saveCalls++; return config(); }, preview: () => ({ text: "", characters: [] }), pause: async () => status(), login: async () => ({ pending: false }),
+    save: async () => { saveCalls++; return { ...config(), delivery: "unchanged" as const }; }, preview: () => ({ text: "", characters: [] }), pause: async () => status(), login: async () => ({ pending: false }),
     homeAssistant: async (action, request) => {
       requests.push({ action, value: request });
       return action === "test" ? { connected: true } : { entities: [] };
@@ -40,8 +40,12 @@ test("HTTP actions validate JSON/origin and SSE reconnect receives current snaps
     assert.equal((await fetch(`${url}/api/config`, { method: "POST", headers: { "content-type": "application/json" }, body: "{" })).status, 400);
     assert.equal((await fetch(`${url}/api/config`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"water":{"remaining":42}}' })).status, 400);
     assert.equal(saveCalls, 0);
+    const saveResponse = await fetch(`${url}/api/config`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    assert.equal(saveResponse.status, 200);
+    assert.equal((await saveResponse.json()).delivery, "unchanged");
     const publicConfig = await (await fetch(`${url}/api/config`)).text();
     assert.ok(!publicConfig.includes("server-only"));
+    assert.equal("delivery" in JSON.parse(publicConfig), false);
     for (const expected of [1, 2]) {
       value = expected;
       const abort = new AbortController();

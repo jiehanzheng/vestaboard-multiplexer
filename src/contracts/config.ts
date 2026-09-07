@@ -79,6 +79,15 @@ export const PublicConfigSchema = z.object({
 }).strict();
 
 export type PublicConfig = z.infer<typeof PublicConfigSchema>;
+
+export const DeliveryOutcomeSchema = z.enum(["sent", "unchanged", "failed", "paused", "limited", "empty", "stopped"]);
+export type DeliveryOutcome = z.infer<typeof DeliveryOutcomeSchema>;
+
+export const ConfigSaveResponseSchema = PublicConfigSchema.extend({
+  delivery: DeliveryOutcomeSchema
+});
+
+export type ConfigSaveResponse = z.infer<typeof ConfigSaveResponseSchema>;
 export type { HAConfig, WaterHeaterConfig };
 export type { CodexConfig };
 

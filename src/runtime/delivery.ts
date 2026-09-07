@@ -1,6 +1,7 @@
 import type { VestaboardMessage } from "../vestaboard.js";
+import type { DeliveryOutcome } from "../contracts/config.js";
 
-export type DeliveryOutcome = "sent" | "unchanged" | "failed" | "paused" | "limited" | "empty" | "stopped";
+export type { DeliveryOutcome } from "../contracts/config.js";
 
 export interface DeliveryStatus {
   running: boolean;

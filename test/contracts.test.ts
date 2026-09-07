@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { AppConfigSchema, DEFAULT_APP_CONFIG, PublicConfigSchema } from "../src/config.js";
 import { LayoutEntrySchema } from "../src/contracts/config.js";
+import { ConfigSaveResponseSchema, DeliveryOutcomeSchema } from "../src/contracts/config.js";
 import { HAConfigSchema } from "../src/contracts/homeAssistant.js";
 import { BoardElementSchema, PreviewResponseSchema } from "../src/contracts/api.js";
 import { WaterHeaterConfigSchema } from "../src/plugins/waterHeater/config.js";
@@ -65,6 +66,25 @@ test("public configuration schema requires secrets to be omitted", () => {
   assert.equal("localApiKey" in parsed.config.transport, false);
   assert.equal("token" in parsed.config.ha, false);
   assert.equal(PublicConfigSchema.safeParse({ ...response, config }).success, true);
+});
+
+test("config save responses add a delivery outcome without changing public config", () => {
+  const response = {
+    config: structuredClone(DEFAULT_APP_CONFIG),
+    legacyEnvironmentVariables: [],
+    hasSecrets: { token: false, localApiKey: false, haToken: false },
+    delivery: "failed"
+  };
+  const publicResponse = { ...response };
+  delete (publicResponse as { delivery?: string }).delivery;
+  assert.equal(PublicConfigSchema.safeParse(publicResponse).success, true);
+  assert.equal(PublicConfigSchema.safeParse(response).success, false);
+  assert.equal(ConfigSaveResponseSchema.safeParse(response).success, true);
+  assert.equal(ConfigSaveResponseSchema.safeParse({ ...response, delivery: "invalid" }).success, false);
+  assert.equal(ConfigSaveResponseSchema.safeParse({ ...response, delivery: undefined }).success, false);
+  for (const outcome of ["sent", "unchanged", "failed", "paused", "limited", "empty", "stopped"] as const) {
+    assert.equal(DeliveryOutcomeSchema.safeParse(outcome).success, true);
+  }
 });
 
 test("preview responses require a complete character matrix", () => {
