@@ -94,6 +94,62 @@ test("server and one-shot share frames, and status/preview cannot collect or del
   } finally { await server.stop(); await rm(directory, { recursive: true, force: true }); }
 });
 
+test("successful settings saves make one immediate delivery without leaving a bypass pending", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-manual-save-"));
+  let nowMs = 0;
+  let failSends = false;
+  const sent: VestaboardMessage[] = [];
+  const store = await ConfigStore.open(directory, {
+    CODEX_QUOTA_SOURCE: "fixture",
+    VESTABOARD_BOARD: "note",
+    ORCHESTRATOR_INTERVAL_MINUTES: "5"
+  });
+  const app = await createApplication(store, directory, true, {
+    now: () => new Date(nowMs),
+    createVestaboardClient: () => ({
+      send: async (frame: VestaboardMessage) => {
+        sent.push(frame);
+        if (failSends) throw new Error("board unavailable");
+      }
+    })
+  });
+  try {
+    await app.runOnce();
+    const initialWrites = sent.length;
+    const initial = store.get();
+    nowMs = 1_000;
+
+    await app.actions.save({ ...initial, layout: [] });
+    assert.equal(sent.length, initialWrites + 1, "changed saved settings should send immediately");
+
+    const afterChangedSave = store.get();
+    await app.actions.save({ ...afterChangedSave });
+    assert.equal(sent.length, initialWrites + 1, "an unchanged saved frame should not write");
+
+    const beforeFailedSave = sent.length;
+    await assert.rejects(app.actions.save({ ...afterChangedSave, layout: [{ elementId: "codex.status", startRow: 5 }] }), /out of bounds/);
+    assert.equal(sent.length, beforeFailedSave, "an invalid save should not trigger a delivery");
+
+    await app.actions.pause({ paused: true });
+    await app.actions.save({ ...afterChangedSave, layout: [{ elementId: "codex.status", startRow: 0 }] });
+    assert.equal(sent.length, beforeFailedSave, "a paused save should not write");
+    await app.actions.pause({ paused: false });
+    assert.equal(sent.length, beforeFailedSave, "resuming should not release a saved bypass later");
+
+    failSends = true;
+    const beforeBoardFailure = sent.length;
+    const failedBoardSave = { ...afterChangedSave, layout: [{ elementId: "codex.status", startRow: 1 }] };
+    await app.actions.save(failedBoardSave);
+    assert.equal(sent.length, beforeBoardFailure + 1, "a board failure still consumes one manual attempt");
+    assert.deepEqual((app.actions.config() as PublicConfig).config.layout, failedBoardSave.layout);
+    assert.equal(app.actions.status().configError, undefined, "a board failure must not report a settings save failure");
+    assert.match(app.actions.status().deliveryError ?? "", /Board update failed/);
+  } finally {
+    await app.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("invalid environment configuration is visible and blocks delivery", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-env-error-"));
   const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", ORCHESTRATOR_INTERVAL_MINUTES: "bad" });

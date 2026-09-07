@@ -164,6 +164,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
         // combine a new target with a frame from partially configured plugins.
         ready = false;
         delivery.pause("Applying configuration");
+        let applied = false;
         try {
           config = await store.save(input as AppConfig);
           saveError = undefined;
@@ -174,12 +175,14 @@ export async function createApplication(store: ConfigStore, directory: string, d
           await ha.configure(config.ha);
           if (targetChanged) { await delivery.resetTarget(); board = candidateBoard; }
           delivery.setInterval(config.updateIntervalMinutes * 60_000);
+          applied = true;
           applicationLog.info(`Configuration applied for sections: ${configSections(input).join(", ")}.`);
         } catch (error) {
           saveError = "Could not apply saved settings. Check the configuration directory and try again.";
           applicationLog.error(configurationFailure(error));
           throw error;
         } finally { ready = !stopped; requestComposition(); }
+        if (applied) await delivery.attemptManual();
       });
       saveQueue = task.catch(() => {});
       await task;
