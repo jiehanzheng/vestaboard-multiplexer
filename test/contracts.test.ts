@@ -77,5 +77,6 @@ test("partial layout fields and element minimum widths are validated", () => {
   assert.equal(LayoutEntrySchema.safeParse({ elementId: "water.remaining", startRow: 0, startColumn: 2, width: 6 }).success, true);
   assert.equal(LayoutEntrySchema.safeParse({ elementId: "water.remaining", startRow: 0, width: 0 }).success, false);
   assert.equal(BoardElementSchema.safeParse({ id: "water.remaining", label: "Water", height: 1, minWidth: 6, preview: [[0, 0, 0, 0, 0, 0]] }).success, true);
-  assert.equal(BoardElementSchema.safeParse({ id: "water.remaining", label: "Water", height: 1, preview: [[0]] }).success, false);
+  assert.equal(BoardElementSchema.safeParse({ id: "water.remaining", label: "Water", height: 1, preview: [[0]] }).success, true);
+  assert.equal(BoardElementSchema.safeParse({ id: "water.remaining", label: "Water", height: 1, minWidth: 0, preview: [[0]] }).success, false);
 });

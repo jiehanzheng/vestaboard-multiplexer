@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { ConfigStore, DEFAULT_APP_CONFIG } from "../src/config.js";
+import { ConfigStore, DEFAULT_APP_CONFIG, type AppConfig } from "../src/config.js";
+import { ConfigPatchSchema } from "../src/contracts/config.js";
 
 test("malformed configuration diagnostics do not expose raw credential text", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-config-secret-"));
@@ -170,6 +171,23 @@ test("validates Home Assistant URL, pause mapping, and numeric water sources", a
   await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: null as never }), /ha is required|expected object/i);
   await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, water: { ...DEFAULT_APP_CONFIG.water, capacity: { constant: 0 } } }), /water\.capacity.*positive/i);
   await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, water: { ...DEFAULT_APP_CONFIG.water, temperature: { entityId: "" } } }), /water\.temperature.*entity/i);
+});
+
+test("partial water patches retain an existing EMV binding", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-emv-"));
+  try {
+    const store = await ConfigStore.open(dataDir, {});
+    await store.save({
+      ...DEFAULT_APP_CONFIG,
+      water: { ...DEFAULT_APP_CONFIG.water, enabled: true, emvPosition: { entityId: "sensor.emv" } }
+    });
+    const patch = ConfigPatchSchema.parse({ water: { enabled: true } });
+    assert.equal("emvPosition" in (patch.water ?? {}), false);
+    const candidate = store.preview(patch as unknown as AppConfig);
+    assert.deepEqual(candidate.water.emvPosition, { entityId: "sensor.emv" });
+    await store.save(candidate);
+    assert.deepEqual(store.get().water.emvPosition, { entityId: "sensor.emv" });
+  } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
 test("preserves and redacts an omitted Home Assistant token", async () => {
