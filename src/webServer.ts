@@ -4,6 +4,7 @@ import { extname, resolve, sep } from "node:path";
 import { ConfigPatchSchema, PublicConfigSchema, type ConfigPatch, type PublicConfig } from "./contracts/config.js";
 import { ElementsResponseSchema, LoginStatusSchema, PauseRequestSchema, PreviewRequestSchema, PreviewResponseSchema, RuntimeStatusSchema, type ElementsResponse, type LoginStatus, type PauseRequest, type PreviewRequest, type PreviewResponse, type RuntimeStatus } from "./contracts/api.js";
 import { HAConnectionTestRequestSchema, HAConnectionTestResponseSchema, HAEntitiesRequestSchema, HAEntitiesResponseSchema, type HAEntitiesRequest, type HAEntitiesResponse, type HAStatus } from "./contracts/homeAssistant.js";
+import { LogsResponseSchema, type LogsResponse } from "./logger.js";
 
 export interface WebActions {
   status(): RuntimeStatus;
@@ -14,20 +15,46 @@ export interface WebActions {
   pause(value: PauseRequest): Promise<RuntimeStatus>;
   login(action: "start" | "cancel" | "check"): Promise<LoginStatus>;
   homeAssistant?(action: "test" | "entities", value: HAEntitiesRequest): Promise<HAStatus | HAEntitiesResponse>;
+  logs?(): LogsResponse;
+  subscribeLogs?(listener: () => void): () => void;
+}
+
+interface EventClient {
+  response: ServerResponse;
+  pending: Set<"runtime" | "logs">;
+  writing: boolean;
+  closed: boolean;
 }
 
 export async function startWebServer(actions: WebActions, options: {
   port: number; host?: string; assets?: string;
 }): Promise<{ broadcast(): void; close(): Promise<void>; port: number }> {
-  const clients = new Set<ServerResponse>();
+  const clients = new Set<EventClient>();
   const assets = resolve(options.assets ?? "dist/public");
-  const broadcast = (): void => {
-    const event = `data: ${JSON.stringify(RuntimeStatusSchema.parse(actions.status()))}\n\n`;
-    for (const client of clients) {
-      // A slow browser reconnects to the current snapshot instead of building an event backlog.
-      if (!client.write(event)) { client.destroy(); clients.delete(client); }
+  const queue = (client: EventClient, kind: "runtime" | "logs"): void => {
+    if (client.closed) return;
+    client.pending.add(kind);
+    flush(client);
+  };
+  const flush = (client: EventClient): void => {
+    if (client.closed || client.writing) return;
+    const kind = client.pending.values().next().value as "runtime" | "logs" | undefined;
+    if (!kind) return;
+    client.pending.delete(kind);
+    const payload = kind === "runtime"
+      ? `data: ${JSON.stringify(RuntimeStatusSchema.parse(actions.status()))}\n\n`
+      : `event: logs\ndata: ${JSON.stringify(LogsResponseSchema.parse(actions.logs?.() ?? { entries: [] }))}\n\n`;
+    client.writing = true;
+    if (!client.response.write(payload)) {
+      client.response.once("drain", () => { client.writing = false; flush(client); });
+    } else {
+      client.writing = false;
+      flush(client);
     }
   };
+  const broadcast = (): void => { for (const client of clients) queue(client, "runtime"); };
+  const broadcastLogs = (): void => { for (const client of clients) queue(client, "logs"); };
+  const unsubscribeLogs = actions.subscribeLogs?.(broadcastLogs);
   const server = createServer(async (request, response) => {
     const json = (status: number, value: unknown): void => {
       response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -36,17 +63,20 @@ export async function startWebServer(actions: WebActions, options: {
     try {
       const path = new URL(request.url ?? "/", "http://localhost").pathname;
       if (request.method === "GET" && path === "/api/events") {
-        const snapshot = RuntimeStatusSchema.parse(actions.status());
         response.writeHead(200, {
           "Content-Type": "text/event-stream", "Cache-Control": "no-cache",
           "Connection": "keep-alive", "X-Accel-Buffering": "no"
         });
-        clients.add(response);
-        response.write(`data: ${JSON.stringify(snapshot)}\n\n`);
-        request.on("close", () => clients.delete(response));
+        const client: EventClient = { response, pending: new Set(), writing: false, closed: false };
+        clients.add(client);
+        client.pending.add("runtime");
+        client.pending.add("logs");
+        flush(client);
+        request.on("close", () => { client.closed = true; clients.delete(client); });
         return;
       }
       if (request.method === "GET" && path === "/api/status") return json(200, RuntimeStatusSchema.parse(actions.status()));
+      if (request.method === "GET" && path === "/api/logs") return json(200, LogsResponseSchema.parse(actions.logs?.() ?? { entries: [] }));
       if (request.method === "GET" && path === "/api/config") return json(200, PublicConfigSchema.parse(actions.config()));
       if (request.method === "GET" && path === "/api/elements") return json(200, ElementsResponseSchema.parse(actions.elements()));
       if (request.method === "POST" && path.startsWith("/api/")) {
@@ -88,7 +118,16 @@ export async function startWebServer(actions: WebActions, options: {
     }
   });
   const heartbeat = setInterval(() => {
-    for (const client of clients) if (!client.write(": keepalive\n\n")) client.destroy();
+    for (const client of clients) {
+      if (client.closed || client.writing) continue;
+      client.writing = true;
+      if (!client.response.write(": keepalive\n\n")) {
+        client.response.once("drain", () => { client.writing = false; flush(client); });
+      } else {
+        client.writing = false;
+        flush(client);
+      }
+    }
   }, 20_000);
   try {
     await new Promise<void>((resolve, reject) => {
@@ -104,7 +143,8 @@ export async function startWebServer(actions: WebActions, options: {
     port: (server.address() as { port: number }).port,
     close: async () => {
       clearInterval(heartbeat);
-      for (const client of clients) client.end();
+      unsubscribeLogs?.();
+      for (const client of clients) { client.closed = true; client.response.end(); }
       clients.clear();
       server.closeIdleConnections();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
