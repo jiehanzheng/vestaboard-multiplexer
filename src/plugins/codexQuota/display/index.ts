@@ -1,4 +1,4 @@
-import type { VestaboardMessage } from "../../../orchestrator.js";
+import type { VestaboardMessage } from "../../../vestaboard.js";
 import type { VestaboardBoard } from "../../../vestaboardTypes.js";
 import { formatFlagshipError, formatFlagshipQuota } from "./flagship.js";
 import { formatNoteError, formatNoteQuota } from "./note.js";
@@ -19,6 +19,7 @@ export function formatQuota(
     showPacing?: boolean;
     board?: VestaboardBoard;
     resetVisibility?: ResetVisibility;
+    windowLabels?: readonly (string | null | undefined)[];
   } = {}
 ): VestaboardMessage {
   const rendererOptions = {
@@ -27,7 +28,8 @@ export function formatQuota(
     statusMessage: options.statusMessage,
     staleWindowIds: options.staleWindowIds ?? [],
     showPacing: options.showPacing ?? true,
-    resetVisibility: options.resetVisibility ?? defaultResetVisibility(snapshot)
+    resetVisibility: options.resetVisibility ?? defaultResetVisibility(snapshot),
+    windowLabels: options.windowLabels
   };
 
   return (options.board ?? "note") === "flagship"

@@ -1,4 +1,4 @@
-import type { VestaboardMessage } from "../../../orchestrator.js";
+import type { VestaboardMessage } from "../../../vestaboard.js";
 import type { ResetVisibility } from "../quotaWindowHistory.js";
 import { hasQuotaWindowTiming, isLongQuotaWindow, quotaWindowLabel } from "../quotaWindow.js";
 import type { QuotaSnapshot, QuotaWindow } from "../types.js";
@@ -29,7 +29,8 @@ export function formatFlagshipQuota(
     statusMessage,
     staleWindowIds,
     showPacing,
-    resetVisibility
+    resetVisibility,
+    windowLabels
   }: {
     timeZone?: string;
     now: Date;
@@ -37,6 +38,7 @@ export function formatFlagshipQuota(
     staleWindowIds: string[];
     showPacing: boolean;
     resetVisibility: ResetVisibility;
+    windowLabels?: readonly (string | null | undefined)[];
   }
 ): VestaboardMessage {
   const windows = [0, 1].map((index) => flagshipWindow(snapshot.windows[index], index, {
@@ -44,7 +46,8 @@ export function formatFlagshipQuota(
     timeZone,
     stale: snapshot.windows[index] ? staleWindowIds.includes(snapshot.windows[index].id) : false,
     showPacing,
-    showReset: snapshot.windows[index] ? resetVisibility[snapshot.windows[index].id] === true : false
+    showReset: snapshot.windows[index] ? resetVisibility[snapshot.windows[index].id] === true : false,
+    customLabel: windowLabels?.[index]
   }));
   const rows = [
     flagshipHeaderRow(),
@@ -119,6 +122,7 @@ function flagshipWindow(
     stale: boolean;
     showPacing: boolean;
     showReset: boolean;
+    customLabel?: string | null;
   }
 ): { text: string; barText: string; barCharacters: number[] } {
   if (!window) {
@@ -132,7 +136,7 @@ function flagshipWindow(
   const barCharacters = quotaBar(window, options.now, FLAGSHIP_BAR_WIDTH, options.stale, options.showPacing);
   return {
     text: flagshipQuotaTextRow(
-      quotaWindowLabel(window, index),
+      options.customLabel ?? quotaWindowLabel(window, index),
       flagshipPercentLabel(window.remainingRatio),
       resetLabel(window, options.showReset, options.timeZone)
     ),

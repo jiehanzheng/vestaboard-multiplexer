@@ -1,0 +1,72 @@
+import { z } from "zod";
+import { HttpUrlSchema } from "./url.js";
+import { CodexConfigPatchSchema, CodexConfigSchema, type CodexConfig } from "../plugins/codexQuota/config.js";
+import { PauseOverlayCanvasSchema, PauseOverlaySchema, type PauseOverlay, type PauseOverlayCanvas, type PauseOverlayCell } from "./pauseOverlay.js";
+export { PauseOverlayCanvasSchema, PauseOverlaySchema } from "./pauseOverlay.js";
+
+export const LayoutEntrySchema = z.object({
+  elementId: z.string().min(1),
+  startRow: z.number().int().nonnegative(),
+  startColumn: z.number().int().nonnegative().optional(),
+  width: z.number().int().positive().optional()
+}).strict();
+export type LayoutEntry = z.infer<typeof LayoutEntrySchema>;
+
+export const LocalMessageTransitionSchema = z.object({
+  strategy: z.enum(["column", "reverse-column", "edges-to-center", "row", "diagonal", "random"]),
+  stepIntervalMs: z.number().finite().positive(),
+  stepSize: z.number().finite().positive()
+}).strict();
+export type LocalMessageTransitionStrategy = z.infer<typeof LocalMessageTransitionSchema>["strategy"];
+export type LocalMessageTransitionOptions = z.infer<typeof LocalMessageTransitionSchema>;
+
+export type { PauseOverlay, PauseOverlayCanvas, PauseOverlayCell };
+
+export const TransportSchema = z.object({
+  token: z.string().optional(),
+  localApiKey: z.string().optional(),
+  cloudUrl: HttpUrlSchema,
+  localUrl: HttpUrlSchema,
+  localMessageTransition: LocalMessageTransitionSchema
+}).strict();
+
+const appConfigShape = {
+  board: z.enum(["auto", "note", "flagship"]),
+  transport: TransportSchema,
+  updateIntervalMinutes: z.number().finite().positive(),
+  codex: CodexConfigSchema,
+  layout: z.array(LayoutEntrySchema).nullable(),
+  pauseOverlay: PauseOverlaySchema
+};
+
+export const AppConfigSchema = z.object(appConfigShape).strict();
+export type AppConfig = z.infer<typeof AppConfigSchema>;
+
+const publicTransportSchema = TransportSchema.omit({ token: true, localApiKey: true }).strip();
+export const PublicAppConfigSchema = z.object({ ...appConfigShape, transport: publicTransportSchema }).strict();
+export type PublicAppConfig = z.infer<typeof PublicAppConfigSchema>;
+
+export const ConfigPatchSchema = z.object({
+  board: z.enum(["auto", "note", "flagship"]).optional(),
+  transport: TransportSchema.partial().extend({ localMessageTransition: LocalMessageTransitionSchema.partial().optional() }).nullable().optional(),
+  updateIntervalMinutes: z.number().finite().positive().optional(),
+  codex: CodexConfigPatchSchema.optional(),
+  layout: z.array(LayoutEntrySchema).nullable().optional(),
+  pauseOverlay: z.object({ note: PauseOverlayCanvasSchema.optional(), flagship: PauseOverlayCanvasSchema.optional() }).strict().optional()
+}).strict();
+export type ConfigPatch = z.infer<typeof ConfigPatchSchema>;
+
+export const PublicConfigSchema = z.object({
+  config: PublicAppConfigSchema,
+  legacyEnvironmentVariables: z.array(z.string()),
+  hasSecrets: z.object({ token: z.boolean(), localApiKey: z.boolean() }).strict(),
+  error: z.string().optional()
+}).strict();
+export type PublicConfig = z.infer<typeof PublicConfigSchema>;
+
+export const DeliveryOutcomeSchema = z.enum(["sent", "unchanged", "failed", "paused", "limited", "empty", "stopped"]);
+export type DeliveryOutcome = z.infer<typeof DeliveryOutcomeSchema>;
+export const ConfigSaveResponseSchema = PublicConfigSchema.extend({ delivery: DeliveryOutcomeSchema });
+export type ConfigSaveResponse = z.infer<typeof ConfigSaveResponseSchema>;
+export type { CodexConfig };
+export { CodexConfigPatchSchema, CodexConfigSchema };

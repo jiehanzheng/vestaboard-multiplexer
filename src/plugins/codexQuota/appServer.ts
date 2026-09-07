@@ -130,7 +130,11 @@ export function turnCompletionFailure(turn: { status?: string; error?: unknown }
   return new Error(`Codex auto-start turn ended with status ${turn.status ?? "unknown"}: ${JSON.stringify(turn.error)}`);
 }
 
-export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T>): Promise<T> {
+export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T>, options: {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  onNotification?: (method: string, params: unknown) => void;
+} = {}): Promise<T> {
   const proc = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "inherit"] });
   if (!proc.stdin || !proc.stdout) {
     throw new Error("Could not open Codex app-server pipes.");
@@ -142,6 +146,9 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
   const notificationListeners = new Set<(message: { method: string; params?: unknown }) => void>();
   const notificationRejecters = new Set<(error: Error) => void>();
   let cleanedUp = false;
+  let rejectFailure!: (error: Error) => void;
+  const failure = new Promise<never>((_, reject) => { rejectFailure = reject; });
+  void failure.catch(() => {});
 
   const cleanup = (): void => {
     if (cleanedUp) {
@@ -150,6 +157,7 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
 
     cleanedUp = true;
     clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", onAbort);
     lines.removeAllListeners();
     lines.close();
     proc.removeAllListeners("error");
@@ -165,6 +173,7 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
   };
 
   const fail = (error: Error): void => {
+    rejectFailure(error);
     for (const entry of pending.values()) {
       entry.reject(error);
     }
@@ -176,9 +185,12 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
     cleanup();
   };
 
+  const onAbort = (): void => fail(new Error("Codex operation cancelled."));
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+  const timeoutMs = options.timeoutMs ?? APP_SERVER_TIMEOUT_MS;
   const timeout = setTimeout(() => {
-    fail(new Error(`Codex app-server timed out after ${APP_SERVER_TIMEOUT_MS}ms.`));
-  }, APP_SERVER_TIMEOUT_MS);
+    fail(new Error(`Codex app-server timed out after ${timeoutMs}ms.`));
+  }, timeoutMs);
 
   const send = (message: object): void => {
     proc.stdin.write(`${JSON.stringify(message)}\n`);
@@ -245,6 +257,7 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
     }
 
     if (message.method !== undefined) {
+      options.onNotification?.(message.method, (message as { params?: unknown }).params);
       notificationListeners.forEach((listener) => listener({ method: message.method as string, params: (message as { params?: unknown }).params }));
       return;
     }
@@ -268,12 +281,13 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
 
   proc.on("error", (error) => fail(new Error(`Could not start Codex: ${error.message}`)));
   proc.on("exit", (code, signal) => {
-    if (pending.size > 0) {
+    if (!cleanedUp) {
       fail(new Error(`Codex app-server exited before responding: code=${code}, signal=${signal}`));
     }
   });
 
   try {
+    if (options.signal?.aborted) throw new Error("Codex operation cancelled.");
     await request("initialize", {
       clientInfo: {
         name: "vestaboard_orchestrator",
@@ -282,7 +296,7 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
       }
     }, parseInitializeResult);
     send({ method: "initialized", params: {} });
-    return await operation(client);
+    return await Promise.race([operation(client), failure]);
   } finally {
     cleanup();
   }

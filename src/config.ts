@@ -1,0 +1,142 @@
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { AppConfigSchema, type AppConfig, type ConfigPatch, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, PublicConfigSchema } from "./contracts/config.js";
+import { applyCodexEnvironment, DEFAULT_CODEX_CONFIG } from "./plugins/codexQuota/config.js";
+import { DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS } from "./vestaboard.js";
+import { defaultPauseOverlay } from "./pauseOverlay.js";
+
+export type { AppConfig, LayoutEntry, LocalMessageTransitionOptions, LocalMessageTransitionStrategy, PublicConfig } from "./contracts/config.js";
+export { AppConfigSchema, PublicConfigSchema } from "./contracts/config.js";
+export interface ConfigEnvironment { [name: string]: string | undefined; }
+
+const LEGACY_PERSISTENT_ENVIRONMENT_VARIABLES = [
+  "VESTABOARD_BOARD", "VESTABOARD_TOKEN", "VESTABOARD_LOCAL_API_KEY", "VESTABOARD_CLOUD_URL", "VESTABOARD_LOCAL_URL",
+  "VESTABOARD_LOCAL_MESSAGE_STRATEGY", "VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS", "VESTABOARD_LOCAL_MESSAGE_STEP_SIZE",
+  "ORCHESTRATOR_INTERVAL_MINUTES", "CODEX_QUOTA_ENABLED", "CODEX_QUOTA_SOURCE", "CODEX_QUOTA_POLL_INTERVAL_SECONDS",
+  "CODEX_QUOTA_TIME_ZONE", "CODEX_QUOTA_SHOW_PACING", "CODEX_AUTO_START_WINDOW_5H", "CODEX_AUTO_START_WINDOW_WK"
+] as const;
+const OBSOLETE_ENVIRONMENT_VARIABLES = ["CODEX_QUOTA_PRIORITY", "CODEX_QUOTA_ERROR_PRIORITY", "CODEX_QUOTA_DEMO_PAUSE_MINUTES"] as const;
+
+export const DEFAULT_APP_CONFIG: AppConfig = {
+  board: "auto",
+  transport: {
+    cloudUrl: "https://cloud.vestaboard.com/",
+    localUrl: "http://vestaboard.local:7000/local-api/message",
+    localMessageTransition: { ...DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS }
+  },
+  updateIntervalMinutes: 5,
+  codex: { ...DEFAULT_CODEX_CONFIG },
+  layout: null,
+  pauseOverlay: defaultPauseOverlay()
+};
+
+export class ConfigStore {
+  private constructor(private readonly filePath: string, private readonly legacyEnvironmentVariables: string[], private saved: AppConfig | undefined, private savedError: string | undefined) {}
+
+  static async open(dataDir: string | undefined = undefined, env: ConfigEnvironment = process.env): Promise<ConfigStore> {
+    const filePath = join(dataDir ?? env.VBMUX_DATA_DIR ?? "./data", "config.json");
+    const legacyEnvironmentVariables = legacyEnvironmentNames(env);
+    let saved: AppConfig | undefined;
+    let savedError: string | undefined;
+    let missing = false;
+    try {
+      const raw = await readFile(filePath, "utf8");
+      try { saved = validateConfig(mergeConfig(DEFAULT_APP_CONFIG, parseSavedConfig(raw))); }
+      catch (error) { savedError = errorMessage(error); }
+    } catch (error) {
+      if (isMissingFile(error)) missing = true;
+      else savedError = `Unable to read config: ${errorMessage(error)}`;
+    }
+    warnObsoleteEnvironmentVariables(env);
+    if (missing) {
+      try { saved = validateConfig(legacyConfig(env)); await persistConfig(filePath, saved); }
+      catch (error) { savedError = `Unable to initialize config: ${errorMessage(error)}`; }
+    }
+    return new ConfigStore(filePath, legacyEnvironmentVariables, saved, savedError);
+  }
+
+  get(): AppConfig { return cloneConfig(this.saved ?? DEFAULT_APP_CONFIG); }
+
+  getPublic(): PublicConfig {
+    const config = this.get();
+    const hasSecrets = { token: Boolean(config.transport.token), localApiKey: Boolean(config.transport.localApiKey) };
+    delete config.transport.token;
+    delete config.transport.localApiKey;
+    return { config, legacyEnvironmentVariables: [...this.legacyEnvironmentVariables], hasSecrets, ...(this.savedError ? { error: this.savedError } : {}) };
+  }
+
+  preview(input: ConfigPatch): AppConfig { return validateConfig(mergeConfig(this.saved ?? DEFAULT_APP_CONFIG, input)); }
+
+  async save(input: ConfigPatch): Promise<AppConfig> {
+    const validated = validateConfig(mergeConfig(this.saved ?? DEFAULT_APP_CONFIG, input));
+    await persistConfig(this.filePath, validated);
+    this.saved = validated;
+    this.savedError = undefined;
+    return this.get();
+  }
+}
+
+function parseSavedConfig(raw: string): ConfigPatch {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw new Error("Saved configuration is not valid JSON."); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Config must be a JSON object.");
+  const record = value as Record<string, unknown>;
+  if (record.version !== 1) throw new Error("Config version must be 1.");
+  const { version: _version, ...config } = record;
+  if (config.codex && typeof config.codex === "object" && !Array.isArray(config.codex)) {
+    const { demoPauseMinutes: _demoPauseMinutes, ...codex } = config.codex as Record<string, unknown>;
+    return { ...config, codex } as ConfigPatch;
+  }
+  return config as ConfigPatch;
+}
+
+function legacyConfig(env: ConfigEnvironment): AppConfig {
+  const config = cloneConfig(DEFAULT_APP_CONFIG);
+  if (env.VESTABOARD_BOARD) config.board = boardFromEnv(env.VESTABOARD_BOARD);
+  if (env.VESTABOARD_TOKEN) config.transport.token = env.VESTABOARD_TOKEN;
+  if (env.VESTABOARD_LOCAL_API_KEY) config.transport.localApiKey = env.VESTABOARD_LOCAL_API_KEY;
+  if (env.VESTABOARD_CLOUD_URL) config.transport.cloudUrl = env.VESTABOARD_CLOUD_URL;
+  if (env.VESTABOARD_LOCAL_URL) config.transport.localUrl = env.VESTABOARD_LOCAL_URL;
+  if (env.VESTABOARD_LOCAL_MESSAGE_STRATEGY) config.transport.localMessageTransition.strategy = strategyFromEnv(env.VESTABOARD_LOCAL_MESSAGE_STRATEGY);
+  if (env.VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS) config.transport.localMessageTransition.stepIntervalMs = positiveNumber(env.VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS, "VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS");
+  if (env.VESTABOARD_LOCAL_MESSAGE_STEP_SIZE) config.transport.localMessageTransition.stepSize = positiveNumber(env.VESTABOARD_LOCAL_MESSAGE_STEP_SIZE, "VESTABOARD_LOCAL_MESSAGE_STEP_SIZE");
+  if (env.ORCHESTRATOR_INTERVAL_MINUTES) config.updateIntervalMinutes = positiveNumber(env.ORCHESTRATOR_INTERVAL_MINUTES, "ORCHESTRATOR_INTERVAL_MINUTES");
+  config.codex = applyCodexEnvironment(config.codex, env);
+  return config;
+}
+
+function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
+  const transport = patch.transport ?? {};
+  return {
+    ...cloneConfig(base), ...patch,
+    transport: { ...base.transport, ...transport, localMessageTransition: { ...base.transport.localMessageTransition, ...(transport.localMessageTransition ?? {}) } },
+    codex: { ...base.codex, ...(patch.codex ?? {}) },
+    layout: patch.layout === undefined ? cloneConfig(base).layout : patch.layout,
+    pauseOverlay: {
+      note: patch.pauseOverlay?.note === undefined ? cloneConfig(base).pauseOverlay.note : structuredClone(patch.pauseOverlay.note),
+      flagship: patch.pauseOverlay?.flagship === undefined ? cloneConfig(base).pauseOverlay.flagship : structuredClone(patch.pauseOverlay.flagship)
+    }
+  } as AppConfig;
+}
+
+async function persistConfig(filePath: string, config: AppConfig): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(temporaryPath, `${JSON.stringify({ version: 1, ...config }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await rename(temporaryPath, filePath);
+}
+
+export function validateConfig(config: unknown): AppConfig {
+  const result = AppConfigSchema.safeParse(config);
+  if (!result.success) throw new Error(result.error.issues.map((issue) => `${issue.path.join(".") || "config"} ${issue.message}`).join("; "));
+  return cloneConfig(result.data);
+}
+
+function legacyEnvironmentNames(env: ConfigEnvironment): string[] { return [...LEGACY_PERSISTENT_ENVIRONMENT_VARIABLES, ...OBSOLETE_ENVIRONMENT_VARIABLES].filter((name) => env[name] !== undefined && env[name] !== ""); }
+function warnObsoleteEnvironmentVariables(env: ConfigEnvironment): void { const names = OBSOLETE_ENVIRONMENT_VARIABLES.filter((name) => env[name] !== undefined && env[name] !== ""); if (names.length > 0) console.warn(`Ignoring obsolete environment variables: ${names.join(", ")}.`); }
+function cloneConfig(config: AppConfig): AppConfig { return structuredClone(config); }
+function positiveNumber(raw: string, name: string): number { const value = Number(raw); if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive number.`); return value; }
+function boardFromEnv(value: string): AppConfig["board"] { if (value === "auto" || value === "note" || value === "flagship") return value; throw new Error("VESTABOARD_BOARD must be auto, note, or flagship."); }
+function strategyFromEnv(value: string): LocalMessageTransitionStrategy { if (["column", "reverse-column", "edges-to-center", "row", "diagonal", "random"].includes(value)) return value as LocalMessageTransitionStrategy; throw new Error("VESTABOARD_LOCAL_MESSAGE_STRATEGY is invalid."); }
+function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function isMissingFile(error: unknown): boolean { return !!error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT"; }

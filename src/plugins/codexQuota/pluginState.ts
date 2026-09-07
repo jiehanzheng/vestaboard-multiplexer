@@ -1,5 +1,4 @@
-import type { Priority, VestaboardMessage } from "../../orchestrator.js";
-import { priorityValue } from "../../priority.js";
+import type { VestaboardMessage } from "../../vestaboard.js";
 import {
   classifyCodexFailure,
   codexAppServerErrorDetails,
@@ -9,9 +8,6 @@ import type { Logger, QuotaSnapshot, QuotaWindow } from "./types.js";
 
 export const REFRESH_STATUS_MESSAGE_TTL_MS = 5 * 60_000;
 export const TRANSIENT_STATUS_MESSAGE_TTL_MS = 1_000;
-
-const STATUS_MESSAGE_PRIORITY = "high";
-const STATUS_MESSAGE_PRIORITY_VALUE = priorityValue(STATUS_MESSAGE_PRIORITY);
 
 interface QuotaCacheState {
   hasSnapshot: boolean;
@@ -38,8 +34,12 @@ export class StatusMessageStack {
   }
 
   top(now: Date): string | undefined {
-    this.prune(now);
-    return this.messages.at(-1)?.message;
+    const nowMs = now.getTime();
+    for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+      const message = this.messages[index];
+      if (message && message.expiresAt.getTime() > nowMs) return message.message;
+    }
+    return undefined;
   }
 
   private prune(now: Date): void {
@@ -82,7 +82,6 @@ export function autoStartErrorStatus(): string {
 export function logQuotaReadFailure(
   logger: Logger | undefined,
   error: unknown,
-  errorPriority: Priority,
   message: VestaboardMessage,
   cacheState: QuotaCacheState
 ): void {
@@ -97,7 +96,6 @@ export function logQuotaReadFailure(
       authStorage: inspectCodexAuthStorage(),
       recoveryCommand: "docker compose run --rm --build vestaboard-orchestrator codex login --device-auth"
     } : {}),
-    fallbackPriority: String(errorPriority),
     cacheState,
     vestaboardPreview: messagePreview(message)
   });
@@ -110,10 +108,6 @@ export function logAutoStartFailure(logger: Logger | undefined, error: unknown):
     errorMessage: error instanceof Error ? error.message : String(error),
     boardStatus: autoStartErrorStatus()
   });
-}
-
-export function bumpStatusPriority(priority: Priority): Priority {
-  return priorityValue(priority) >= STATUS_MESSAGE_PRIORITY_VALUE ? priority : STATUS_MESSAGE_PRIORITY;
 }
 
 function cloneQuotaSnapshot(snapshot: QuotaSnapshot): QuotaSnapshot {

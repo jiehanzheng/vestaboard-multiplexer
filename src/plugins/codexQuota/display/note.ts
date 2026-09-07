@@ -1,11 +1,10 @@
-import type { VestaboardMessage } from "../../../orchestrator.js";
+import type { VestaboardMessage } from "../../../vestaboard.js";
 import type { ResetVisibility } from "../quotaWindowHistory.js";
 import { hasQuotaWindowTiming, isLongQuotaWindow, quotaWindowLabel } from "../quotaWindow.js";
 import type { QuotaSnapshot, QuotaWindow } from "../types.js";
 import { barTextChar, quotaBar } from "./bars.js";
 import { encode, hhmm, mmdd, percentLabel, sanitizeDisplayText } from "./shared.js";
 
-const BAR_WIDTH = 10;
 const NOTE_COLUMNS = 15;
 
 export function formatNoteQuota(
@@ -16,7 +15,8 @@ export function formatNoteQuota(
     statusMessage,
     staleWindowIds,
     showPacing,
-    resetVisibility
+    resetVisibility,
+    windowLabels
   }: {
     timeZone?: string;
     now: Date;
@@ -24,6 +24,7 @@ export function formatNoteQuota(
     staleWindowIds: string[];
     showPacing: boolean;
     resetVisibility: ResetVisibility;
+    windowLabels?: readonly (string | null | undefined)[];
   }
 ): VestaboardMessage {
   const quotaRows = [0, 1].map((index) => noteQuotaLine(
@@ -31,7 +32,8 @@ export function formatNoteQuota(
     index,
     now,
     snapshot.windows[index] ? staleWindowIds.includes(snapshot.windows[index].id) : false,
-    showPacing
+    showPacing,
+    windowLabels?.[index]
   ));
   const footer = statusMessage
     ? statusLine(statusMessage)
@@ -57,16 +59,20 @@ function noteQuotaLine(
   index: number,
   now: Date,
   stale: boolean,
-  showPacing: boolean
+  showPacing: boolean,
+  customLabel: string | null | undefined
 ): { text: string; characters: number[] } {
   if (!window) {
     const text = " ".repeat(NOTE_COLUMNS);
     return { text, characters: encodeNoteRow(text) };
   }
 
-  const label = quotaWindowLabel(window, index);
-  const barCharacters = quotaBar(window, now, BAR_WIDTH, stale, showPacing);
+  const label = customLabel ?? quotaWindowLabel(window, index);
   const percent = percentLabel(window.remainingRatio);
+  // A one-character custom label gets the freed cell so every Note row stays
+  // exactly 15 cells wide while retaining the percent suffix.
+  const barWidth = NOTE_COLUMNS - [...label].length - [...percent].length;
+  const barCharacters = quotaBar(window, now, barWidth, stale, showPacing);
 
   return {
     text: `${label}${barCharacters.map(barTextChar).join("")}${percent}`,

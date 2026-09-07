@@ -1,0 +1,32 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
+import ts from "typescript";
+
+async function sourceFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  return (await Promise.all(entries.map((entry) => {
+    const path = resolve(directory, entry.name);
+    return entry.isDirectory() ? sourceFiles(path) : Promise.resolve(/\.tsx?$/.test(path) ? [path] : []);
+  }))).flat();
+}
+
+async function imports(file: string): Promise<string[]> {
+  return ts.preProcessFile(await readFile(file, "utf8")).importedFiles.map((entry) => entry.fileName);
+}
+
+test("plugins do not import another plugin's implementation", async () => {
+  const root = resolve("src/plugins");
+  for (const file of await sourceFiles(root)) {
+    const owner = relative(root, file).split("/")[0].replace(/\.ts$/, "");
+    for (const specifier of await imports(file)) {
+      if (!specifier.startsWith(".")) continue;
+      const target = resolve(dirname(file), specifier);
+      const path = relative(root, target);
+      if (path.startsWith("..")) continue;
+      const dependency = path.split("/")[0].replace(/\.[jt]s$/, "");
+      assert.equal(dependency, owner, `${relative(root, file)} imports another plugin: ${specifier}`);
+    }
+  }
+});
