@@ -119,12 +119,14 @@ test("successful settings saves make one immediate delivery without leaving a by
     const initial = store.get();
     nowMs = 1_000;
 
-    await app.actions.save({ ...initial, layout: [] });
+    const changedResponse = await app.actions.save({ ...initial, layout: [] });
     assert.equal(sent.length, initialWrites + 1, "changed saved settings should send immediately");
+    assert.equal(changedResponse.delivery, "sent");
 
     const afterChangedSave = store.get();
-    await app.actions.save({ ...afterChangedSave });
+    const unchangedResponse = await app.actions.save({ ...afterChangedSave });
     assert.equal(sent.length, initialWrites + 1, "an unchanged saved frame should not write");
+    assert.equal(unchangedResponse.delivery, "unchanged");
 
     const beforeFailedSave = sent.length;
     await assert.rejects(app.actions.save({ ...afterChangedSave, layout: [{ elementId: "codex.status", startRow: 5 }] }), /out of bounds/);
@@ -133,14 +135,17 @@ test("successful settings saves make one immediate delivery without leaving a by
     await app.actions.pause({ paused: true });
     await app.actions.save({ ...afterChangedSave, layout: [{ elementId: "codex.status", startRow: 0 }] });
     assert.equal(sent.length, beforeFailedSave, "a paused save should not write");
+    assert.equal((await app.actions.save({ ...afterChangedSave, layout: [] })).delivery, "paused");
+    assert.equal(sent.length, beforeFailedSave, "a second paused save should not write");
     await app.actions.pause({ paused: false });
     assert.equal(sent.length, beforeFailedSave, "resuming should not release a saved bypass later");
 
     failSends = true;
     const beforeBoardFailure = sent.length;
     const failedBoardSave = { ...afterChangedSave, layout: [{ elementId: "codex.status", startRow: 1 }] };
-    await app.actions.save(failedBoardSave);
+    const failedBoardResponse = await app.actions.save(failedBoardSave);
     assert.equal(sent.length, beforeBoardFailure + 1, "a board failure still consumes one manual attempt");
+    assert.equal(failedBoardResponse.delivery, "failed");
     assert.deepEqual((app.actions.config() as PublicConfig).config.layout, failedBoardSave.layout);
     assert.equal(app.actions.status().configError, undefined, "a board failure must not report a settings save failure");
     assert.match(app.actions.status().deliveryError ?? "", /Board update failed/);

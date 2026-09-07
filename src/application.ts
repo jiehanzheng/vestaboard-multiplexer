@@ -11,6 +11,7 @@ import { formatStartupMessage } from "./startupMessage.js";
 import type { HomeAssistantClient, HomeAssistantClientOptions } from "./homeAssistant.js";
 import type { VestaboardBoard } from "./vestaboardTypes.js";
 import type { PreviewRequest, RuntimeStatus } from "./contracts/api.js";
+import type { ConfigSaveResponse } from "./contracts/config.js";
 import type { WebActions } from "./webServer.js";
 import { LogBuffer } from "./logger.js";
 
@@ -36,7 +37,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
   let startTask: Promise<void> | undefined;
   let onceTask: Promise<DeliveryAttempt | undefined> | undefined;
   let stopTask: Promise<void> | undefined;
-  let saveQueue: Promise<void> = Promise.resolve();
+  let saveQueue: Promise<unknown> = Promise.resolve();
   const now = dependencies.now ?? (() => new Date());
   const logs = dependencies.logger ?? new LogBuffer(console, now);
   const applicationLog = logs.child("application");
@@ -140,7 +141,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
     }),
     preview: (input) => compose(input.layout, input.board === "note" || input.board === "flagship" ? input.board : board, input),
     save: async (input) => {
-      const task = saveQueue.then(async () => {
+      const task = saveQueue.then(async (): Promise<ConfigSaveResponse> => {
         if (stopped) throw new Error("Application is stopping.");
         await startTask;
         if (stopped) throw new Error("Application is stopping.");
@@ -164,29 +165,27 @@ export async function createApplication(store: ConfigStore, directory: string, d
         // combine a new target with a frame from partially configured plugins.
         ready = false;
         delivery.pause("Applying configuration");
-        let applied = false;
         try {
           config = await store.save(input as AppConfig);
           saveError = undefined;
           await pause.configure(config.ha);
-          if (stopped) return;
+          if (stopped) return { ...store.getPublic(), delivery: "stopped" };
           await codex.configure(config.codex);
           water.configure(config.water);
           await ha.configure(config.ha);
           if (targetChanged) { await delivery.resetTarget(); board = candidateBoard; }
           delivery.setInterval(config.updateIntervalMinutes * 60_000);
-          applied = true;
           applicationLog.info(`Configuration applied for sections: ${configSections(input).join(", ")}.`);
         } catch (error) {
           saveError = "Could not apply saved settings. Check the configuration directory and try again.";
           applicationLog.error(configurationFailure(error));
           throw error;
         } finally { ready = !stopped; requestComposition(); }
-        if (applied) await delivery.attemptManual();
+        const attempt = await delivery.attemptManual();
+        return { ...store.getPublic(), delivery: attempt.outcome };
       });
       saveQueue = task.catch(() => {});
-      await task;
-      return store.getPublic();
+      return await task;
     },
     pause: async (input) => { await pause.setManual(input.paused); applicationLog.info(input.paused ? "Manual pause requested." : "Manual resume requested."); requestComposition(); return status(); },
     login: async (action) => { await codex.loginAction(action); return codex.loginStatus(); },
