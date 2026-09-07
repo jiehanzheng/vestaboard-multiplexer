@@ -18,6 +18,7 @@ export const BoardElementSchema = z.object({
   id: z.string().min(1),
   label: z.string(),
   height: z.number().int().positive(),
+  minWidth: z.number().int().positive(),
   preview: z.array(z.array(cell))
 }).strict();
 

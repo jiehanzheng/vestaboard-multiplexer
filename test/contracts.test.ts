@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AppConfigSchema, DEFAULT_APP_CONFIG, PublicConfigSchema } from "../src/config.js";
+import { LayoutEntrySchema } from "../src/contracts/config.js";
 import { HAConfigSchema } from "../src/contracts/homeAssistant.js";
-import { PreviewResponseSchema } from "../src/contracts/api.js";
+import { BoardElementSchema, PreviewResponseSchema } from "../src/contracts/api.js";
 import { WaterHeaterConfigSchema } from "../src/plugins/waterHeater/config.js";
 
 test("board endpoints reject invalid protocols and embedded credentials", () => {
@@ -69,4 +70,12 @@ test("public configuration schema requires secrets to be omitted", () => {
 test("preview responses require a complete character matrix", () => {
   assert.equal(PreviewResponseSchema.safeParse({ text: "A" }).success, false);
   assert.equal(PreviewResponseSchema.safeParse({ text: "A", characters: [[1]] }).success, true);
+});
+
+test("partial layout fields and element minimum widths are validated", () => {
+  assert.equal(LayoutEntrySchema.safeParse({ elementId: "water.remaining", startRow: 0 }).success, true);
+  assert.equal(LayoutEntrySchema.safeParse({ elementId: "water.remaining", startRow: 0, startColumn: 2, width: 6 }).success, true);
+  assert.equal(LayoutEntrySchema.safeParse({ elementId: "water.remaining", startRow: 0, width: 0 }).success, false);
+  assert.equal(BoardElementSchema.safeParse({ id: "water.remaining", label: "Water", height: 1, minWidth: 6, preview: [[0, 0, 0, 0, 0, 0]] }).success, true);
+  assert.equal(BoardElementSchema.safeParse({ id: "water.remaining", label: "Water", height: 1, preview: [[0]] }).success, false);
 });

@@ -155,6 +155,7 @@ test("loads Home Assistant and disabled water defaults", async () => {
     capacity: null,
     temperature: null,
     target: null,
+    emvPosition: null,
     unit: "F",
     enabled: false
   });

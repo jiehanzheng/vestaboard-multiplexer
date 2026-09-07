@@ -6,7 +6,9 @@ import { WaterHeaterConfigBaseSchema, WaterHeaterConfigSchema, type WaterHeaterC
 
 export const LayoutEntrySchema = z.object({
   elementId: z.string().min(1),
-  startRow: z.number().int().nonnegative()
+  startRow: z.number().int().nonnegative(),
+  startColumn: z.number().int().nonnegative().optional(),
+  width: z.number().int().positive().optional()
 }).strict();
 
 export type LayoutEntry = z.infer<typeof LayoutEntrySchema>;
