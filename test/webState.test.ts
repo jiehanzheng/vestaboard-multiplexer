@@ -1,0 +1,131 @@
+/// <reference types="node" />
+import assert from "node:assert/strict";
+import test from "node:test";
+import { DEFAULT_APP_CONFIG } from "../src/config.js";
+import { configPatchForSection, reconcileSectionSave, sectionIsDirty } from "../web/src/draftState.js";
+import { createLogDownloadLifecycle, filterLogEntries } from "../web/src/logUtils.js";
+import { WaterHeaterStatusSchema, waterElementIssue } from "../src/plugins/waterHeater/status.js";
+
+test("section patches isolate saves and preserve an explicit credential clear", () => {
+  const config = structuredClone(DEFAULT_APP_CONFIG);
+  config.ha.token = "";
+  assert.deepEqual(configPatchForSection("ha", config), { ha: { url: config.ha.url, token: "" } });
+  assert.deepEqual(configPatchForSection("codex", config), { codex: config.codex });
+});
+
+test("token-only Home Assistant edits are dirty, including an explicit clear", () => {
+  const saved = structuredClone(DEFAULT_APP_CONFIG);
+  const draft = structuredClone(saved);
+  draft.ha.token = "entered-token";
+  assert.equal(sectionIsDirty("ha", draft, saved), true);
+  draft.ha.token = "";
+  assert.equal(sectionIsDirty("ha", draft, saved), true);
+});
+
+test("section reconciliation preserves later edits and unrelated drafts", () => {
+  const submittedDraft = structuredClone(DEFAULT_APP_CONFIG);
+  submittedDraft.codex.enabled = true;
+  const currentDraft = structuredClone(submittedDraft);
+  currentDraft.codex.autoStartWindowWk = true;
+  currentDraft.water.enabled = true;
+  const acknowledgement = {
+    config: structuredClone(DEFAULT_APP_CONFIG),
+    legacyEnvironmentVariables: [],
+    hasSecrets: { token: false, localApiKey: false, haToken: false }
+  };
+  acknowledgement.config.codex.enabled = true;
+  const result = reconcileSectionSave({ section: "codex", acknowledgement, submittedDraft, currentDraft });
+  assert.equal(result.newerEdits, true);
+  assert.equal(result.draftConfig.codex.autoStartWindowWk, true);
+  assert.equal(result.draftConfig.water.enabled, true);
+  assert.equal(sectionIsDirty("water", result.draftConfig, acknowledgement.config), true);
+});
+
+test("a section acknowledgement accepts server normalization when untouched", () => {
+  const submittedDraft = structuredClone(DEFAULT_APP_CONFIG);
+  submittedDraft.codex.enabled = true;
+  const acknowledgement = {
+    config: structuredClone(DEFAULT_APP_CONFIG),
+    legacyEnvironmentVariables: [],
+    hasSecrets: { token: false, localApiKey: false, haToken: false }
+  };
+  acknowledgement.config.codex.enabled = false;
+  const result = reconcileSectionSave({ section: "codex", acknowledgement, submittedDraft, currentDraft: structuredClone(submittedDraft) });
+  assert.equal(result.newerEdits, false);
+  assert.equal(result.draftConfig.codex.enabled, false);
+});
+
+test("HA save keeps a concurrent pause edit", () => {
+  const submittedDraft = structuredClone(DEFAULT_APP_CONFIG);
+  submittedDraft.ha.url = "http://saved.example";
+  const currentDraft = structuredClone(submittedDraft);
+  currentDraft.ha.pause = { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "off" };
+  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false } };
+  const result = reconcileSectionSave({ section: "ha", acknowledgement, submittedDraft, currentDraft });
+  assert.deepEqual(result.draftConfig.ha.pause, currentDraft.ha.pause);
+});
+
+test("pause save keeps concurrent Home Assistant URL and token edits", () => {
+  const submittedDraft = structuredClone(DEFAULT_APP_CONFIG);
+  submittedDraft.ha.pause = { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "off" };
+  const currentDraft = structuredClone(submittedDraft);
+  currentDraft.ha.url = "http://new.example";
+  currentDraft.ha.token = "new-token";
+  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false } };
+  const result = reconcileSectionSave({ section: "pause", acknowledgement, submittedDraft, currentDraft });
+  assert.equal(result.draftConfig.ha.url, "http://new.example");
+  assert.equal(result.draftConfig.ha.token, "new-token");
+});
+
+test("log filters combine source, severity, and message text", () => {
+  const entries = [
+    { timestamp: "2026-09-06T00:00:00Z", level: "info" as const, source: "water", message: "reading retained" },
+    { timestamp: "2026-09-06T00:00:01Z", level: "error" as const, source: "codex", message: "app server failed" },
+    { timestamp: "2026-09-06T00:00:02Z", level: "error" as const, source: "water", message: "entity unavailable" }
+  ];
+  assert.deepEqual(filterLogEntries(entries, { source: "water", level: "error", text: "entity" }), [entries[2]]);
+  assert.deepEqual(filterLogEntries(entries, { source: "all", level: "all", text: "" }), entries);
+});
+
+test("log download lifecycle retains the current URL until replacement or cleanup", () => {
+  const created: string[] = [];
+  const revoked: string[] = [];
+  const clicked: string[] = [];
+  let nextUrl = 1;
+  const lifecycle = createLogDownloadLifecycle({
+    createObjectUrl: (content) => {
+      created.push(content);
+      return `blob:${nextUrl++}`;
+    },
+    revokeObjectUrl: (url) => revoked.push(url),
+    click: (url) => clicked.push(url)
+  });
+  const entry = { timestamp: "2026-09-06T00:00:00Z", level: "info" as const, source: "application", message: "started" };
+
+  lifecycle.download([entry]);
+  assert.deepEqual(clicked, ["blob:1"]);
+  assert.deepEqual(revoked, []);
+  assert.match(created[0] ?? "", /\[info\] application: started/);
+  lifecycle.download([]);
+  assert.deepEqual(revoked, ["blob:1"]);
+  lifecycle.dispose();
+  assert.deepEqual(revoked, ["blob:1", "blob:2"]);
+  lifecycle.dispose();
+  assert.deepEqual(revoked, ["blob:1", "blob:2"]);
+});
+
+test("water diagnostics distinguish disabled, missing, errors, and retained readings", () => {
+  const status = WaterHeaterStatusSchema.parse({ enabled: true, inputs: {
+    remaining: { configured: true, value: 40, retained: true },
+    capacity: { configured: true, value: 80 },
+    temperature: { configured: true, error: "Entity unavailable", retained: true },
+    target: { configured: true, value: 135 },
+    emvPosition: { configured: true, value: 41 },
+    heating: { configured: true, value: true }
+  } });
+  assert.equal(waterElementIssue("water.remaining", status), undefined);
+  assert.equal(waterElementIssue("water.temperature-text", status), undefined);
+  assert.equal(waterElementIssue("water.temperature-bar", status), undefined);
+  assert.match(waterElementIssue("water.emv-position", { ...status, enabled: false }) ?? "", /disabled/);
+  assert.match(waterElementIssue("water.remaining", { ...status, inputs: { ...status.inputs, remaining: { configured: false } } }) ?? "", /not configured/);
+});

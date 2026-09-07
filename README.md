@@ -52,6 +52,9 @@ The optional `water.emv-position` element reads `emvPosition` and renders a roun
 The web runtime exposes recent bounded diagnostics at `GET /api/logs` and as named `logs` snapshots on the existing event stream. Messages are redacted before console or memory storage; Docker retains longer history.
 
 The water plugin also reports configured inputs, safe numeric readings, source-specific diagnostics, and whether a last-good reading was retained during a Home Assistant outage. An optional Home Assistant heating entity changes the temperature divider to the Vestaboard heart character while it reports `on`, `true`, or `1`; unknown states keep the `/` divider and report a diagnostic.
+The web interface keeps a current run of up to 200 structured log entries in **Settings → Logs**. Filter by source, severity, or text, follow new entries automatically, and download the displayed plain-text entries; Docker deployments keep older history in container logs. Water Heater settings distinguish disabled or unsaved configuration from readings for the saved Home Assistant bindings, including retained values and input-specific errors.
+
+For older Docker history, use `docker compose logs --tail 200 --follow vestaboard-orchestrator`.
 
 ## Plugins
 

@@ -5,6 +5,7 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml tsconfig.json ./
 COPY src ./src
 COPY test ./test
+COPY web ./web
 RUN pnpm install --frozen-lockfile
 RUN pnpm build
 # Keep runtime dependencies because the compiled Codex/config modules import zod.
