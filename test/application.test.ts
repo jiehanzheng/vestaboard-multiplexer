@@ -74,6 +74,7 @@ test("server and one-shot share frames, and status/preview cannot collect or del
     await server.start();
     await firstRead;
     assert.equal(server.actions.status().dryRun, true);
+    assert.ok(server.actions.logs?.().entries.some((entry) => entry.source === "application" && entry.message.includes("Application started")));
     const desired = server.actions.status().desired;
     const before = { reads, writes: sent.length };
     const layout = server.actions.elements().defaultLayout!;
@@ -166,7 +167,9 @@ test("application exposes constants-only water elements without a Home Assistant
     assert.equal(elementMetadata.find((element) => element.id === "water.temperature-text")?.minWidth, 8);
     assert.equal(elementMetadata.find((element) => element.id === "water.emv-position")?.minWidth, 6);
     assert.equal(elementMetadata.find((element) => element.id === "water.temperature-bar")?.minWidth, undefined);
-    assert.deepEqual((app.actions.status() as { water?: { error?: string } }).water, {});
+    const waterStatus = (app.actions.status() as { water: { enabled: boolean; inputs: Record<string, { value?: number }> } }).water;
+    assert.equal(waterStatus.enabled, true);
+    assert.equal(waterStatus.inputs.temperature?.value, 120);
 
     const draftWater = {
       ...before.water,

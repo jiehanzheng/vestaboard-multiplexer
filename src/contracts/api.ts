@@ -3,6 +3,7 @@ import { LayoutEntrySchema, PublicConfigSchema } from "./config.js";
 import { CodexConfigSchema } from "../plugins/codexQuota/config.js";
 import { HAStatusSchema, HAEntitySchema } from "./homeAssistant.js";
 import { WaterHeaterConfigSchema } from "../plugins/waterHeater/config.js";
+import { WaterHeaterStatusSchema } from "../plugins/waterHeater/status.js";
 import { isValidCharacterCode } from "../vestaboardCharacters.js";
 export { LogEntrySchema, LogsResponseSchema } from "./logs.js";
 export type { LogEntry, LogsResponse } from "./logs.js";
@@ -78,7 +79,7 @@ export const RuntimeStatusSchema = z.object({
   configError: z.string().optional(),
   codex: z.object({ error: z.string().optional(), collectedAt: z.string().optional() }).strict(),
   homeAssistant: HAStatusSchema.optional(),
-  water: z.object({ error: z.string().optional() }).strict().optional(),
+  water: WaterHeaterStatusSchema.optional(),
   login: LoginStatusSchema
 }).strict();
 
