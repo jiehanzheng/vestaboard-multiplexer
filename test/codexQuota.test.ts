@@ -1818,6 +1818,27 @@ test("codex plugin shows fetch fail for generic cached quota read failures", asy
   assert.equal(fallback.message.text.split("\n")[2], "FETCH FAIL     ");
 });
 
+test("codex collector logs only failure and recovery transitions", async () => {
+  let reads = 0;
+  const warnings: unknown[][] = [];
+  const infos: unknown[][] = [];
+  const plugin = testCodexQuotaPlugin(async () => {
+    reads += 1;
+    if (reads === 1) throw new Error("temporary quota outage");
+    if (reads === 2) throw new Error("authentication outage");
+    return { snapshot: { windows: [{ id: "primary", remainingRatio: 0.5, durationMins: 300 }] } };
+  }, { logger: {
+    warn: (...args) => warnings.push(args),
+    info: (...args) => infos.push(args)
+  } });
+  await plugin.collect();
+  await plugin.collect();
+  await plugin.collect();
+  assert.equal(warnings.length, 2);
+  assert.equal(infos.length, 1);
+  assert.match(String(infos[0]?.[0]), /recovered/i);
+});
+
 test("codex plugin does not merge an omitted window from an older snapshot", async () => {
   const warnings: unknown[][] = [];
   let partial = false;

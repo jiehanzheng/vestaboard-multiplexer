@@ -57,6 +57,32 @@ test("socket errors reconnect and resynchronize the snapshot", (t) => {
   } finally { client.stop(); }
 });
 
+test("Home Assistant service logs the first connection failure once and recovery", () => {
+  let notify: (() => void) | undefined;
+  let connected = false;
+  let error: string | undefined = "authentication failed";
+  const warnings: string[] = [];
+  const infos: string[] = [];
+  const service = new HomeAssistantService({
+    createClient: (options) => {
+      notify = options.changed;
+      return {
+        start() {}, stop() {}, waitUntilReady: async () => {}, states: () => [],
+        status: () => ({ connected, ...(error ? { error } : {}) })
+      } as never;
+    },
+    logger: { warn: (message) => warnings.push(message), info: (message) => infos.push(message) }
+  });
+  service.configure({ url: "http://ha.local" });
+  service.start();
+  service.start();
+  connected = true;
+  error = undefined;
+  notify?.();
+  assert.equal(warnings.length, 1);
+  assert.equal(infos.length, 1);
+});
+
 test("authenticates, subscribes before get_states, and keeps initial snapshot ahead of old events", async () => {
   const socket = new FakeSocket();
   let changed = 0;

@@ -12,7 +12,7 @@ import {
   TRANSIENT_STATUS_MESSAGE_TTL_MS,
   StatusMessageStack
 } from "./pluginState.js";
-import { isCodexAuthenticationFailure } from "./failure.js";
+import { classifyCodexFailure, isCodexAuthenticationFailure } from "./failure.js";
 import { QuotaWindowHistory } from "./quotaWindowHistory.js";
 import type { ResetVisibility } from "./quotaWindowHistory.js";
 import { createCodexQuotaPoller, readFixtureQuota } from "./quotaSource.js";
@@ -27,6 +27,8 @@ export class CodexQuotaPlugin {
   private quotaWindowHistory: QuotaWindowHistory;
   private sourceFixture: boolean | undefined;
   private collectionFailure: unknown;
+  private lastCollectionDiagnostic: string | undefined;
+  private lastAutoStartDiagnostic: string | undefined;
   private lastCollectedAt: Date | undefined;
   private collectTask: Promise<void> | undefined;
   private readonly login: CodexLogin;
@@ -67,6 +69,8 @@ export class CodexQuotaPlugin {
       this.statusMessages = new StatusMessageStack();
       this.quotaWindowHistory = new QuotaWindowHistory();
       this.collectionFailure = undefined;
+      this.lastCollectionDiagnostic = undefined;
+      this.lastAutoStartDiagnostic = undefined;
       this.lastCollectedAt = undefined;
     }
     if (options.fixture !== undefined) this.sourceFixture = options.fixture;
@@ -154,25 +158,36 @@ export class CodexQuotaPlugin {
       this.quotaCache.update(freshQuota, now);
       this.lastCollectedAt = new Date(now);
       this.pushStatusMessages(now, statusMessage, sidecarError);
+      if (this.lastCollectionDiagnostic !== undefined) this.options.logger?.info?.("Codex quota collection recovered.");
+      this.lastCollectionDiagnostic = undefined;
       this.collectionFailure = undefined;
       const resetStatus = resetAvailableStatus(freshQuota, rateLimitResetCreditsAvailableCount);
       if (resetStatus) {
         this.statusMessages.pushLow(resetStatus, now, TRANSIENT_STATUS_MESSAGE_TTL_MS);
       }
       if (sidecarError) {
-        logAutoStartFailure(this.options.logger, sidecarError);
+        const diagnostic = failureDiagnostic(sidecarError);
+        if (diagnostic !== this.lastAutoStartDiagnostic) logAutoStartFailure(this.options.logger, sidecarError);
+        this.lastAutoStartDiagnostic = diagnostic;
+      } else if (this.lastAutoStartDiagnostic !== undefined) {
+        this.options.logger?.info?.("Codex quota auto-start recovered.");
+        this.lastAutoStartDiagnostic = undefined;
       }
     } catch (error) {
+      const diagnostic = failureDiagnostic(error);
       this.collectionFailure = error;
       this.statusMessages.push(errorStatus(error), now, TRANSIENT_STATUS_MESSAGE_TTL_MS);
-      logQuotaReadFailure(
-        this.options.logger,
-        error,
-        formatError(error, {
-          statusMessage: isCodexAuthenticationFailure(error) ? errorStatus(error) : undefined
-        }),
-        this.quotaCache.state()
-      );
+      if (diagnostic !== this.lastCollectionDiagnostic) {
+        logQuotaReadFailure(
+          this.options.logger,
+          error,
+          formatError(error, {
+            statusMessage: isCodexAuthenticationFailure(error) ? errorStatus(error) : undefined
+          }),
+          this.quotaCache.state()
+        );
+      }
+      this.lastCollectionDiagnostic = diagnostic;
     }
   }
 
@@ -215,6 +230,12 @@ export class CodexQuotaPlugin {
     }
   }
 
+}
+
+function failureDiagnostic(error: unknown): string {
+  const reason = classifyCodexFailure(error).reason;
+  const detail = error instanceof Error ? error.message : String(error);
+  return `${reason}:${detail}`;
 }
 
 export interface CodexQuotaDisplayState {

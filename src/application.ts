@@ -42,46 +42,21 @@ export async function createApplication(store: ConfigStore, directory: string, d
   const applicationLog = logs.child("application");
   logs.setSecrets([config.transport.token, config.transport.localApiKey, config.ha.token]);
   const makeBoard = dependencies.createVestaboardClient ?? createVestaboardClient;
-  let previousHAConnected: boolean | undefined;
   const ha = new HomeAssistantService({
     createClient: dependencies.createHomeAssistantClient,
-    changed: () => {
-      const connected = ha.snapshot().connected;
-      if (previousHAConnected !== undefined && previousHAConnected !== connected) {
-        (connected ? logs.child("home-assistant").info : logs.child("home-assistant").warn)(connected ? "Home Assistant connection recovered." : "Home Assistant connection failed.");
-      }
-      previousHAConnected = connected;
-      changed();
-    }
+    changed: () => changed(),
+    logger: logs.child("home-assistant")
   });
   const pause = await PauseController.open(directory, ha, requestComposition);
   const codex = (dependencies.createCodexIntegration ?? createCodexIntegration)(config.codex, { changed: requestComposition, now, logger: logs.child("codex") });
-  const water = createWaterHeaterIntegration(config.water, ha, requestComposition);
+  const water = createWaterHeaterIntegration(config.water, ha, requestComposition, logs.child("water"));
   const plugins = [codex, water];
-  let lastCodexDiagnostic: string | undefined;
-  let lastWaterDiagnostic: string | undefined;
-  function observeDiagnostics(): void {
-    const codexDiagnostic = codex.status().error;
-    if (lastCodexDiagnostic !== undefined && codexDiagnostic !== lastCodexDiagnostic) {
-      (codexDiagnostic ? logs.child("codex").warn : logs.child("codex").info)(codexDiagnostic ?? "Codex quota collection recovered.");
-    }
-    lastCodexDiagnostic = codexDiagnostic;
-    const waterStatus = water.status();
-    const waterDiagnostic = JSON.stringify({
-      error: waterStatus.error,
-      inputs: Object.fromEntries(Object.entries(waterStatus.inputs).map(([name, input]) => [name, { error: input.error, retained: input.retained }]))
-    });
-    if (lastWaterDiagnostic !== undefined && waterDiagnostic !== lastWaterDiagnostic) {
-      (waterStatus.error ? logs.child("water").warn : logs.child("water").info)(waterStatus.error ?? "Water heater diagnostics recovered.");
-    }
-    lastWaterDiagnostic = waterDiagnostic;
-  }
   const delivery = new DeliveryController({
     intervalMs: config.updateIntervalMinutes * 60_000, now,
     logger: logs.child("delivery"),
     send: async (frame) => {
       try {
-        await makeBoard({ dryRun, ...config.transport }).send(frame);
+        await makeBoard({ dryRun, ...config.transport, logger: logs.child("vestaboard") }).send(frame);
         deliveryError = undefined;
       } catch {
         deliveryError = "Board update failed. Check the connection and credentials; the next attempt will respect the update interval.";
@@ -106,21 +81,20 @@ export async function createApplication(store: ConfigStore, directory: string, d
   function configurationError() {
     return store.getPublic().error ?? (!dryRun && !config.transport.token && !config.transport.localApiKey ? "Add a board connection in Board settings." : undefined);
   }
-  let lastPauseState: boolean | undefined;
+  let lastDeliveryPauseReason: string | undefined;
   function syncPause() {
     const state = pause.status();
     const reason = configurationError() ?? saveError ?? renderError ?? state.persistenceError ?? (state.paused ? state.pauseReason ?? "Updates paused" : undefined);
     if (reason) delivery.pause(reason); else delivery.resume();
-    if (lastPauseState !== undefined && state.paused !== lastPauseState) {
-      (state.paused ? logs.child("pause").warn : logs.child("pause").info)(state.paused ? `Updates paused: ${reason ?? "paused"}` : "Updates resumed.");
-    }
-    lastPauseState = state.paused;
+    const effectiveReason = delivery.status().paused ? delivery.status().pauseReason ?? reason ?? "paused" : undefined;
+    if (effectiveReason && effectiveReason !== lastDeliveryPauseReason) logs.child("pause").warn(`Updates paused: ${effectiveReason}`);
+    if (!effectiveReason && lastDeliveryPauseReason) logs.child("pause").info("Updates resumed.");
+    lastDeliveryPauseReason = effectiveReason;
   }
   function requestComposition() {
     if (!ready || stopped) return;
     try { delivery.updateFrame(compose()); renderError = undefined; }
     catch (error) { renderError = error instanceof Error ? error.message : "Unable to render layout"; delivery.clearFrame(); }
-    observeDiagnostics();
     syncPause();
     changed();
   }
@@ -170,14 +144,22 @@ export async function createApplication(store: ConfigStore, directory: string, d
         if (stopped) throw new Error("Application is stopping.");
         await startTask;
         if (stopped) throw new Error("Application is stopping.");
-        const candidate = store.preview(input as AppConfig);
+        let candidate: AppConfig;
+        try { candidate = store.preview(input as AppConfig); }
+        catch (error) { applicationLog.error(configurationFailure(error)); throw error; }
         logs.setSecrets([config.transport.token, config.transport.localApiKey, config.ha.token, candidate.transport.token, candidate.transport.localApiKey, candidate.ha.token]);
         const targetChanged = JSON.stringify(config.transport) !== JSON.stringify(candidate.transport) || config.board !== candidate.board;
         // Validate against the new board before saving: an auto-detected Note
         // must not inherit a persisted six-row Flagship layout.
-        const candidateBoard = targetChanged ? await resolveBoard(candidate) : board;
+        let candidateBoard: VestaboardBoard;
+        try {
+          candidateBoard = targetChanged ? await resolveBoard(candidate) : board;
+          compose(candidate.layout, candidateBoard, candidate);
+        } catch (error) {
+          applicationLog.error(configurationFailure(error));
+          throw error;
+        }
         if (stopped) throw new Error("Application is stopping.");
-        compose(candidate.layout, candidateBoard, candidate);
         // Hold delivery across asynchronous configuration changes so it cannot
         // combine a new target with a frame from partially configured plugins.
         ready = false;
@@ -192,10 +174,10 @@ export async function createApplication(store: ConfigStore, directory: string, d
           await ha.configure(config.ha);
           if (targetChanged) { await delivery.resetTarget(); board = candidateBoard; }
           delivery.setInterval(config.updateIntervalMinutes * 60_000);
-          applicationLog.info("Configuration applied.");
+          applicationLog.info(`Configuration applied for sections: ${configSections(input).join(", ")}.`);
         } catch (error) {
           saveError = "Could not apply saved settings. Check the configuration directory and try again.";
-          applicationLog.error(saveError);
+          applicationLog.error(configurationFailure(error));
           throw error;
         } finally { ready = !stopped; requestComposition(); }
       });
@@ -257,4 +239,19 @@ export async function createApplication(store: ConfigStore, directory: string, d
       return stopTask;
     }
   };
+}
+
+function configurationFailure(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  const sections = ["board", "ha", "water", "transport", "codex", "layout", "updateIntervalMinutes"]
+    .filter((section) => text.includes(section));
+  return sections.length > 0
+    ? `Configuration save failed for ${sections.join(", ")}.`
+    : "Configuration save failed while validating or applying settings.";
+}
+
+function configSections(input: unknown): string[] {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return ["unknown"];
+  const sections = Object.keys(input as Record<string, unknown>);
+  return sections.length > 0 ? sections : ["none"];
 }

@@ -21,7 +21,7 @@ export interface QuotaPollResult {
 }
 
 export type QuotaPoller = (options?: QuotaPollOptions) => Promise<QuotaPollResult>;
-export type Logger = Pick<Console, "warn">;
+export type Logger = Pick<Console, "warn"> & Partial<Pick<Console, "info">>;
 
 export interface CodexQuotaPluginOptions {
   fixture?: boolean;

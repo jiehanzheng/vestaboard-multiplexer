@@ -49,6 +49,8 @@ The new application engine is included for compilation and testing, while the ex
 
 The optional `water.emv-position` element reads `emvPosition` and renders a rounded `MV` value from Home Assistant; unavailable values show `MV N/A`, and values that exceed the allocated width show question marks.
 
+The web runtime exposes recent bounded diagnostics at `GET /api/logs` and as named `logs` snapshots on the existing event stream. Messages are redacted before console or memory storage; Docker retains longer history.
+
 The water plugin also reports configured inputs, safe numeric readings, source-specific diagnostics, and whether a last-good reading was retained during a Home Assistant outage. An optional Home Assistant heating entity changes the temperature divider to the Vestaboard heart character while it reports `on`, `true`, or `1`; unknown states keep the `/` divider and report a diagnostic.
 
 ## Plugins

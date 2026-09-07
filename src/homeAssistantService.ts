@@ -21,6 +21,7 @@ export interface HomeAssistantSnapshot {
 export interface HomeAssistantServiceOptions {
   createClient?: (options: HomeAssistantClientOptions) => HomeAssistantClient;
   changed?: () => void;
+  logger?: Pick<Console, "info" | "warn">;
 }
 
 export type HomeAssistantInspection = HAStatus | HAEntitiesResponse;
@@ -45,6 +46,7 @@ interface ActiveConnection {
 export class HomeAssistantService implements HomeAssistantServiceLike {
   private readonly createClient: (options: HomeAssistantClientOptions) => HomeAssistantClient;
   private readonly changed?: () => void;
+  private readonly logger: Pick<Console, "info" | "warn">;
   private readonly listeners = new Set<HomeAssistantSnapshotListener>();
   private readonly tasks = new Set<Promise<unknown>>();
   private readonly temporaryClients = new Set<HomeAssistantClient>();
@@ -52,10 +54,12 @@ export class HomeAssistantService implements HomeAssistantServiceLike {
   private active: ActiveConnection | undefined;
   private started = false;
   private stopped = false;
+  private previousConnection: { connected: boolean; error?: string } | undefined;
 
   constructor(options: HomeAssistantServiceOptions = {}) {
     this.createClient = options.createClient ?? createHomeAssistantClient;
     this.changed = options.changed;
+    this.logger = options.logger ?? console;
   }
 
   configure(config: HomeAssistantConnectionConfig): void {
@@ -203,6 +207,14 @@ export class HomeAssistantService implements HomeAssistantServiceLike {
   private notify(): void {
     try { this.changed?.(); } catch { /* status subscribers cannot break HA ownership */ }
     const snapshot = this.snapshot();
+    const previous = this.previousConnection;
+    const changedError = previous?.error !== snapshot.error;
+    if (snapshot.error && (!previous || changedError || previous.connected)) {
+      this.logger.warn(`Home Assistant connection failed: ${snapshot.error}`);
+    } else if (snapshot.connected && previous && (!previous.connected || previous.error !== undefined)) {
+      this.logger.info("Home Assistant connection recovered.");
+    }
+    this.previousConnection = { connected: snapshot.connected, ...(snapshot.error ? { error: snapshot.error } : {}) };
     for (const listener of this.listeners) {
       try { listener(snapshot); } catch { /* one consumer cannot break another */ }
     }

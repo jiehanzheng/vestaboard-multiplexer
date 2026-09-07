@@ -148,8 +148,7 @@ test("application exposes constants-only water elements without a Home Assistant
         remaining: { constant: 40 },
         capacity: { constant: 80 },
         temperature: { constant: 120 },
-        target: { constant: 140 },
-        baseline: 80
+        target: { constant: 140 }
       }
     });
     const savedWater = store.get().water;
@@ -157,7 +156,6 @@ test("application exposes constants-only water elements without a Home Assistant
     const elementIds = (app.actions.elements() as { elements: Array<{ id: string }> }).elements.map((element) => element.id);
     assert.deepEqual(elementIds.filter((id) => id.startsWith("water.")), [
       "water.remaining",
-      "water.temperature-bar",
       "water.temperature-text",
       "water.emv-position"
     ]);
@@ -166,7 +164,6 @@ test("application exposes constants-only water elements without a Home Assistant
     assert.equal(elementMetadata.find((element) => element.id === "water.remaining")?.minWidth, 6);
     assert.equal(elementMetadata.find((element) => element.id === "water.temperature-text")?.minWidth, 8);
     assert.equal(elementMetadata.find((element) => element.id === "water.emv-position")?.minWidth, 6);
-    assert.equal(elementMetadata.find((element) => element.id === "water.temperature-bar")?.minWidth, undefined);
     const waterStatus = (app.actions.status() as { water: { enabled: boolean; inputs: Record<string, { value?: number }> } }).water;
     assert.equal(waterStatus.enabled, true);
     assert.equal(waterStatus.inputs.temperature?.value, 120);
@@ -177,14 +174,12 @@ test("application exposes constants-only water elements without a Home Assistant
       remaining: { constant: 40 },
       capacity: { constant: 80 },
       temperature: { constant: 125 },
-      target: { constant: 135 },
-      baseline: 80
+      target: { constant: 135 }
     };
     const preview = (app.actions.preview({
       layout: [
         { elementId: "water.remaining", startRow: 0 },
-        { elementId: "water.temperature-bar", startRow: 1 },
-        { elementId: "water.temperature-text", startRow: 2 }
+        { elementId: "water.temperature-text", startRow: 1 }
       ],
       board: "note",
       water: draftWater
