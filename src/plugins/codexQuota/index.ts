@@ -5,6 +5,8 @@ export { CodexQuotaPlugin, createCodexQuotaPlugin } from "./plugin.js";
 export type { CodexQuotaDisplayState } from "./plugin.js";
 export { createCodexIntegration } from "./integration.js";
 export type { CodexIntegration, CodexIntegrationDependencies } from "./integration.js";
+export { CodexLogin } from "./login.js";
+export type { LoginStatus } from "./login.js";
 export { QuotaWindowHistory } from "./quotaWindowHistory.js";
 export type { ResetVisibility } from "./quotaWindowHistory.js";
 export { quotaWindowLabel } from "./quotaWindow.js";

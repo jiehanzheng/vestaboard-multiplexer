@@ -1,7 +1,7 @@
 import type { Element, LayoutEntry } from "../../elements.js";
 import type { VestaboardBoard } from "../../vestaboardTypes.js";
 import { defaultCodexLayout } from "./elements.js";
-import { createCodexQuotaPlugin } from "./plugin.js";
+import { createCodexQuotaPlugin, type CodexQuotaPlugin } from "./plugin.js";
 import type { CodexConfig } from "./config.js";
 import type { Logger, QuotaPoller } from "./types.js";
 
@@ -22,6 +22,8 @@ export interface CodexIntegration {
   elements(draftConfig?: CodexConfig): Element[];
   defaultLayout(board: VestaboardBoard, draftConfig?: CodexConfig): LayoutEntry[];
   status(now?: Date): { error?: string; collectedAt?: string };
+  loginStatus(): ReturnType<CodexQuotaPlugin["loginStatus"]>;
+  loginAction(action: "start" | "cancel" | "check"): Promise<void> | void;
   stop(): Promise<void>;
 }
 
@@ -98,6 +100,8 @@ export function createCodexIntegration(config: CodexConfig, dependencies: CodexI
         ...(plugin.collectedAt() ? { collectedAt: plugin.collectedAt()!.toISOString() } : {})
       };
     },
+    loginStatus() { return plugin.loginStatus(); },
+    loginAction(action) { return plugin.loginAction(action); },
     async stop() {
       if (stopTask) {
         await stopTask;

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 type JsonObject = Record<string, unknown>;
-type CodexAppServerOperation<T> = (client: CodexAppServerClient) => Promise<T>;
+type CodexAppServerOperation<T> = (client: CodexLoginClient) => Promise<T>;
 type ResponseParser<T> = (value: unknown) => T;
 
 const APP_SERVER_TIMEOUT_MS = 30_000;
@@ -14,6 +14,17 @@ export interface CodexAppServerClient {
   startThread(params: ThreadStartParams): Promise<ThreadStartResult>;
   startTurn(params: TurnStartParams): Promise<TurnStartResult>;
   waitForTurnCompletion(threadId: string, turnId: string): Promise<void>;
+}
+
+export interface DeviceLogin {
+  loginId: string;
+  verificationUrl: string;
+  userCode: string;
+}
+
+export interface CodexLoginClient extends CodexAppServerClient {
+  startDeviceLogin(): Promise<DeviceLogin>;
+  cancelLogin(loginId: string): Promise<unknown>;
 }
 
 export interface AccountReadParams {
@@ -238,7 +249,16 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
     notificationRejecters.add(reject);
   });
 
-  const client: CodexAppServerClient = {
+  const client: CodexLoginClient = {
+    startDeviceLogin: () => request("account/login/start", { type: "chatgptDeviceCode" }, (value) => {
+      const result = asObject(value, "device login");
+      return {
+        loginId: requiredString(result.loginId, "login id"),
+        verificationUrl: requiredString(result.verificationUrl, "verification URL"),
+        userCode: requiredString(result.userCode, "user code")
+      };
+    }),
+    cancelLogin: (loginId) => request("account/login/cancel", { loginId }, (value) => value),
     readAccount: (params) => request("account/read", params, parseAccountReadResult),
     readRateLimits: () => request("account/rateLimits/read", undefined, parseRateLimitsResult),
     readModels: (params) => request("model/list", params, parseModelListResult),

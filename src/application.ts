@@ -196,7 +196,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       persistenceError: pauseState.persistenceError ?? saveError,
       configError: configurationError() ?? renderError, deliveryError,
       codex: codex.status(), homeAssistant: { connected: ha.snapshot().connected, error: ha.snapshot().error },
-      water: water.status()
+      water: water.status(), login: codex.loginStatus()
     };
   }
   const actions: RuntimeActions = {
@@ -297,6 +297,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       await delivery.attempt();
       return status();
     },
+    login: async (action) => { await codex.loginAction(action); return codex.loginStatus(); },
     homeAssistant: (action, input) => ha.inspect(action, input)
   };
   return {

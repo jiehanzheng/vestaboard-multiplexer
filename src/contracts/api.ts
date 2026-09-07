@@ -53,6 +53,16 @@ export type PreviewResponse = z.infer<typeof PreviewResponseSchema>;
 export const PauseRequestSchema = z.object({ paused: z.boolean() }).strict();
 export type PauseRequest = z.infer<typeof PauseRequestSchema>;
 
+export const LoginActionSchema = z.enum(["start", "cancel", "check"]);
+export const LoginStatusSchema = z.object({
+  pending: z.boolean(),
+  account: z.string().optional(),
+  error: z.string().optional(),
+  userCode: z.string().optional(),
+  verificationUrl: z.string().url().optional()
+}).strict();
+export type LoginStatus = z.infer<typeof LoginStatusSchema>;
+
 export const RuntimeStatusSchema = z.object({
   board: z.enum(["note", "flagship"]),
   dryRun: z.boolean().optional(),
@@ -70,7 +80,8 @@ export const RuntimeStatusSchema = z.object({
   configError: z.string().optional(),
   codex: z.object({ error: z.string().optional(), collectedAt: z.string().optional() }).strict(),
   homeAssistant: HAStatusSchema.optional(),
-  water: WaterHeaterStatusSchema.optional()
+  water: WaterHeaterStatusSchema.optional(),
+  login: LoginStatusSchema
 }).strict();
 
 export type RuntimeStatus = z.infer<typeof RuntimeStatusSchema>;

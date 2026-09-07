@@ -5,7 +5,10 @@ services:
     env_file:
       - path: .env
         required: false
+    ports:
+      - "${VBMUX_PORT:-3000}:3000"
     environment:
+      VBMUX_PORT: 3000
       VBMUX_DATA_DIR: /app/data
     volumes:
       - vbmux-data:/app/data

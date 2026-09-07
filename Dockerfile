@@ -5,6 +5,8 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml tsconfig.json ./
 COPY src ./src
 COPY test ./test
+COPY web ./web
+COPY vite.config.ts tsconfig.web.json ./
 RUN pnpm install --frozen-lockfile
 RUN pnpm build
 # The runtime image must carry the production tree because dist/src imports zod.

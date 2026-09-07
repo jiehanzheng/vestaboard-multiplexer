@@ -11,6 +11,10 @@
 
 - User decision: Water Heater owns the heating-divider and remaining-bar character settings as numeric local Vestaboard codes, defaulting to `62` and `67`. Codes are sent directly in message matrices so valid letters, symbols, and colors remain available; code `71` and invalid gaps are excluded according to the [Vestaboard character code reference](https://docs.vestaboard.com/docs/charactercodes/).
 
+# Board preview rendering
+
+- User decision (2026-09-07): the main board preview, compact element preview, and pause overlay editor share one board cell renderer. This keeps official character glyphs, color classes, and square row heights aligned across surfaces; pause transparency and painting remain editor states layered on the shared cells.
+
 # vbmux
 
 - Plugins collect independently of board delivery and contribute separately placeable elements. Each size is a distinct element with a fixed height; rendering receives available width.

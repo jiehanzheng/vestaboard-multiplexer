@@ -30,3 +30,35 @@ test("plugins do not import another plugin's implementation", async () => {
     }
   }
 });
+
+test("shared browser contracts do not reach server implementations", async () => {
+  const visited = new Set<string>();
+  async function visit(file: string): Promise<void> {
+    if (visited.has(file)) return;
+    visited.add(file);
+    for (const specifier of await imports(file)) {
+      assert.ok(!specifier.startsWith("node:"), `${file} imports ${specifier}`);
+      if (!specifier.startsWith(".")) continue;
+      const target = resolve(dirname(file), specifier.replace(/\.js$/, ".ts"));
+      assert.match(target, /\/(contracts\/|plugins\/(?:codexQuota\/config|waterHeater\/(?:config|status))\.ts$|[^/]+\/config\.ts$|vestaboardCharacters\.ts$)/, `Contract imports server implementation: ${target}`);
+      await visit(target);
+    }
+  }
+  for (const file of await sourceFiles(resolve("src/contracts"))) await visit(file);
+});
+
+test("browser code imports only browser-safe backend contracts", async () => {
+  const root = resolve("web/src");
+  for (const file of await sourceFiles(root)) {
+    for (const specifier of await imports(file)) {
+      assert.ok(!specifier.startsWith("node:"), `${file} imports ${specifier}`);
+      if (!specifier.startsWith(".")) continue;
+      const target = resolve(dirname(file), specifier);
+      if (!relative(root, target).startsWith("..")) continue;
+      const normalizedTarget = target.endsWith(".js") ? `${target.slice(0, -3)}.ts` : target;
+      const browserSafe = normalizedTarget.startsWith(`${resolve("src/contracts")}/`)
+        || ["src/plugins/codexQuota/config.ts", "src/plugins/waterHeater/config.ts", "src/plugins/waterHeater/status.ts", "src/vestaboardCharacters.ts"].some((path) => normalizedTarget === resolve(path));
+      assert.ok(browserSafe, `Browser imports server implementation: ${target}`);
+    }
+  }
+});
