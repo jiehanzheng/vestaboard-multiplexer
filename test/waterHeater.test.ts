@@ -11,6 +11,7 @@ const baseConfig: WaterHeaterConfig = {
   capacity: { constant: 100 },
   temperature: { entityId: "sensor.tank" },
   target: { entityId: "sensor.target", attribute: "value" },
+  emvPosition: null,
   unit: "F",
   baseline: 50,
   enabled: true
@@ -41,7 +42,8 @@ test("renders width-aware remaining, temperature bar, and temperature text eleme
   const heater = new WaterHeater(baseConfig);
   heater.update(baseConfig, entities);
   const elements = heater.elements();
-  assert.deepEqual(elements.map(({ id }) => id), ["water.remaining", "water.temperature-bar", "water.temperature-text"]);
+  assert.deepEqual(elements.map(({ id }) => id), ["water.remaining", "water.temperature-bar", "water.temperature-text", "water.emv-position"]);
+  assert.deepEqual(elements.map(({ minWidth }) => minWidth), [6, undefined, 8, 6]);
   for (const width of [15, 22]) {
     for (const element of elements) {
       assert.equal(element.render(width).length, 1);
@@ -49,6 +51,7 @@ test("renders width-aware remaining, temperature bar, and temperature text eleme
     }
   }
   assert.deepEqual(elements[2]?.render(15)[0]?.slice(0, 8), encode("125/135F"));
+  assert.deepEqual(elements[3]?.render(6)[0]?.slice(0, 6), encode("MV N/A"));
   assert.equal(heater.status().error, undefined);
 });
 
@@ -92,6 +95,20 @@ test("keeps the last valid reading through an unavailable entity and discards it
   const changed = { ...baseConfig, temperature: { entityId: "sensor.other" } };
   heater.update(changed, unavailable);
   assert.deepEqual(heater.elements()[2]!.render(15)[0]?.slice(0, 3), [14, 59, 1]);
+});
+
+test("renders EMV position from Home Assistant with explicit overflow", () => {
+  const config = { ...baseConfig, emvPosition: { entityId: "sensor.emv" } };
+  const heater = new WaterHeater(config);
+  heater.update(config, [...entities, { entity_id: "sensor.emv", state: "1234.6", attributes: {}, last_updated: "2026-01-01T00:00:00Z" }]);
+  const emv = heater.elements()[3]!;
+  assert.deepEqual(emv.render(6)[0], encode("MV1235"));
+  assert.deepEqual(emv.render(8)[0]?.slice(0, 6), encode("MV1235"));
+
+  const large = { ...baseConfig, emvPosition: { constant: 123456 } };
+  const largeHeater = new WaterHeater(large);
+  largeHeater.update(large, []);
+  assert.deepEqual(largeHeater.elements()[3]!.render(6)[0]?.slice(0, 6), encode("MV????"));
 });
 
 test("drafts retain last-good readings for unchanged bindings without changing live readings", () => {

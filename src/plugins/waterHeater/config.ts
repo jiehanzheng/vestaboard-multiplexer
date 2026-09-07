@@ -18,6 +18,7 @@ export const WaterHeaterConfigBaseSchema = z.object({
   capacity: InputSchema,
   temperature: InputSchema,
   target: InputSchema,
+  emvPosition: InputSchema.optional(),
   unit: z.enum(["F", "C"]),
   baseline: finiteNumber.optional(),
   enabled: z.boolean()
@@ -49,6 +50,7 @@ export const DEFAULT_WATER_HEATER_CONFIG: WaterHeaterConfig = {
   capacity: null,
   temperature: null,
   target: null,
+  emvPosition: null,
   unit: "F",
   enabled: false
 };

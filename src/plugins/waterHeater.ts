@@ -31,6 +31,7 @@ interface WaterReadings {
   capacity?: number;
   temperature?: number;
   target?: number;
+  emvPosition?: number;
 }
 
 export class WaterHeater {
@@ -40,7 +41,8 @@ export class WaterHeater {
     remaining: "remaining:none",
     capacity: "capacity:none",
     temperature: "temperature:none",
-    target: "target:none"
+    target: "target:none",
+    emvPosition: "emvPosition:none"
   };
   private diagnostic: string | undefined;
 
@@ -56,8 +58,8 @@ export class WaterHeater {
     if (errors.length) return this.status();
 
     const entityMap = new Map(entities.map((entity) => [entity.entity_id, entity]));
-    for (const field of ["remaining", "capacity", "temperature", "target"] as const) {
-      const input = nextConfig[field];
+    for (const field of ["remaining", "capacity", "temperature", "target", "emvPosition"] as const) {
+      const input = nextConfig[field] ?? null;
       const binding = inputBinding(field, input);
       if (this.bindings[field] !== binding) {
         this.bindings[field] = binding;
@@ -90,7 +92,8 @@ export class WaterHeater {
       remaining: "remaining:none",
       capacity: "capacity:none",
       temperature: "temperature:none",
-      target: "target:none"
+      target: "target:none",
+      emvPosition: "emvPosition:none"
     };
     this.diagnostic = undefined;
   }
@@ -118,6 +121,7 @@ export class WaterHeater {
         id: "water.remaining",
         label: "Water remaining",
         height: 1,
+        minWidth: 6,
         render: (width) => [this.remainingRow(width)]
       },
       {
@@ -130,7 +134,15 @@ export class WaterHeater {
         id: "water.temperature-text",
         label: "Water temperature text",
         height: 1,
+        minWidth: 8,
         render: (width) => [this.temperatureTextRow(width)]
+      },
+      {
+        id: "water.emv-position",
+        label: "Water EMV position",
+        height: 1,
+        minWidth: 6,
+        render: (width) => [this.emvPositionRow(width)]
       }
     ];
   }
@@ -167,7 +179,18 @@ export class WaterHeater {
     const temperature = this.readings.temperature;
     const target = this.readings.target;
     if (temperature === undefined || target === undefined) return textRow("N/A", width);
-    return textRow(`${displayNumber(temperature)}/${displayNumber(target)}${this.config.unit}`, width);
+    const text = `${displayNumber(temperature)}/${displayNumber(target)}${this.config.unit}`;
+    return textRow(text.length <= width ? text : "OVERFLOW", width);
+  }
+
+  private emvPositionRow(width: number): number[] {
+    if (!this.config.enabled) return blankRow(width);
+    const value = this.readings.emvPosition;
+    if (value === undefined) return textRow("MV N/A", width);
+    const text = `MV${displayNumber(value)}`;
+    return text.length <= width
+      ? textRow(text, width)
+      : textRow(`MV${"?".repeat(Math.max(0, width - 2))}`, width);
   }
 }
 
@@ -235,7 +258,8 @@ function cloneConfig(config: WaterHeaterConfig): WaterHeaterConfig {
     remaining: config.remaining ? { ...config.remaining } : null,
     capacity: config.capacity ? { ...config.capacity } : null,
     temperature: config.temperature ? { ...config.temperature } : null,
-    target: config.target ? { ...config.target } : null
+    target: config.target ? { ...config.target } : null,
+    emvPosition: config.emvPosition ? { ...config.emvPosition } : null
   };
 }
 
