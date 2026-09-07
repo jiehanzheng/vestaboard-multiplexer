@@ -8,23 +8,27 @@ import {
   type Input,
   type WaterHeaterConfig
 } from "./waterHeater/config.js";
+import {
+  emptyWaterHeaterStatus,
+  WaterHeaterStatusSchema,
+  type WaterHeaterInputName,
+  type WaterHeaterStatus
+} from "./waterHeater/status.js";
 
 export {
   ConstantInputSchema,
   DEFAULT_WATER_HEATER_CONFIG,
   EntityInputSchema,
+  HeatingInputSchema,
   InputSchema,
+  normalizeLegacyWaterHeaterConfig,
   validateWaterHeaterConfig,
   WaterHeaterConfigBaseSchema,
-  WaterHeaterConfigSchema,
-  waterHeaterLayoutIssues
+  WaterHeaterConfigSchema
 } from "./waterHeater/config.js";
-export type { ConstantInput, EntityInput, Input, WaterHeaterConfig } from "./waterHeater/config.js";
-
-
-export interface WaterHeaterStatus {
-  error?: string;
-}
+export { WaterHeaterStatusSchema, emptyWaterHeaterStatus, waterElementIssue } from "./waterHeater/status.js";
+export type { ConstantInput, EntityInput, HeatingInput, Input, WaterHeaterConfig } from "./waterHeater/config.js";
+export type { WaterHeaterStatus } from "./waterHeater/status.js";
 
 interface WaterReadings {
   remaining?: number;
@@ -32,6 +36,7 @@ interface WaterReadings {
   temperature?: number;
   target?: number;
   emvPosition?: number;
+  heating?: boolean;
 }
 
 export class WaterHeater {
@@ -42,9 +47,12 @@ export class WaterHeater {
     capacity: "capacity:none",
     temperature: "temperature:none",
     target: "target:none",
-    emvPosition: "emvPosition:none"
+    emvPosition: "emvPosition:none",
+    heating: "heating:none"
   };
   private diagnostic: string | undefined;
+  private inputDiagnostics = emptyWaterHeaterStatus().inputs;
+  private elementIssues: Record<string, string> = {};
 
   constructor(config: WaterHeaterConfig = DEFAULT_WATER_HEATER_CONFIG) {
     this.config = cloneConfig(config);
@@ -55,31 +63,57 @@ export class WaterHeater {
     const errors = validateWaterHeaterConfig(nextConfig);
     this.config = errors.length ? cloneConfig({ ...DEFAULT_WATER_HEATER_CONFIG, enabled: false }) : nextConfig;
     this.diagnostic = errors[0];
-    if (errors.length) return this.status();
+    this.elementIssues = {};
+    if (errors.length) {
+      this.inputDiagnostics = buildInputDiagnostics(nextConfig, {}, errors);
+      return this.status();
+    }
 
     const entityMap = new Map(entities.map((entity) => [entity.entity_id, entity]));
-    for (const field of ["remaining", "capacity", "temperature", "target", "emvPosition"] as const) {
+    for (const field of ["remaining", "capacity", "temperature", "target", "emvPosition", "heating"] as const) {
       const input = nextConfig[field] ?? null;
       const binding = inputBinding(field, input);
       if (this.bindings[field] !== binding) {
         this.bindings[field] = binding;
         delete this.readings[field];
       }
+    }
+    this.inputDiagnostics = buildInputDiagnostics(nextConfig, this.readings, errors);
+    for (const field of ["remaining", "capacity", "temperature", "target", "emvPosition"] as const) {
+      const input = nextConfig[field] ?? null;
+      const diagnostic = this.inputDiagnostics[field];
       if (!nextConfig.enabled || input === null) continue;
 
-      const value = resolveInput(input, entityMap);
-      if (value === undefined || !validReading(field, value)) {
-        this.diagnostic ??= `${field} reading is unavailable.`;
+      const resolution = resolveInput(input, entityMap);
+      if (resolution.value === undefined || !validReading(field, resolution.value)) {
+        const error = resolution.error ?? readingError(field, resolution.value);
+        diagnostic.error = error;
+        if (this.readings[field] !== undefined) diagnostic.retained = true;
+        this.diagnostic ??= `${field}: ${error}`;
         continue;
       }
-      this.readings[field] = value;
+      this.readings[field] = resolution.value;
+      diagnostic.value = resolution.value;
+      delete diagnostic.error;
+      delete diagnostic.retained;
     }
 
-    if (nextConfig.enabled && nextConfig.baseline !== undefined && !Number.isFinite(nextConfig.baseline)) {
-      this.diagnostic ??= "baseline must be a finite number.";
-    }
-    if (nextConfig.enabled && nextConfig.baseline !== undefined && this.readings.target !== undefined && this.readings.target <= nextConfig.baseline) {
-      this.diagnostic ??= "baseline must be below target.";
+    const heatingInput = nextConfig.heating ?? null;
+    const heatingDiagnostic = this.inputDiagnostics.heating;
+    if (nextConfig.enabled && heatingInput !== null && heatingInput !== undefined) {
+      const resolution = resolveHeatingInput(heatingInput, entityMap);
+      if (resolution.value === undefined) {
+        delete this.readings.heating;
+        heatingDiagnostic.error = resolution.error ?? "heating state is unavailable.";
+        delete heatingDiagnostic.value;
+        delete heatingDiagnostic.retained;
+        this.diagnostic ??= `heating: ${heatingDiagnostic.error}`;
+      } else {
+        this.readings.heating = resolution.value;
+        heatingDiagnostic.value = resolution.value;
+        delete heatingDiagnostic.error;
+        delete heatingDiagnostic.retained;
+      }
     }
     return this.status();
   }
@@ -93,9 +127,12 @@ export class WaterHeater {
       capacity: "capacity:none",
       temperature: "temperature:none",
       target: "target:none",
-      emvPosition: "emvPosition:none"
+      emvPosition: "emvPosition:none",
+      heating: "heating:none"
     };
     this.diagnostic = undefined;
+    this.inputDiagnostics = emptyWaterHeaterStatus().inputs;
+    this.elementIssues = {};
   }
 
   /** Builds draft elements without changing this instance's cached readings. */
@@ -112,7 +149,12 @@ export class WaterHeater {
   }
 
   status(): WaterHeaterStatus {
-    return this.diagnostic ? { error: this.diagnostic } : {};
+    return WaterHeaterStatusSchema.parse({
+      enabled: this.config.enabled,
+      inputs: this.inputDiagnostics,
+      ...(Object.keys(this.elementIssues).length ? { elementIssues: { ...this.elementIssues } } : {}),
+      ...(this.diagnostic ? { error: this.diagnostic } : {})
+    });
   }
 
   elements(): Element[] {
@@ -123,12 +165,6 @@ export class WaterHeater {
         height: 1,
         minWidth: 6,
         render: (width) => [this.remainingRow(width)]
-      },
-      {
-        id: "water.temperature-bar",
-        label: "Water temperature",
-        height: 1,
-        render: (width) => [this.temperatureBarRow(width)]
       },
       {
         id: "water.temperature-text",
@@ -163,24 +199,14 @@ export class WaterHeater {
     ];
   }
 
-  private temperatureBarRow(width: number): number[] {
-    if (!this.config.enabled) return blankRow(width);
-    const temperature = this.readings.temperature;
-    const target = this.readings.target;
-    const baseline = this.config.baseline;
-    if (temperature === undefined || target === undefined || baseline === undefined || target <= baseline) {
-      return textRow("N/A", width);
-    }
-    return barRow(Math.max(0, Math.min(1, (temperature - baseline) / (target - baseline))), width, BLUE);
-  }
-
   private temperatureTextRow(width: number): number[] {
     if (!this.config.enabled) return blankRow(width);
     const temperature = this.readings.temperature;
     const target = this.readings.target;
     if (temperature === undefined || target === undefined) return textRow("N/A", width);
-    const text = `${displayNumber(temperature)}/${displayNumber(target)}${this.config.unit}`;
-    return textRow(text.length <= width ? text : "OVERFLOW", width);
+    const separator = this.readings.heating === true ? "♥" : "/";
+    const text = `${displayNumber(temperature)}${separator}${displayNumber(target)}${this.config.unit}`;
+    return text.length <= width ? [...encode(text), ...Array(width - text.length).fill(BLANK)] : textRow("OVERFLOW", width);
   }
 
   private emvPositionRow(width: number): number[] {
@@ -194,10 +220,27 @@ export class WaterHeater {
   }
 }
 
-export function createWaterHeaterIntegration(config: WaterHeaterConfig, source: Pick<HomeAssistantService, "snapshot" | "subscribe">, changed: () => void) {
+export function createWaterHeaterIntegration(config: WaterHeaterConfig, source: Pick<HomeAssistantService, "snapshot" | "subscribe">, changed: () => void, logger: Pick<Console, "info" | "warn"> = console) {
   let current = config;
   const heater = createWaterHeater(config);
   let identity = source.snapshot().source;
+  const lastInputDiagnostics = new Map<string, string>();
+  let lastElementDiagnostic: string | undefined;
+  const observe = (): void => {
+    const status = heater.status();
+    for (const [field, input] of Object.entries(status.inputs)) {
+      const diagnostic = input.error ? `${input.error}${input.retained ? " (retained last-good value)" : ""}` : undefined;
+      const previous = lastInputDiagnostics.get(field);
+      if (diagnostic && diagnostic !== previous) logger.warn(`Water input diagnostic (${field}): ${diagnostic}`);
+      if (!diagnostic && previous) logger.info(`Water input diagnostic recovered (${field}).`);
+      if (diagnostic) lastInputDiagnostics.set(field, diagnostic); else lastInputDiagnostics.delete(field);
+    }
+    const elementDiagnostic = status.error && Object.keys(status.inputs).every((field) => !status.inputs[field as keyof typeof status.inputs].error)
+      ? status.error : undefined;
+    if (elementDiagnostic && elementDiagnostic !== lastElementDiagnostic) logger.warn(`Water element diagnostic: ${elementDiagnostic}`);
+    if (!elementDiagnostic && lastElementDiagnostic) logger.info("Water element diagnostics recovered.");
+    lastElementDiagnostic = elementDiagnostic;
+  };
   const update = () => {
     const snapshot = source.snapshot();
     if (identity !== snapshot.source) {
@@ -205,10 +248,12 @@ export function createWaterHeaterIntegration(config: WaterHeaterConfig, source: 
       heater.resetSource(current);
     }
     heater.update(current, snapshot.entities);
+    observe();
     changed();
   };
   const unsubscribe = source.subscribe(update);
   heater.update(current, source.snapshot().entities);
+  observe();
   return {
     id: "water-heater", slug: "water",
     get enabled() { return current.enabled; },
@@ -223,15 +268,17 @@ export function createWaterHeater(config: WaterHeaterConfig = DEFAULT_WATER_HEAT
   return new WaterHeater(config);
 }
 
-function resolveInput(input: Exclude<Input, null>, entities: Map<string, HAEntity>): number | undefined {
-  if (!input || typeof input !== "object") return undefined;
-  if ("constant" in input) return input.constant;
-  if (!("entityId" in input) || typeof input.entityId !== "string") return undefined;
+function resolveInput(input: Exclude<Input, null>, entities: Map<string, HAEntity>): { value?: number; error?: string } {
+  if (!input || typeof input !== "object") return { error: "input is invalid." };
+  if ("constant" in input) return { value: input.constant };
+  if (!("entityId" in input) || typeof input.entityId !== "string") return { error: "source entity is invalid." };
   const entity = entities.get(input.entityId);
-  if (!entity) return undefined;
-  if (!input.attribute && (entity.state === "unknown" || entity.state === "unavailable")) return undefined;
+  const source = input.attribute ? `${input.entityId}.${input.attribute}` : input.entityId;
+  if (!entity) return { error: `${source} is unavailable (entity not found).` };
+  if (!input.attribute && (entity.state === "unknown" || entity.state === "unavailable")) return { error: `${source} is unavailable (state is ${entity.state}).` };
   const value = input.attribute ? entity.attributes[input.attribute] : entity.state;
-  return numeric(value);
+  const number = numeric(value);
+  return number === undefined ? { error: `${source} is unavailable (value is not numeric).` } : { value: number };
 }
 
 function numeric(value: unknown): number | undefined {
@@ -248,6 +295,12 @@ function validReading(field: keyof WaterReadings, value: number): boolean {
   return true;
 }
 
+function readingError(field: keyof WaterReadings, value: number | undefined): string {
+  if (field === "remaining" && value !== undefined && value < 0) return "remaining must be non-negative.";
+  if (field === "capacity" && value !== undefined && value <= 0) return "capacity must be positive.";
+  return `${field} reading is unavailable.`;
+}
+
 function inputBinding(field: string, input: Input): string {
   return JSON.stringify([field, input]);
 }
@@ -259,8 +312,34 @@ function cloneConfig(config: WaterHeaterConfig): WaterHeaterConfig {
     capacity: config.capacity ? { ...config.capacity } : null,
     temperature: config.temperature ? { ...config.temperature } : null,
     target: config.target ? { ...config.target } : null,
-    emvPosition: config.emvPosition ? { ...config.emvPosition } : null
+    emvPosition: config.emvPosition ? { ...config.emvPosition } : null,
+    heating: config.heating ? { ...config.heating } : null
   };
+}
+
+function buildInputDiagnostics(config: WaterHeaterConfig, readings: WaterReadings, configErrors: readonly string[]): WaterHeaterStatus["inputs"] {
+  const inputs = {} as WaterHeaterStatus["inputs"];
+  for (const field of ["remaining", "capacity", "temperature", "target", "emvPosition", "heating"] as const) {
+    const input = config[field] ?? null;
+    inputs[field] = {
+      configured: input !== null,
+      ...(readings[field] !== undefined ? { value: readings[field] } : {}),
+      ...(configErrors.find((error) => error.startsWith(`${field}.`) || error.startsWith(`${field} `)) ? { error: configErrors.find((error) => error.startsWith(`${field}.`) || error.startsWith(`${field} `)) } : {})
+    };
+  }
+  return inputs;
+}
+
+function resolveHeatingInput(input: Exclude<NonNullable<WaterHeaterConfig["heating"]>, null>, entities: Map<string, HAEntity>): { value?: boolean; error?: string } {
+  const source = input.attribute ? `${input.entityId}.${input.attribute}` : input.entityId;
+  const entity = entities.get(input.entityId);
+  if (!entity) return { error: `${source} is unavailable (entity not found).` };
+  const raw = input.attribute ? entity.attributes[input.attribute] : entity.state;
+  if (typeof raw !== "string" && typeof raw !== "boolean" && typeof raw !== "number") return { error: `${source} is unavailable (state is not boolean).` };
+  const value = String(raw).trim().toLowerCase();
+  if (["on", "true", "1"].includes(value)) return { value: true };
+  if (["off", "false", "0"].includes(value)) return { value: false };
+  return { error: `${source} is unavailable (state is not on/off).` };
 }
 
 function barRow(ratio: number, width: number, fill: number): number[] {

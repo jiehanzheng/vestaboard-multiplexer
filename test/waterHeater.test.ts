@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { WaterHeater, createWaterHeaterIntegration, type WaterHeaterConfig } from "../src/plugins/waterHeater.js";
-import type { HomeAssistantSnapshot } from "../src/homeAssistantService.js";
+import { WaterHeater, createWaterHeaterIntegration, waterElementIssue, type WaterHeaterConfig } from "../src/plugins/waterHeater.js";
+import type { HomeAssistantSnapshot, HomeAssistantSnapshotListener } from "../src/homeAssistantService.js";
 import type { HAEntity } from "../src/homeAssistant.js";
 import { encode, BLUE } from "../src/vestaboardCharacters.js";
 
@@ -12,8 +12,8 @@ const baseConfig: WaterHeaterConfig = {
   temperature: { entityId: "sensor.tank" },
   target: { entityId: "sensor.target", attribute: "value" },
   emvPosition: null,
+  heating: null,
   unit: "F",
-  baseline: 50,
   enabled: true
 };
 
@@ -27,32 +27,72 @@ test("water owns HA source replacement and unsubscribes on stop", () => {
   let listener: ((snapshot: HomeAssistantSnapshot) => void) | undefined;
   const source = { snapshot: () => snapshot, subscribe: (callback: typeof listener) => { listener = callback; return () => { listener = undefined; }; } };
   const water = createWaterHeaterIntegration(baseConfig, source, () => {});
-  const initial = water.elements()[2]!.render(15);
+  const initial = water.elements()[1]!.render(15);
   snapshot = { source: "http://first", entities: [], connected: false };
   listener?.(snapshot);
-  assert.deepEqual(water.elements()[2]!.render(15), initial);
+  assert.deepEqual(water.elements()[1]!.render(15), initial);
   snapshot = { source: "http://second", entities: [], connected: false };
   listener?.(snapshot);
-  assert.notDeepEqual(water.elements()[2]!.render(15), initial);
+  assert.notDeepEqual(water.elements()[1]!.render(15), initial);
   water.stop();
   assert.equal(listener, undefined);
 });
 
-test("renders width-aware remaining, temperature bar, and temperature text elements", () => {
+test("water integration logs one diagnostic transition and one recovery", () => {
+  let snapshot: HomeAssistantSnapshot = { source: "http://first", entities, connected: true };
+  let listener: (() => void) | undefined;
+  const warnings: string[] = [];
+  const infos: string[] = [];
+  const source = {
+    snapshot: () => snapshot,
+    subscribe: (callback: HomeAssistantSnapshotListener) => { listener = () => callback(snapshot); return () => { listener = undefined; }; }
+  };
+  const water = createWaterHeaterIntegration(baseConfig, source, () => {}, {
+    warn: (message) => warnings.push(message),
+    info: (message) => infos.push(message)
+  });
+  snapshot = { source: "http://first", entities: [], connected: false };
+  listener?.();
+  listener?.();
+  snapshot = { source: "http://first", entities, connected: true };
+  listener?.();
+  assert.equal(warnings.length, 2);
+  assert.equal(infos.length, 2);
+  water.stop();
+});
+
+test("renders width-aware remaining and temperature text elements", () => {
   const heater = new WaterHeater(baseConfig);
   heater.update(baseConfig, entities);
   const elements = heater.elements();
-  assert.deepEqual(elements.map(({ id }) => id), ["water.remaining", "water.temperature-bar", "water.temperature-text", "water.emv-position"]);
-  assert.deepEqual(elements.map(({ minWidth }) => minWidth), [6, undefined, 8, 6]);
+  assert.deepEqual(elements.map(({ id }) => id), ["water.remaining", "water.temperature-text", "water.emv-position"]);
+  assert.deepEqual(elements.map(({ minWidth }) => minWidth), [6, 8, 6]);
   for (const width of [15, 22]) {
     for (const element of elements) {
       assert.equal(element.render(width).length, 1);
       assert.equal(element.render(width)[0]?.length, width);
     }
   }
-  assert.deepEqual(elements[2]?.render(15)[0]?.slice(0, 8), encode("125/135F"));
-  assert.deepEqual(elements[3]?.render(6)[0]?.slice(0, 6), encode("MV N/A"));
+  assert.deepEqual(elements[1]?.render(15)[0]?.slice(0, 8), encode("125/135F"));
+  assert.deepEqual(elements[2]?.render(6)[0]?.slice(0, 6), encode("MV N/A"));
   assert.equal(heater.status().error, undefined);
+  assert.equal(heater.status().enabled, true);
+  assert.deepEqual(heater.status().inputs.temperature, { configured: true, value: 124.6 });
+  assert.deepEqual(heater.status().inputs.emvPosition, { configured: false });
+});
+
+test("uses the heart divider only for a recognized heating state", () => {
+  const config = { ...baseConfig, heating: { entityId: "binary_sensor.heating" } };
+  const entity = { entity_id: "binary_sensor.heating", state: "on", attributes: {}, last_updated: "2026-01-01T00:00:00Z" };
+  const heater = new WaterHeater(config);
+  heater.update(config, [...entities, entity]);
+  assert.deepEqual(heater.elements()[1]!.render(15)[0]?.slice(0, 8), encode("125♥135F"));
+  assert.equal(heater.status().inputs.heating?.value, true);
+
+  heater.update(config, [...entities, { ...entity, state: "unknown" }]);
+  assert.deepEqual(heater.elements()[1]!.render(15)[0]?.slice(0, 8), encode("125/135F"));
+  assert.match(heater.status().inputs.heating?.error ?? "", /not on\/off/i);
+  assert.equal(heater.status().inputs.heating?.retained, undefined);
 });
 
 test("renders remaining as an HW bar with rounded gallons at both board widths", () => {
@@ -90,36 +130,58 @@ test("keeps the last valid reading through an unavailable entity and discards it
   const unavailable = entities.map((entity) => entity.entity_id === "sensor.tank" ? { ...entity, state: "unavailable" } : entity);
   const status = heater.update(baseConfig, unavailable);
   assert.match(status.error ?? "", /temperature/i);
-  assert.deepEqual(heater.elements()[2]!.render(15)[0]?.slice(0, 4), [27, 28, 31, 59]);
+  assert.equal(status.inputs.temperature.retained, true);
+  assert.match(status.inputs.temperature.error ?? "", /sensor\.tank.*unavailable/i);
+  assert.deepEqual(heater.elements()[1]!.render(15)[0]?.slice(0, 4), [27, 28, 31, 59]);
 
   const changed = { ...baseConfig, temperature: { entityId: "sensor.other" } };
   heater.update(changed, unavailable);
-  assert.deepEqual(heater.elements()[2]!.render(15)[0]?.slice(0, 3), [14, 59, 1]);
+  assert.deepEqual(heater.elements()[1]!.render(15)[0]?.slice(0, 3), [14, 59, 1]);
+});
+
+test("diagnostics clear values after a binding change and isolate element dependencies", () => {
+  const heater = new WaterHeater(baseConfig);
+  heater.update(baseConfig, entities);
+  const changed = { ...baseConfig, temperature: { entityId: "sensor.other" } };
+  const status = heater.update(changed, entities);
+  assert.equal(status.inputs.temperature.value, undefined);
+  assert.equal(status.inputs.temperature.retained, undefined);
+  assert.match(waterElementIssue("water.temperature-text", status) ?? "", /sensor\.other/);
+  assert.equal(waterElementIssue("water.remaining", status), undefined);
+  assert.equal(waterElementIssue("unknown", status), undefined);
+  assert.equal(waterElementIssue("water.remaining", { ...status, enabled: false }), "Water heater is disabled.");
+});
+
+test("range diagnostics identify the invalid input", () => {
+  const config = { ...baseConfig, remaining: { constant: -1 }, capacity: { constant: 0 } };
+  const status = new WaterHeater(config).update(config, []);
+  assert.match(status.inputs.remaining.error ?? "", /remaining.*non-negative/i);
+  assert.match(status.inputs.capacity.error ?? "", /capacity.*positive/i);
 });
 
 test("renders EMV position from Home Assistant with explicit overflow", () => {
   const config = { ...baseConfig, emvPosition: { entityId: "sensor.emv" } };
   const heater = new WaterHeater(config);
   heater.update(config, [...entities, { entity_id: "sensor.emv", state: "1234.6", attributes: {}, last_updated: "2026-01-01T00:00:00Z" }]);
-  const emv = heater.elements()[3]!;
+  const emv = heater.elements()[2]!;
   assert.deepEqual(emv.render(6)[0], encode("MV1235"));
   assert.deepEqual(emv.render(8)[0]?.slice(0, 6), encode("MV1235"));
 
   const large = { ...baseConfig, emvPosition: { constant: 123456 } };
   const largeHeater = new WaterHeater(large);
   largeHeater.update(large, []);
-  assert.deepEqual(largeHeater.elements()[3]!.render(6)[0]?.slice(0, 6), encode("MV????"));
+  assert.deepEqual(largeHeater.elements()[2]!.render(6)[0]?.slice(0, 6), encode("MV????"));
 });
 
 test("drafts retain last-good readings for unchanged bindings without changing live readings", () => {
   const heater = new WaterHeater(baseConfig);
   heater.update(baseConfig, entities);
   heater.update(baseConfig, []);
-  const live = heater.elements()[2]!.render(15);
-  assert.deepEqual(heater.previewElements({ ...baseConfig, baseline: 80 }, [])[2]!.render(15), live);
-  const other = heater.previewElements({ ...baseConfig, temperature: { entityId: "sensor.other" } }, [])[2]!.render(15);
+  const live = heater.elements()[1]!.render(15);
+  assert.deepEqual(heater.previewElements(baseConfig, [])[1]!.render(15), live);
+  const other = heater.previewElements({ ...baseConfig, temperature: { entityId: "sensor.other" } }, [])[1]!.render(15);
   assert.notDeepEqual(other, live);
-  assert.deepEqual(heater.elements()[2]!.render(15), live);
+  assert.deepEqual(heater.elements()[1]!.render(15), live);
 });
 
 test("reports invalid constants while leaving setup inputs optional", () => {
