@@ -7,6 +7,10 @@
 
 - User decision: the water temperature divider becomes the Vestaboard heart only when the optional Home Assistant heating entity reports a recognized on state; unknown or unavailable states use `/` and report a diagnostic. The temperature bar and baseline setting are retired, while legacy saved layouts discard only the retired bar placement during load.
 
+# Water display characters
+
+- User decision: Water Heater owns the heating-divider and remaining-bar character settings as numeric local Vestaboard codes, defaulting to `62` and `67`. Codes are sent directly in message matrices so valid letters, symbols, and colors remain available; code `71` and invalid gaps are excluded according to the [Vestaboard character code reference](https://docs.vestaboard.com/docs/charactercodes/).
+
 # vbmux
 
 - Plugins collect independently of board delivery and contribute separately placeable elements. Each size is a distinct element with a fixed height; rendering receives available width.

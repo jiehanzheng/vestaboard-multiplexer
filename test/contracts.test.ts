@@ -4,7 +4,9 @@ import test from "node:test";
 import { AppConfigSchema, DEFAULT_APP_CONFIG, PublicConfigSchema } from "../src/config.js";
 import { LayoutEntrySchema } from "../src/contracts/config.js";
 import { ConfigSaveResponseSchema, DeliveryOutcomeSchema } from "../src/contracts/config.js";
+import { HAConfigSchema } from "../src/contracts/homeAssistant.js";
 import { BoardElementSchema, PreviewResponseSchema } from "../src/contracts/api.js";
+import { WaterHeaterConfigSchema } from "../src/plugins/waterHeater/config.js";
 
 test("board endpoints reject invalid protocols and embedded credentials", () => {
   for (const url of ["not-a-url", "file:///tmp/board", "https://user:secret@board.local/"]) {
@@ -16,23 +18,53 @@ test("board endpoints reject invalid protocols and embedded credentials", () => 
   }
 });
 
+test("browser-safe settings schemas reject malformed domain values", () => {
+  assert.equal(HAConfigSchema.safeParse({
+    url: "https://user:password@homeassistant.local",
+    pause: null
+  }).success, false);
+  assert.equal(HAConfigSchema.safeParse({
+    url: "",
+    pause: { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "on" }
+  }).success, false);
+  assert.equal(WaterHeaterConfigSchema.safeParse({
+    remaining: null,
+    capacity: { constant: 0 },
+    temperature: null,
+    target: null,
+    unit: "F",
+    enabled: true
+  }).success, false);
+  assert.equal(WaterHeaterConfigSchema.safeParse({
+    remaining: null,
+    capacity: null,
+    temperature: null,
+    target: null,
+    unit: "F",
+    enabled: "false"
+  }).success, false);
+});
+
 test("public configuration schema requires secrets to be omitted", () => {
   const config = structuredClone(DEFAULT_APP_CONFIG);
   config.transport.token = "board-secret";
   config.transport.localApiKey = "local-secret";
+  config.ha.token = "ha-secret";
   assert.equal(AppConfigSchema.safeParse(config).success, true);
   const publicConfig = structuredClone(config);
   delete publicConfig.transport.token;
   delete publicConfig.transport.localApiKey;
+  delete publicConfig.ha.token;
   const response = {
     config: publicConfig,
     legacyEnvironmentVariables: [],
-    hasSecrets: { token: true, localApiKey: false }
+    hasSecrets: { token: true, localApiKey: false, haToken: true }
   };
   assert.equal(PublicConfigSchema.safeParse(response).success, true);
   const parsed = PublicConfigSchema.parse(response);
   assert.equal("token" in parsed.config.transport, false);
   assert.equal("localApiKey" in parsed.config.transport, false);
+  assert.equal("token" in parsed.config.ha, false);
   assert.equal(PublicConfigSchema.safeParse({ ...response, config }).success, true);
 });
 
@@ -40,7 +72,7 @@ test("config save responses add a delivery outcome without changing public confi
   const response = {
     config: structuredClone(DEFAULT_APP_CONFIG),
     legacyEnvironmentVariables: [],
-    hasSecrets: { token: false, localApiKey: false },
+    hasSecrets: { token: false, localApiKey: false, haToken: false },
     delivery: "failed"
   };
   const publicResponse = { ...response };

@@ -1,6 +1,6 @@
 # Vestaboard vbmux
 
-This milestone is the standalone daemon and one-shot CLI. One runtime collects Codex quota readings, composes the configured board layout, persists manual pause state, and owns rate-limited delivery. The HTTP/React workspace is added in the final milestone.
+This milestone is the standalone daemon and one-shot CLI. One runtime collects Codex and Home Assistant readings, composes the configured board layout, persists manual and Home Assistant pause state, and owns rate-limited delivery. The HTTP/React workspace is added in the final milestone.
 
 ## Run
 
@@ -41,12 +41,14 @@ The first run imports these legacy variables and then persists their values:
 | `CODEX_AUTO_START_WINDOW_5H` | Enable the 5-hour auto-start check, which sends one minimal Codex turn when that window is unused. |
 | `CODEX_AUTO_START_WINDOW_WK` | Enable the weekly auto-start check, which sends one minimal Codex turn when that window is unused. |
 
+Home Assistant settings are saved in `config.json` under `ha` and are consumed through one shared WebSocket connection. Water Heater inputs can use constants or Home Assistant entity state/numeric attributes. `water.remaining`, `water.temperature-text`, and `water.emv-position` are available to a layout; entity readings retain their last good value while Home Assistant is disconnected and report that connection diagnostic, while the heating divider falls back to `/`. Water Heater settings choose valid local Vestaboard character codes for the heating divider and remaining-water bar (`62` and `67` by default); older saved configs receive those defaults. A configured Home Assistant pause entity is matched by its exact pause and resume states. Manual and Home Assistant pause combine, survive restart, and continue holding delivery while collections run.
+
 The service has one engine in both modes:
 
 - `pnpm once` prepares the configured board, collects Codex once, composes the latest frame, and performs one delivery attempt.
 - `pnpm start` starts Codex polling, retries unresolved automatic board detection on the existing minute tick, and runs the delivery scheduler.
 - `pnpm dry-run` uses the same one-shot engine while logging the encoded frame instead of writing to a board.
-- Manual pause is stored in `pause.json`; a failed persistence operation keeps delivery paused until repaired.
+- Manual and Home Assistant pause state is stored in `pause.json`; a failed persistence operation keeps delivery paused until repaired. Phase-one files containing only `manualPause` are upgraded with an inactive Home Assistant pause on load.
 - `pauseOverlay` stores separate Note and Flagship canvases. Transparent cells preserve the frozen raw frame, while numeric cells draw over it during an effective manual or Home Assistant pause; code `0` is an opaque blank. Collection continues while paused, and pause, resume, and overlay saves use the normal delivery cadence. A paused startup waits for the bounded initial collection before its first frame, and a board-size change rebuilds the frozen base for the new dimensions.
 
 The runtime contract lives under `src/runtime/actions.ts`. It is intentionally transport-neutral so the later HTTP server can depend on the engine without making the engine depend on web code.
