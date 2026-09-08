@@ -4,58 +4,24 @@ vbmux is a small TypeScript service and web workspace for [Vestaboard](https://w
 
 ![Codex quota pacing hidden on a Vestaboard compose screen](docs/images/codex-pacing-off.png)
 
-## Set up locally
+## Run with Docker Compose
 
-Use Node 22.12 or newer, pnpm, `pfm`, and `jq`. Install and build from the repository root:
-
-```sh
-pnpm install --frozen-lockfile
-pnpm build
-```
-
-Reserve the local preview port with `pfm`, then start vbmux with fixture Codex data and simulated board delivery:
+Clone the repository and start the service with Docker Compose:
 
 ```sh
-pfm port reserve vbmux-local --preferred-port=8787 --host=127.0.0.1
-export VBMUX_PORT="$(pfm status --json | jq -er '.ports[] | select(.role == "vbmux-local") | .port')"
-echo "Open http://127.0.0.1:$VBMUX_PORT"
-VBMUX_HOST=127.0.0.1 VBMUX_DATA_DIR=./data/preview CODEX_QUOTA_SOURCE=fixture node dist/src/index.js --dry-run
-```
-
-Open the printed URL. Stop the process with Ctrl-C and release the reservation with `pfm port release vbmux-local`.
-
-The `CODEX_QUOTA_SOURCE=fixture` setting seeds the missing preview config only. Once `./data/preview/config.json` exists, its saved source remains authoritative.
-
-For a live board, reserve a port again after stopping the preview, use a separate data directory, start the same web server, and configure the connection in **Settings → Board output**:
-
-```sh
-pfm port reserve vbmux-live --preferred-port=8787 --host=127.0.0.1
-export VBMUX_PORT="$(pfm status --json | jq -er '.ports[] | select(.role == "vbmux-live") | .port')"
-echo "Open http://127.0.0.1:$VBMUX_PORT"
-VBMUX_HOST=127.0.0.1 VBMUX_DATA_DIR=./data node dist/src/index.js
-```
-
-Choose **Local API** or **Cloud API**, enter its credential, select the board or leave **Auto detect**, and save **Board settings**. Local API mode is preferred when both credentials are saved. The UI remains available while a connection is incomplete, but delivery stays blocked until the configuration is valid. `VBMUX_HOST` defaults to `0.0.0.0`, `VBMUX_PORT` to `3000`, and `VBMUX_DATA_DIR` to `./data`; set them explicitly when exposing the service beyond the local machine. The HTTP interface has no application authentication, so protect access with the network or proxy around it.
-
-Stop the live process with Ctrl-C and release its reservation with `pfm port release vbmux-live`.
-
-### Docker Compose
-
-Docker Compose persists application data in the `vbmux-data` volume and mounts the host Codex directory at `/home/node/.codex` by default. To run it locally:
-
-Existing installations can keep their checkout directory after the GitHub rename. If you move it, retain the existing Compose project name with `COMPOSE_PROJECT_NAME` or `docker compose -p` so the same data volume is used. The service remains named `vestaboard-orchestrator` to preserve its deployment identity.
-
-```sh
+git clone https://github.com/jiehanzheng/vestaboard-multiplexer.git
+cd vestaboard-multiplexer
 cp .env.example .env
-pfm port reserve vbmux-docker --preferred-port=3000 --host=0.0.0.0
-export VBMUX_PORT="$(pfm status --json | jq -er '.ports[] | select(.role == "vbmux-docker") | .port')"
-echo "Open http://127.0.0.1:$VBMUX_PORT"
 docker compose up --build
 ```
 
-Set `CODEX_HOST_DIR` in `.env` when the host credentials are elsewhere. The mounted Codex directory and `auth.json` must be writable so refresh can replace credentials. Stop Compose with Ctrl-C, then run `docker compose down` and `pfm port release vbmux-docker`.
+Open **http://localhost:3000**. Configure the board under **Settings → Board output**, then configure Codex and Water heater under **Plugins**. Set `VBMUX_PORT` in `.env` if you need a different host port. The HTTP interface has no application login; protect access through your network or reverse proxy.
 
-The web log view retains the current run's latest 200 entries; Docker keeps older history in its container logs. Follow those logs with `docker compose logs --tail 200 --follow vestaboard-orchestrator`.
+Docker Compose keeps saved settings in the `vbmux-data` volume. It mounts `${HOME}/.codex` for Codex credentials; set `CODEX_HOST_DIR` in `.env` if they live elsewhere. The mounted directory must be writable so Codex can save and refresh credentials.
+
+Stop with Ctrl-C, then run `docker compose down`. Do not add `--volumes` unless you intend to delete saved application settings. View container logs with `docker compose logs --tail 200 --follow vestaboard-orchestrator`; **Settings → Logs** shows the current run's latest 200 entries.
+
+Existing installations can keep their checkout directory after the repository rename. If you move it, preserve the existing Compose project name with `COMPOSE_PROJECT_NAME` or `docker compose -p` so the same data volume is used. The Compose service remains named `vestaboard-orchestrator`.
 
 ## Use the web workspace
 
@@ -82,15 +48,6 @@ The initial saved defaults are:
 
 The saved pause state is in `pause.json` beside `config.json`. Manual and Home Assistant pauses combine and survive restart. Collection continues during a pause. Delivery composes the saved overlay over the last successful raw frame: numeric overlay cells draw over it, including code `0` as an opaque blank, while transparent cells preserve it. Pause, resume, Home Assistant pause changes, and overlay saves follow the normal delivery cadence. Other successful settings saves request one immediate attempt for the latest frame when delivery is eligible; unchanged frames are skipped and failed attempts consume the interval. A paused startup waits for initial collection, and the startup banner is held for 30 seconds after a successful live send.
 
-The one-shot commands use the same application engine as the web server:
-
-```sh
-VBMUX_DATA_DIR=./data pnpm once
-VBMUX_DATA_DIR=./data pnpm dry-run
-```
-
-`pnpm once` collects, composes, and attempts one live delivery without starting the web server or sending a startup banner. `pnpm dry-run` logs the encoded character payload instead of writing to a board.
-
 ## Layout and plugin display
 
 The editor supports Note (3 × 15) and Flagship (6 × 22). Elements have fixed heights and may occupy rectangular board ranges. The editor rejects overlapping, undersized, and out-of-bounds placements. A `null` saved layout selects the enabled Codex default layout for the detected board. The preview uses the same character-code renderer as delivery.
@@ -111,7 +68,3 @@ The plugin reads the aggregate rate-limit windows from Codex and renders up to t
 Codex device login is managed from **Plugins → Codex**. The page checks mounted credentials, can start or cancel device sign-in, and exposes the verification URL when a code is pending. A stale managed token gets one explicit refresh and one retry of the failed quota read. If recovery fails, the plugin keeps a complete last successful snapshot when available, shows an authentication status on the board, and records safe diagnostics; it does not add another polling loop.
 
 Auto-start is off by default. When enabled for the 5-hour or weekly window, a window that is still full at 100% can receive one ephemeral prompt per reset timestamp, with a 30-minute cooldown. The plugin skips `-spark` models, preferring the last visible `-nano`, then `-mini`, then another available model. Reset-credit availability is displayed as status only; vbmux does not redeem a reset.
-
-## Development
-
-The web server is `src/index.ts`, the React workspace is under `web/`, and the application engine is shared by the server and one-shot commands. Use `pfm` before running a local server or any other command that binds a shared port.
