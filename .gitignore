@@ -1,4 +1,6 @@
 dist/
 node_modules/
+.pnpm-store/
 temp_nocommit/
 .env
+data/

@@ -1,18 +1,15 @@
-import type { VestaboardClient, VestaboardMessage } from "./orchestrator.js";
 import type { VestaboardBoard } from "./vestaboardTypes.js";
+import type { LocalMessageTransitionOptions, LocalMessageTransitionStrategy } from "./contracts/config.js";
+export type { LocalMessageTransitionOptions, LocalMessageTransitionStrategy } from "./contracts/config.js";
 
-export type LocalMessageTransitionStrategy =
-  | "column"
-  | "reverse-column"
-  | "edges-to-center"
-  | "row"
-  | "diagonal"
-  | "random";
+export interface VestaboardMessage {
+  text: string;
+  characters?: number[][];
+}
 
-export interface LocalMessageTransitionOptions {
-  strategy: LocalMessageTransitionStrategy;
-  stepIntervalMs: number;
-  stepSize: number;
+export interface VestaboardClient {
+  send(message: VestaboardMessage): Promise<void>;
+  detectBoard?(): Promise<VestaboardBoard | undefined>;
 }
 
 export const DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS: LocalMessageTransitionOptions = {
@@ -107,6 +104,7 @@ export async function detectVestaboardBoard({
   logger?: Pick<Console, "info">;
 }): Promise<VestaboardBoard | undefined> {
   const response = await fetchImpl(cloudUrl, {
+    signal: AbortSignal.timeout(30_000),
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -136,6 +134,7 @@ export async function detectLocalVestaboardBoard({
   logger?: Pick<Console, "info">;
 }): Promise<VestaboardBoard | undefined> {
   const response = await fetchImpl(localUrl, {
+    signal: AbortSignal.timeout(30_000),
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -273,6 +272,7 @@ async function post(
   { headers, body }: { headers: Record<string, string>; body: unknown }
 ): Promise<void> {
   const response = await fetchImpl(url, {
+    signal: AbortSignal.timeout(30_000),
     method: "POST",
     headers: {
       "Content-Type": "application/json",

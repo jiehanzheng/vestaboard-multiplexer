@@ -1,4 +1,4 @@
-import type { Plugin, VestaboardClient, VestaboardMessage } from "./orchestrator.js";
+import type { VestaboardClient, VestaboardMessage } from "./vestaboard.js";
 import type { VestaboardBoard } from "./vestaboardTypes.js";
 import { encode, sanitizeDisplayText } from "./plugins/codexQuota/display/shared.js";
 
@@ -6,6 +6,11 @@ const BOARD_SIZES: Record<VestaboardBoard, { rows: number; columns: number }> = 
   note: { rows: 3, columns: 15 },
   flagship: { rows: 6, columns: 22 }
 };
+
+export interface StartupPlugin {
+  id: string;
+  slug?: string;
+}
 
 export function formatStartupMessage({
   plugins,
@@ -15,7 +20,7 @@ export function formatStartupMessage({
   transport,
   statusLine
 }: {
-  plugins: Plugin[];
+  plugins: StartupPlugin[];
   now: Date;
   timeZone?: string;
   board: VestaboardBoard;
@@ -54,7 +59,7 @@ export async function sendStartupMessage({
   now = () => new Date(),
   logger = console
 }: {
-  plugins: Plugin[];
+  plugins: StartupPlugin[];
   vestaboard: VestaboardClient;
   board: () => Promise<VestaboardBoard>;
   transport: "local" | "cloud";
