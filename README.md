@@ -60,7 +60,7 @@ The plugin reads the aggregate rate-limit windows from Codex and renders up to t
 
 | Display | Screenshot | Meaning |
 | --- | --- | --- |
-| Pacing on | ![Codex quota with pacing colors](docs/images/codex-pacing-on.png) | Green means quota is at or ahead of the time-remaining pace; yellow, orange, and red indicate progressively larger deficits. The white time marker takes precedence over a quota block. |
+| Pacing on | ![Codex quota with pacing colors](docs/images/codex-pacing-on.png) | Green means quota is at or ahead of the time-remaining pace; yellow, orange, and red indicate progressively larger deficits. The white time marker appears after a window starts and takes precedence over a quota block. |
 | Pacing off | ![Codex quota without pacing colors](docs/images/codex-pacing-off.png) | Only green quota blocks and blanks remain. |
 | Auto-start ping | ![Codex full quota ping status](docs/images/codex-ping.png) | When enabled, a full watched window can trigger one minimal read-only Codex turn to start a real reset window. |
 | Flagship | ![Codex quota on Vestaboard Flagship](docs/images/codex-flagship.png) | The same quota data rendered for the 6 × 22 board. |

@@ -105,7 +105,8 @@ function compactWindowRow(state: CodexQuotaDisplayState, index: number, width: n
     now(),
     barWidth,
     state.staleWindowIds.includes(window.id),
-    state.showPacing
+    state.showPacing,
+    state.resetVisibility[window.id] === true
   );
   return [
     ...encode(label),
@@ -129,7 +130,8 @@ function largeCompactRows(state: CodexQuotaDisplayState, index: number, width: n
     now(),
     width - 2,
     state.staleWindowIds.includes(window.id),
-    state.showPacing
+    state.showPacing,
+    state.resetVisibility[window.id] === true
   );
   return [firstRow, [BLANK, ...bar, BLANK]];
 }

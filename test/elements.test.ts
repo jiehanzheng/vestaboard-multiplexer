@@ -12,6 +12,7 @@ import {
   defaultCodexLayout,
   type CodexQuotaDisplayState
 } from "../src/plugins/codexQuota/elements.js";
+import { WHITE } from "../src/plugins/codexQuota/display/shared.js";
 
 test("composes fixed-height elements and maps character cells to text", () => {
   const elements = [
@@ -140,6 +141,41 @@ test("applies custom Codex labels to compact and large rows at both board widths
   }
   assert.deepEqual(elements.find(({ id }) => id === CODEX_WINDOW_1_ID)!.render(15)[0]?.slice(0, 1), [24]);
   assert.deepEqual(elements.find(({ id }) => id === CODEX_WINDOW_2_ID)!.render(22)[0]?.slice(0, 2), [23, 28]);
+});
+
+test("gates pacing markers in compact and large Codex elements on quota history trust", () => {
+  const state: CodexQuotaDisplayState = {
+    snapshot: {
+      windows: [{
+        id: "five-hour",
+        remainingRatio: 0.998,
+        resetAt: new Date("2026-06-19T06:00:00-07:00"),
+        durationMins: 300
+      }]
+    },
+    staleWindowIds: [],
+    resetVisibility: {},
+    showPacing: true
+  };
+  const now = () => new Date("2026-06-19T00:00:00-07:00");
+  const elements = createCodexElements(() => state, now);
+
+  for (const id of [CODEX_WINDOW_1_ID, CODEX_WINDOW_2_ID, CODEX_WINDOW_1_LARGE_ID, CODEX_WINDOW_2_LARGE_ID]) {
+    const element = elements.find((candidate) => candidate.id === id)!;
+    assert.equal(element.render(15).flat().includes(WHITE), false, `${id} Note marker`);
+    assert.equal(element.render(22).flat().includes(WHITE), false, `${id} Flagship marker`);
+  }
+
+  const startedState: CodexQuotaDisplayState = {
+    ...state,
+    resetVisibility: { "five-hour": true }
+  };
+  const startedElements = createCodexElements(() => startedState, () => new Date("2026-06-19T01:00:00-07:00"));
+  for (const id of [CODEX_WINDOW_1_ID, CODEX_WINDOW_1_LARGE_ID]) {
+    const element = startedElements.find((candidate) => candidate.id === id)!;
+    assert.equal(element.render(15).flat().includes(WHITE), true, `${id} Note marker`);
+    assert.equal(element.render(22).flat().includes(WHITE), true, `${id} Flagship marker`);
+  }
 });
 
 test("composes a weekly-only window into the first default slot on both boards", () => {

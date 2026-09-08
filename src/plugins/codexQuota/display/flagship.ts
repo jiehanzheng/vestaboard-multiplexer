@@ -46,6 +46,7 @@ export function formatFlagshipQuota(
     timeZone,
     stale: snapshot.windows[index] ? staleWindowIds.includes(snapshot.windows[index].id) : false,
     showPacing,
+    pacingTrusted: snapshot.windows[index] ? resetVisibility[snapshot.windows[index].id] === true : false,
     showReset: snapshot.windows[index] ? resetVisibility[snapshot.windows[index].id] === true : false,
     customLabel: windowLabels?.[index]
   }));
@@ -121,6 +122,7 @@ function flagshipWindow(
     timeZone?: string;
     stale: boolean;
     showPacing: boolean;
+    pacingTrusted: boolean;
     showReset: boolean;
     customLabel?: string | null;
   }
@@ -133,7 +135,14 @@ function flagshipWindow(
     };
   }
 
-  const barCharacters = quotaBar(window, options.now, FLAGSHIP_BAR_WIDTH, options.stale, options.showPacing);
+  const barCharacters = quotaBar(
+    window,
+    options.now,
+    FLAGSHIP_BAR_WIDTH,
+    options.stale,
+    options.showPacing,
+    options.pacingTrusted
+  );
   return {
     text: flagshipQuotaTextRow(
       options.customLabel ?? quotaWindowLabel(window, index),

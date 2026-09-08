@@ -2,20 +2,31 @@ import type { QuotaWindow } from "../types.js";
 import { hasQuotaWindowTiming, type QuotaWindowWithTiming } from "../quotaWindow.js";
 import { BLANK, BLUE, charCode, clamp, GREEN, ORANGE, RED, WHITE, YELLOW } from "./shared.js";
 
-export function quotaBar(window: QuotaWindow, now: Date, width: number, stale = false, showPacing = true): number[] {
+export function quotaBar(
+  window: QuotaWindow,
+  now: Date,
+  width: number,
+  stale = false,
+  showPacing = true,
+  pacingTrusted = false
+): number[] {
   const remainingRatio = clamp(window.remainingRatio);
   const quotaBlocks = remainingRatio > 0
     ? Math.ceil(remainingRatio * width)
     : 0;
   const pacingWindow = hasQuotaWindowTiming(window) ? window : undefined;
-  const fill = showPacing && pacingWindow ? pacingColor(pacingWindow, now) : GREEN;
+  // Unused full windows can report provisional reset timestamps; history is the trust signal for pacing.
+  const pacingStarted = showPacing
+    && pacingTrusted
+    && pacingWindow !== undefined;
+  const fill = pacingStarted ? pacingColor(pacingWindow, now) : GREEN;
   const bar = [
     ...Array(quotaBlocks).fill(fill),
     ...Array(width - quotaBlocks).fill(BLANK)
   ];
 
   if (showPacing) {
-    if (pacingWindow) {
+    if (pacingStarted && pacingWindow) {
       const markerIndex = timeMarkerIndex(pacingWindow, now, width);
       bar[markerIndex] = WHITE;
     }

@@ -282,7 +282,11 @@ test("renders remaining quota as green Vestaboard Note character codes", () => {
       fiveHour: { remainingRatio: 1, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
       weekly: { remainingRatio: 0.3, resetAt: new Date("2026-06-21T00:00:00-07:00"), durationMins: 10_080 }
     },
-    { timeZone: "America/Los_Angeles", now: new Date("2026-06-18T21:44:00-07:00") }
+    {
+      timeZone: "America/Los_Angeles",
+      now: new Date("2026-06-18T21:44:00-07:00"),
+      resetVisibility: { primary: true, secondary: true }
+    }
   );
 
   assert.equal(message.text.split("\n")[0], "5HGGGGGGGGGW100");
@@ -342,11 +346,58 @@ test("renders equal-width 5-hour time marker buckets on Vestaboard Note", () => 
     durationMins: 300
   };
   const snapshot = { fiveHour: window, weekly: undefined };
+  const resetVisibility = { primary: true };
 
-  assert.equal(formatQuota(snapshot, { now: new Date("2026-06-19T00:00:00-07:00") }).text.split("\n")[0].slice(2, 12), "GGGGGGGGGW");
-  assert.equal(formatQuota(snapshot, { now: new Date("2026-06-19T00:29:59-07:00") }).text.split("\n")[0].slice(2, 12), "GGGGGGGGGW");
-  assert.equal(formatQuota(snapshot, { now: new Date("2026-06-19T00:30:00-07:00") }).text.split("\n")[0].slice(2, 12), "GGGGGGGGWG");
-  assert.equal(formatQuota(snapshot, { now: new Date("2026-06-19T04:59:00-07:00") }).text.split("\n")[0].slice(2, 12), "WGGGGGGGGG");
+  assert.equal(formatQuota(snapshot, { resetVisibility, now: new Date("2026-06-19T00:00:00-07:00") }).text.split("\n")[0].slice(2, 12), "GGGGGGGGGW");
+  assert.equal(formatQuota(snapshot, { resetVisibility, now: new Date("2026-06-19T00:29:59-07:00") }).text.split("\n")[0].slice(2, 12), "GGGGGGGGGW");
+  assert.equal(formatQuota(snapshot, { resetVisibility, now: new Date("2026-06-19T00:30:00-07:00") }).text.split("\n")[0].slice(2, 12), "GGGGGGGGWG");
+  assert.equal(formatQuota(snapshot, { resetVisibility, now: new Date("2026-06-19T04:59:00-07:00") }).text.split("\n")[0].slice(2, 12), "WGGGGGGGGG");
+});
+
+test("keeps moving full-window resets hidden until history confirms the timestamp", () => {
+  const history = new QuotaWindowHistory();
+  const first = {
+    windows: [{
+      id: "primary",
+      remainingRatio: 1,
+      resetAt: new Date("2026-06-19T05:00:00-07:00"),
+      durationMins: 300
+    }]
+  };
+  const moving = {
+    windows: [{
+      ...first.windows[0]!,
+      resetAt: new Date("2026-06-19T05:01:00-07:00")
+    }]
+  };
+  const now = new Date("2026-06-19T01:00:00-07:00");
+
+  history.recordFreshSnapshot(first);
+  assert.equal(formatQuota(first, { now, resetVisibility: history.resetVisibilityFor(first) }).text.includes("W"), false);
+  history.recordFreshSnapshot(moving);
+  assert.equal(formatQuota(moving, { now, resetVisibility: history.resetVisibilityFor(moving) }).text.includes("W"), false);
+  history.recordFreshSnapshot(moving);
+  assert.equal(formatQuota(moving, { now, resetVisibility: history.resetVisibilityFor(moving) }).text.includes("W"), true);
+});
+
+test("renders pacing for a used window that rounds to 100%", () => {
+  const window = {
+    remainingRatio: 0.998,
+    resetAt: new Date("2026-06-19T07:00:00-07:00"),
+    durationMins: 300
+  };
+
+  const note = formatQuota({ fiveHour: window }, {
+    now: new Date("2026-06-19T01:00:00-07:00")
+  });
+  const flagship = formatQuota({ fiveHour: window }, {
+    board: "flagship",
+    now: new Date("2026-06-19T01:00:00-07:00")
+  });
+
+  assert.equal(note.text.split("\n")[0].slice(2, 12), "YYYYYYYYYW");
+  assert.equal(flagship.text.split("\n")[1].slice(6, 10), "100%");
+  assert.equal(flagship.text.split("\n")[2].slice(1, 21), "YYYYYYYYYYYYYYYYYYYW");
 });
 
 test("status message stack prunes expired messages before retaining new ones", () => {
@@ -369,7 +420,11 @@ test("renders full quota as 100 while preserving row width", () => {
       fiveHour: { remainingRatio: 1, resetAt: new Date("2026-06-19T02:44:00-07:00"), durationMins: 300 },
       weekly: { remainingRatio: 1, resetAt: new Date("2026-06-24T14:19:00-07:00"), durationMins: 10_080 }
     },
-    { timeZone: "America/Los_Angeles", now: new Date("2026-06-18T21:44:00-07:00") }
+    {
+      timeZone: "America/Los_Angeles",
+      now: new Date("2026-06-18T21:44:00-07:00"),
+      resetVisibility: { primary: true, secondary: true }
+    }
   );
 
   assert.equal(message.text.split("\n")[0], "5HGGGGGGGGGW100");
