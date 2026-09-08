@@ -33,6 +33,7 @@ export function formatNoteQuota(
     now,
     snapshot.windows[index] ? staleWindowIds.includes(snapshot.windows[index].id) : false,
     showPacing,
+    snapshot.windows[index] ? resetVisibility[snapshot.windows[index].id] === true : false,
     windowLabels?.[index]
   ));
   const footer = statusMessage
@@ -60,6 +61,7 @@ function noteQuotaLine(
   now: Date,
   stale: boolean,
   showPacing: boolean,
+  pacingTrusted: boolean,
   customLabel: string | null | undefined
 ): { text: string; characters: number[] } {
   if (!window) {
@@ -72,7 +74,7 @@ function noteQuotaLine(
   // A one-character custom label gets the freed cell so every Note row stays
   // exactly 15 cells wide while retaining the percent suffix.
   const barWidth = NOTE_COLUMNS - [...label].length - [...percent].length;
-  const barCharacters = quotaBar(window, now, barWidth, stale, showPacing);
+  const barCharacters = quotaBar(window, now, barWidth, stale, showPacing, pacingTrusted);
 
   return {
     text: `${label}${barCharacters.map(barTextChar).join("")}${percent}`,
