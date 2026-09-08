@@ -26,6 +26,19 @@ test("loads Home Assistant and disabled water defaults", async () => {
     enabled: false
   });
   assert.equal(store.getPublic().hasSecrets.haToken, false);
+  assert.equal(store.get().transport.pauseMessageTransition, undefined);
+});
+
+test("persists and clears the optional local pause animation", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-animation-"));
+  try {
+    const store = await ConfigStore.open(dataDir, {});
+    const transition = { strategy: "diagonal" as const, stepIntervalMs: 750, stepSize: 2 };
+    await store.save({ transport: { pauseMessageTransition: transition } });
+    assert.deepEqual(store.get().transport.pauseMessageTransition, transition);
+    await store.save({ transport: { pauseMessageTransition: null } });
+    assert.equal(store.get().transport.pauseMessageTransition, undefined);
+  } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
 test("validates Home Assistant URL, pause mapping, and numeric water sources", async () => {

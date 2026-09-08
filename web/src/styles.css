@@ -158,6 +158,11 @@ a { color: inherit; }
 .entity-catalog-actions .screen-footnote { margin-top: 6px; }
 .entity-catalog-actions .inline-message { grid-column: 1 / -1; margin-top: 0; }
 .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 20px; }
+.settings-subsection { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--rule); }
+.settings-subsection .section-heading, .settings-panel .section-heading { margin-bottom: 18px; }
+.settings-subsection h3, .settings-panel h3 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.02em; }
+.pause-animation-settings { display: grid; gap: 14px; }
+.pause-animation-settings > .settings-grid { margin-top: 2px; }
 .config-field { display: grid; gap: 7px; min-width: 0; margin: 0; border: 0; padding: 0; }
 .config-field legend { padding: 0; color: var(--muted); font-size: 13px; }
 .config-field > span { display: flex; align-items: center; gap: 7px; }

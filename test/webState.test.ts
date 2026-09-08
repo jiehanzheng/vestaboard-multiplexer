@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_APP_CONFIG } from "../src/config.js";
+import { DEFAULT_APP_CONFIG, type AppConfig } from "../src/config.js";
 import { configPatchForSection, reconcileSectionSave, sectionIsDirty } from "../web/src/draftState.js";
 import { createLogDownloadLifecycle, filterLogEntries } from "../web/src/logUtils.js";
 import { WaterHeaterStatusSchema, waterElementIssue } from "../src/plugins/waterHeater/status.js";
@@ -25,15 +25,40 @@ test("section patches isolate saves and preserve an explicit credential clear", 
   assert.deepEqual(configPatchForSection("codex", config), { codex: config.codex });
 });
 
-test("pause section patches include only the pause binding and overlay draft", () => {
+test("pause section patches include the pause animation draft", () => {
   const config = structuredClone(DEFAULT_APP_CONFIG);
   config.ha.pause = { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "off" };
   config.pauseOverlay.note[0]![0] = 0;
   const patch = configPatchForSection("pause", config);
-  assert.deepEqual(patch, { ha: { pause: config.ha.pause }, pauseOverlay: config.pauseOverlay });
+  assert.deepEqual(patch, { ha: { pause: config.ha.pause }, pauseOverlay: config.pauseOverlay, transport: { pauseMessageTransition: null } });
   assert.equal("url" in (patch.ha ?? {}), false);
   assert.equal("codex" in patch, false);
 });
+
+test("board and pause section patches retain their animation drafts", () => {
+  const config = cloneConfigForTest();
+  config.transport.localMessageTransition = { strategy: "diagonal", stepIntervalMs: 900, stepSize: 2 };
+  config.transport.pauseMessageTransition = { strategy: "random", stepIntervalMs: 500, stepSize: 3 };
+  assert.deepEqual(configPatchForSection("board", config).transport?.localMessageTransition, config.transport.localMessageTransition);
+  assert.deepEqual(configPatchForSection("pause", config).transport?.pauseMessageTransition, config.transport.pauseMessageTransition);
+});
+
+test("board save acknowledgement preserves a newer pause animation draft", () => {
+  const saved = structuredClone(DEFAULT_APP_CONFIG);
+  saved.transport.pauseMessageTransition = { strategy: "random", stepIntervalMs: 500, stepSize: 3 };
+  const submittedDraft = structuredClone(saved);
+  submittedDraft.transport.localMessageTransition = { strategy: "column", stepIntervalMs: 900, stepSize: 2 };
+  const currentDraft = structuredClone(submittedDraft);
+  currentDraft.transport.pauseMessageTransition = { strategy: "diagonal", stepIntervalMs: 700, stepSize: 2 };
+  const acknowledgement = { config: structuredClone(saved), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
+  const result = reconcileSectionSave({ section: "board", acknowledgement, submittedDraft, currentDraft });
+  assert.equal(result.newerEdits, false);
+  assert.deepEqual(result.draftConfig.transport.pauseMessageTransition, currentDraft.transport.pauseMessageTransition);
+});
+
+function cloneConfigForTest(): AppConfig {
+  return structuredClone(DEFAULT_APP_CONFIG);
+}
 
 test("token-only Home Assistant edits are dirty, including an explicit clear", () => {
   const saved = structuredClone(DEFAULT_APP_CONFIG);

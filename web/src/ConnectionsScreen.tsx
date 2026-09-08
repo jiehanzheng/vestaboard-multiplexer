@@ -10,6 +10,7 @@ import { SectionSaveActions } from "./SectionSaveActions";
 import { CodexLoginSettings } from "./plugins/codexQuota/CodexLoginSettings";
 import { CodexSettings } from "./plugins/codexQuota/CodexSettings";
 import { WaterHeaterSettings } from "./plugins/waterHeater/WaterHeaterSettings";
+import { AnimationSettings, PauseAnimationSettings } from "./AnimationSettings";
 import type { WaterHeaterStatus } from "../../src/plugins/waterHeater/status.js";
 import type { ConfigSection } from "./draftState";
 import type { ConfigResponse, LoginStatus, RuntimeStatus } from "./types";
@@ -77,6 +78,7 @@ export function SettingsScreen(props: SharedProps): ReactNode {
       <section className="settings-section" aria-labelledby="pause-settings-heading">
         <div className="section-heading"><div><h2 id="pause-settings-heading">Pause settings</h2><p>Pause content manually or from an optional Home Assistant entity, then draw what appears over the frozen board.</p></div></div>
         <PlatformPauseSettings value={props.config.ha} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onChange={(ha) => props.onConfigChange({ ...props.config, ha: { ...props.config.ha, pause: ha.pause } })} />
+        <section className="settings-panel" aria-labelledby="pause-animation-heading"><div className="section-heading"><div><h3 id="pause-animation-heading">Pause animation</h3><p>Use one Local API transition for the write that pauses the board and the write that resumes it.</p></div></div><PauseAnimationSettings normal={props.config.transport.localMessageTransition} value={props.config.transport.pauseMessageTransition} disabled={!localApiAvailable(props.config, props.configResponse)} onChange={(pauseMessageTransition) => props.onConfigChange({ ...props.config, transport: { ...props.config.transport, pauseMessageTransition } })} />{!localApiAvailable(props.config, props.configResponse) ? <p className="screen-footnote">Animation settings apply only when Local API is the active board connection. Saved values remain available if you switch back.</p> : null}</section>
         <PauseOverlayEditor board={props.status?.board ?? (props.config.board === "flagship" ? "flagship" : "note")} value={props.config.pauseOverlay} background={props.status?.pauseBackground ?? props.status?.desired ?? props.status?.lastSent} onChange={(pauseOverlay) => props.onConfigChange({ ...props.config, pauseOverlay })} />
         <SectionSaveActions label="pause settings" dirty={props.dirty("pause")} saving={props.saving === "pause"} saveDisabled={savingAny && props.saving !== "pause"} feedback={sectionNotice(props.notice, "pause")} onSave={() => props.onSave("pause")} onDiscard={() => props.onDiscard("pause")} />
       </section>
@@ -95,6 +97,7 @@ function PluginDetail({ title, onBack, dirty, saving, saveDisabled, onSave, onDi
 function BoardOutputSettings({ config, response, onChange, dirty, saving, saveDisabled, feedback, onSave, onDiscard }: { config: AppConfig; response: ConfigResponse | undefined; onChange: (config: AppConfig) => void; dirty: boolean; saving: boolean; saveDisabled?: boolean; feedback?: Exclude<Notice, undefined>; onSave: () => void; onDiscard: () => void }): ReactNode {
   const hasSecrets = response?.hasSecrets;
   const transportValue = hasSecrets?.localApiKey ? "local" : hasSecrets?.token ? "cloud" : "";
+  const animationEnabled = localApiAvailable(config, response);
   return (
     <div className="settings-panel">
       <div className="settings-grid">
@@ -106,9 +109,14 @@ function BoardOutputSettings({ config, response, onChange, dirty, saving, saveDi
         <label className="config-field"><span>Local API URL</span><input type="url" value={config.transport.localUrl} onChange={(event) => onChange({ ...config, transport: { ...config.transport, localUrl: event.target.value } })} /></label>
         <label className="config-field"><span>Local API key</span><input type="password" autoComplete="new-password" value={config.transport.localApiKey ?? ""} placeholder={hasSecrets?.localApiKey ? "Saved key · type to replace" : "Paste key"} onChange={(event) => onChange({ ...config, transport: { ...config.transport, localApiKey: event.target.value } })} /><button className="button quiet" type="button" onClick={() => onChange({ ...config, transport: { ...config.transport, localApiKey: "" } })} disabled={!hasSecrets?.localApiKey && !config.transport.localApiKey}>Clear saved key</button></label>
       </div>
+      <section className="settings-subsection" aria-labelledby="normal-animation-heading"><div className="section-heading"><div><h3 id="normal-animation-heading">Local API animation</h3><p>Choose how the board changes on normal writes.</p></div></div><AnimationSettings value={config.transport.localMessageTransition} onChange={(localMessageTransition) => onChange({ ...config, transport: { ...config.transport, localMessageTransition } })} disabled={!animationEnabled} />{!animationEnabled ? <p className="screen-footnote">Animation settings apply only when Local API is the active board connection. Saved values remain available if you switch back.</p> : null}</section>
       <SectionSaveActions label="board settings" dirty={dirty} saving={saving} saveDisabled={saveDisabled} feedback={feedback} onSave={onSave} onDiscard={onDiscard} />
     </div>
   );
+}
+
+function localApiAvailable(config: AppConfig, response: ConfigResponse | undefined): boolean {
+  return Boolean(response?.hasSecrets.localApiKey || config.transport.localApiKey);
 }
 
 function EntityCatalog({ savedHaUrl, dirty, entities, loading, error, onRefresh }: { savedHaUrl: string; dirty: boolean; entities: readonly HAEntity[]; loading: boolean; error?: string; onRefresh: () => void }): ReactNode {

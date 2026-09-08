@@ -27,7 +27,7 @@ Existing installations can keep their checkout directory after the repository re
 
 **Board** shows the desired frame, the last sent or simulated frame, delivery status, and the next eligible attempt. Choose a board element to edit its placement. Draft layout changes update the board preview; **Apply layout** saves them and **Discard layout** restores the saved layout. Unsaved Codex and Water heater settings use the same preview renderer, so their effect is visible on Board before each plugin section is saved.
 
-**Settings** contains Board output, the shared Home Assistant connection, pause settings, and live logs. Each section has its own **Save …** and **Discard** controls. Save Home Assistant before refreshing its shared entity catalog. The logs view keeps the current run's latest 200 structured entries and can filter or download them.
+**Settings** contains Board output, the shared Home Assistant connection, pause settings, and live logs. Board output controls the Local API animation strategy, delay, and step size. Pause settings can use the normal animation or one Local API override for the pause and resume writes; Cloud API connections keep these saved values but do not apply them. Each section has its own **Save …** and **Discard** controls. Save Home Assistant before refreshing its shared entity catalog. The logs view keeps the current run's latest 200 structured entries and can filter or download them.
 
 **Plugins** contains **Codex** and **Water heater**. Each plugin has its own settings and save bar. Codex account status, device sign-in, quota display, pacing, polling, auto-start, and window labels live under **Plugins → Codex**. Water Heater inputs can use constants or saved Home Assistant entities under **Plugins → Water heater**.
 
@@ -41,7 +41,7 @@ The initial saved defaults are:
 
 - Board: `auto`; delivery interval: 5 minutes.
 - Cloud URL: `https://cloud.vestaboard.com/`; Local API URL: `http://vestaboard.local:7000/local-api/message`.
-- Local API transition: `row`, 2,000 ms per step, step size 1.
+- Local API transition: `row`, 2,000 ms per step, step size 1; pause and resume use the same transition unless an override is saved.
 - Codex: enabled, `app-server` source, 60-second polling, pacing on, auto-start off, automatic duration labels.
 - Water Heater: disabled, Fahrenheit, `HW` remaining label, `MV` EMV label, blue code `67` remaining bar, and code `62` heating character.
 - Pause overlay: a sparse white pause icon; transparent cells preserve the board frame underneath.
