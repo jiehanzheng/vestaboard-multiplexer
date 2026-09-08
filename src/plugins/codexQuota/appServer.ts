@@ -310,8 +310,8 @@ export async function withCodexAppServer<T>(operation: CodexAppServerOperation<T
     if (options.signal?.aborted) throw new Error("Codex operation cancelled.");
     await request("initialize", {
       clientInfo: {
-        name: "vestaboard_orchestrator",
-        title: "Vestaboard Orchestrator",
+        name: "vestaboard_multiplexer",
+        title: "Vestaboard Multiplexer",
         version: "0.1.0"
       }
     }, parseInitializeResult);
