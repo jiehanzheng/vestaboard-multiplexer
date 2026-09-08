@@ -9,10 +9,17 @@ export function configPatchForSection(section: ConfigSection, config: AppConfig)
     case "codex": return { codex: structuredClone(config.codex) };
     case "water": return { water: structuredClone(config.water) };
     case "ha": return { ha: { url: config.ha.url, ...(config.ha.token !== undefined ? { token: config.ha.token } : {}) } };
-    case "pause": return { ha: { pause: config.ha.pause }, pauseOverlay: structuredClone(config.pauseOverlay) };
+    case "pause": return {
+      ha: { pause: config.ha.pause },
+      pauseOverlay: structuredClone(config.pauseOverlay),
+      transport: { pauseMessageTransition: config.transport.pauseMessageTransition ?? null }
+    };
     case "board": return {
       board: config.board,
-      transport: structuredClone(config.transport),
+      transport: (() => {
+        const { pauseMessageTransition: _pauseMessageTransition, ...transport } = structuredClone(config.transport);
+        return transport;
+      })(),
       updateIntervalMinutes: config.updateIntervalMinutes
     };
     case "layout": return { layout: config.layout === null ? null : structuredClone(config.layout) };
@@ -24,8 +31,11 @@ function sectionValue(section: ConfigSection, config: AppConfig | PublicAppConfi
     case "codex": return config.codex;
     case "water": return config.water;
     case "ha": return { url: config.ha.url, token: "token" in config.ha ? config.ha.token : undefined };
-    case "pause": return { pause: config.ha.pause, pauseOverlay: config.pauseOverlay };
-    case "board": return { board: config.board, transport: config.transport, updateIntervalMinutes: config.updateIntervalMinutes };
+    case "pause": return { pause: config.ha.pause, pauseOverlay: config.pauseOverlay, pauseMessageTransition: config.transport.pauseMessageTransition };
+    case "board": {
+      const { pauseMessageTransition: _pauseMessageTransition, ...transport } = config.transport;
+      return { board: config.board, transport, updateIntervalMinutes: config.updateIntervalMinutes };
+    }
     case "layout": return config.layout;
   }
 }
@@ -40,10 +50,17 @@ export function replaceSection(draft: AppConfig, saved: PublicAppConfig, section
     case "codex": next.codex = structuredClone(saved.codex); break;
     case "water": next.water = structuredClone(saved.water); break;
     case "ha": next.ha = { url: saved.ha.url, pause: next.ha.pause }; break;
-    case "pause": next.ha.pause = structuredClone(saved.ha.pause); next.pauseOverlay = structuredClone(saved.pauseOverlay); break;
+    case "pause":
+      next.ha.pause = structuredClone(saved.ha.pause);
+      next.pauseOverlay = structuredClone(saved.pauseOverlay);
+      next.transport.pauseMessageTransition = saved.transport.pauseMessageTransition === undefined ? undefined : structuredClone(saved.transport.pauseMessageTransition);
+      break;
     case "board":
       next.board = saved.board;
-      next.transport = structuredClone(saved.transport) as AppConfig["transport"];
+      next.transport = {
+        ...structuredClone(saved.transport),
+        pauseMessageTransition: next.transport.pauseMessageTransition
+      } as AppConfig["transport"];
       next.updateIntervalMinutes = saved.updateIntervalMinutes;
       break;
     case "layout": next.layout = saved.layout === null ? null : structuredClone(saved.layout); break;

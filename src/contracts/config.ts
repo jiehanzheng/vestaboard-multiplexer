@@ -31,7 +31,9 @@ export const TransportSchema = z.object({
   localApiKey: z.string().optional(),
   cloudUrl: HttpUrlSchema,
   localUrl: HttpUrlSchema,
-  localMessageTransition: LocalMessageTransitionSchema
+  localMessageTransition: LocalMessageTransitionSchema,
+  /** Keep pause and resume animation together so they cannot drift into separate modes. */
+  pauseMessageTransition: LocalMessageTransitionSchema.optional()
 }).strict();
 
 const appConfigShape = {
@@ -64,7 +66,10 @@ export const ConfigPatchSchema = z.object({
   board: z.enum(["auto", "note", "flagship"]).optional(),
   ha: HAConfigSchema.partial().nullable().optional(),
   water: WaterHeaterConfigPatchSchema.nullable().optional(),
-  transport: TransportSchema.partial().extend({ localMessageTransition: LocalMessageTransitionSchema.partial().optional() }).nullable().optional(),
+  transport: TransportSchema.partial().extend({
+    localMessageTransition: LocalMessageTransitionSchema.partial().optional(),
+    pauseMessageTransition: LocalMessageTransitionSchema.partial().nullable().optional()
+  }).nullable().optional(),
   updateIntervalMinutes: z.number().finite().positive().optional(),
   codex: CodexConfigPatchSchema.optional(),
   layout: z.array(LayoutEntrySchema).nullable().optional(),

@@ -22,7 +22,7 @@ export interface DeliveryAttempt {
 
 export interface DeliveryControllerOptions {
   intervalMs: number;
-  send: (message: VestaboardMessage) => Promise<void>;
+  send: (message: VestaboardMessage, usePauseAnimation?: boolean) => Promise<void>;
   now?: () => Date;
   logger?: Pick<Console, "info" | "warn">;
 }
@@ -45,6 +45,8 @@ export class DeliveryController {
   private pauseReason: string | undefined;
   private running = true;
   private sentMessageKey: string | undefined;
+  private frameUserPaused: boolean | undefined;
+  private lastSentUserPaused: boolean | undefined;
   private inFlight: Promise<DeliveryAttempt> | undefined;
   private readonly statusListeners = new Set<(status: DeliveryStatus) => void>();
   private schedulerPromise: Promise<void> | undefined;
@@ -59,8 +61,9 @@ export class DeliveryController {
     this.logger = options.logger ?? console;
   }
 
-  updateFrame(message: VestaboardMessage): void {
+  updateFrame(message: VestaboardMessage, userPaused?: boolean): void {
     this.frame = structuredClone(message);
+    this.frameUserPaused = userPaused;
     this.requestNow();
   }
 
@@ -111,6 +114,8 @@ export class DeliveryController {
     this.sentMessageKey = undefined;
     this.lastSentFrame = undefined;
     this.lastSuccessfulAt = undefined;
+    this.frameUserPaused = undefined;
+    this.lastSentUserPaused = undefined;
     this.requestNow();
   }
 
@@ -182,17 +187,21 @@ export class DeliveryController {
 
     const message = this.frame;
     if (this.sentMessageKey === messageKey(message)) {
+      if (this.frameUserPaused !== undefined) this.lastSentUserPaused = this.frameUserPaused;
       return this.finish("unchanged");
     }
+    const userPaused = this.frameUserPaused;
+    const usePauseAnimation = userPaused !== undefined && (this.lastSentUserPaused === undefined ? userPaused : userPaused !== this.lastSentUserPaused);
 
     this.lastAttemptAt = new Date(now);
     this.lastNormalAttemptAt = new Date(now);
 
     try {
-      await this.options.send(message);
+      await this.options.send(message, usePauseAnimation);
       this.sentMessageKey = messageKey(message);
       this.lastSentFrame = message;
       this.lastSuccessfulAt = new Date(this.now());
+      if (userPaused !== undefined) this.lastSentUserPaused = userPaused;
       this.logger.info(manual ? "Sent latest Vestaboard frame after settings save." : "Sent latest Vestaboard frame.");
       return this.finish("sent");
     } catch (error) {
@@ -221,12 +230,13 @@ export class DeliveryController {
   private async performStartup(message: VestaboardMessage, holdAfterSuccessMs: number): Promise<DeliveryAttempt> {
 
     try {
-      await this.options.send(message);
+      await this.options.send(message, false);
       const now = this.now();
       this.sentMessageKey = messageKey(message);
       this.lastSentFrame = message;
       this.lastAttemptAt = new Date(now);
       this.lastSuccessfulAt = new Date(now);
+      this.lastSentUserPaused = false;
       this.startupHoldUntil = new Date(now.getTime() + holdAfterSuccessMs);
       this.logger.info("Sent Vestaboard startup message.");
       return this.finish("sent");

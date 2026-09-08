@@ -242,7 +242,15 @@ function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
       localMessageTransition: {
         ...baseConfig.transport.localMessageTransition,
         ...(transport.localMessageTransition ?? {})
-      }
+      },
+      pauseMessageTransition: transport.pauseMessageTransition === null
+        ? undefined
+        : transport.pauseMessageTransition === undefined
+          ? baseConfig.transport.pauseMessageTransition
+          : {
+              ...(baseConfig.transport.pauseMessageTransition ?? {}),
+              ...transport.pauseMessageTransition
+            }
     },
     codex: {
       ...baseConfig.codex,

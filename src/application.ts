@@ -71,12 +71,15 @@ export async function createApplication(store: ConfigStore, directory: string, d
   const delivery = new DeliveryController({
     intervalMs: config.updateIntervalMinutes * 60_000, now,
     logger: logs.child("delivery"),
-    send: async (frame) => {
+    send: async (frame, usePauseAnimation) => {
       const stateAtAttempt = pause.status();
       const boardAtAttempt = board;
       const baseAtAttempt = stateAtAttempt.paused && frozenBoard === boardAtAttempt && frozenBase ? structuredClone(frozenBase) : structuredClone(frame);
       try {
-        await makeBoard({ dryRun, ...config.transport, logger: logs.child("vestaboard") }).send(frame);
+        const localMessageTransition = usePauseAnimation
+          ? config.transport.pauseMessageTransition ?? config.transport.localMessageTransition
+          : config.transport.localMessageTransition;
+        await makeBoard({ dryRun, ...config.transport, localMessageTransition, logger: logs.child("vestaboard") }).send(frame);
         deliveryError = undefined;
         if (board === boardAtAttempt && frameMatchesBoard(baseAtAttempt, boardAtAttempt)) {
           lastSuccessfulBase = baseAtAttempt;
@@ -130,11 +133,11 @@ export async function createApplication(store: ConfigStore, directory: string, d
           frozenBase = frameMatchesBoard(sent, board) ? sent : frameMatchesBoard(current, board) ? current : compose();
           frozenBoard = board;
         }
-        delivery.updateFrame(composePauseOverlay(frozenBase, config.pauseOverlay, board));
+        delivery.updateFrame(composePauseOverlay(frozenBase, config.pauseOverlay, board), userPaused);
       } else {
         frozenBase = undefined;
         frozenBoard = undefined;
-        delivery.updateFrame(compose());
+        delivery.updateFrame(compose(), userPaused);
       }
       renderError = undefined;
     }

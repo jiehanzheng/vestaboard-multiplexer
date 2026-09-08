@@ -357,6 +357,34 @@ test("pause freezes the last clean frame while collection continues and resumes 
   }
 });
 
+test("pause and resume writes use one optional local animation override", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-animation-transition-"));
+  let nowMs = 0;
+  const transitions: Array<unknown> = [];
+  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", VESTABOARD_BOARD: "note" });
+  const normal = { strategy: "row" as const, stepIntervalMs: 2_000, stepSize: 1 };
+  const pause = { strategy: "diagonal" as const, stepIntervalMs: 500, stepSize: 2 };
+  await store.save({ transport: { localApiKey: "local-key", localMessageTransition: normal, pauseMessageTransition: pause } });
+  const app = await createApplication(store, directory, true, {
+    now: () => new Date(nowMs),
+    createVestaboardClient: (options) => {
+      transitions.push(options.localMessageTransition);
+      return { send: async () => {} };
+    }
+  });
+  try {
+    await app.runOnce();
+    nowMs = 5 * 60_000;
+    await app.actions.pause({ paused: true });
+    nowMs = 10 * 60_000;
+    await app.actions.pause({ paused: false });
+    assert.deepEqual(transitions.slice(-3), [normal, pause, pause]);
+  } finally {
+    await app.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Home Assistant pause binding saves use normal cadence when they pause or resume delivery", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-ha-save-cadence-"));
   let nowMs = 0;

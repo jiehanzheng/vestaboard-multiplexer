@@ -98,6 +98,58 @@ test("unchanged frames skip a write without blocking the next changed frame", as
   assert.equal(warnings.length, 1);
 });
 
+test("pause animation follows the physical pause state and coalesces toggles", async () => {
+  let nowMs = 0;
+  let shouldFail = false;
+  const animationFlags: boolean[] = [];
+  const delivery = new DeliveryController({
+    intervalMs: 60_000,
+    now: () => new Date(nowMs),
+    send: async (_frame, usePauseAnimation) => {
+      animationFlags.push(Boolean(usePauseAnimation));
+      if (shouldFail) throw new Error("board unavailable");
+    },
+    logger: { info() {}, warn() {} }
+  });
+
+  delivery.updateFrame(message("normal"), false);
+  assert.equal((await delivery.attempt()).outcome, "sent");
+  nowMs = 60_000;
+  delivery.updateFrame(message("paused"), true);
+  assert.equal((await delivery.attempt()).outcome, "sent");
+  nowMs = 120_000;
+  delivery.updateFrame(message("resumed"), false);
+  assert.equal((await delivery.attempt()).outcome, "sent");
+  assert.deepEqual(animationFlags, [false, true, true]);
+
+  nowMs = 180_000;
+  shouldFail = true;
+  delivery.updateFrame(message("failed-pause"), true);
+  assert.equal((await delivery.attempt()).outcome, "failed");
+  nowMs = 240_000;
+  shouldFail = false;
+  assert.equal((await delivery.attempt()).outcome, "sent");
+  assert.deepEqual(animationFlags, [false, true, true, true, true]);
+
+  nowMs = 300_000;
+  delivery.updateFrame(message("routine-paused-update"), true);
+  assert.equal((await delivery.attempt()).outcome, "sent");
+  assert.equal(animationFlags.at(-1), false);
+
+  const coalescedFlags: boolean[] = [];
+  const coalesced = new DeliveryController({
+    intervalMs: 60_000,
+    send: async (_frame, usePauseAnimation) => { coalescedFlags.push(Boolean(usePauseAnimation)); },
+    logger: { info() {}, warn() {} }
+  });
+  coalesced.updateFrame(message("coalesced-normal"), false);
+  assert.equal((await coalesced.attempt()).outcome, "sent");
+  coalesced.updateFrame(message("coalesced-pause"), true);
+  coalesced.updateFrame(message("coalesced-resume"), false);
+  assert.equal((await coalesced.attemptManual()).outcome, "sent");
+  assert.deepEqual(coalescedFlags, [false, false]);
+});
+
 test("startup bypasses the normal limiter and holds the next attempt only after success", async () => {
   let nowMs = 0;
   let sends = 0;
