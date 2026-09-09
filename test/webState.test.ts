@@ -249,3 +249,10 @@ test("water diagnostics distinguish disabled, missing, errors, and retained read
   assert.match(waterElementIssue("water.emv-position", { ...status, enabled: false }) ?? "", /disabled/);
   assert.match(waterElementIssue("water.remaining", { ...status, inputs: { ...status.inputs, remaining: { configured: false } } }) ?? "", /not configured/);
 });
+
+test("delivery holds show their real reason rather than a manual or HA pause", async () => {
+  const { pauseReason } = await import("../web/src/utils.js");
+  assert.equal(pauseReason({ manualPause: false, haPause: false, pauseReason: "Board size detection pending." }), "Board size detection pending.");
+  assert.equal(pauseReason({ manualPause: false, haPause: true }), "Paused by Home Assistant");
+  assert.equal(pauseReason({ manualPause: false, haPause: false }), "Delivery blocked");
+});

@@ -34,6 +34,7 @@ import {
   formatDate,
   getBoardMatrix,
   relativeTime,
+  pauseReason,
 } from "./utils";
 import { BOARD_DIMENSIONS, elementById, firstFreeRectangle, layoutEntryStartColumn, layoutEntryWidth, layoutRange, sortLayoutIndexes, validateLayout } from "./layoutUtils";
 import { createLatestPreviewQueue } from "./previewScheduler";
@@ -540,7 +541,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
       <div className="page-heading board-heading">
         <div>
           <h1>Your board</h1>
-          <p>{dirty ? layoutError ? "You have unsaved layout changes." : "Draft changes are previewing. Apply layout to save them." : status?.lastSentAt ? `${sentLabel} ${relativeTime(status.lastSentAt).toLowerCase()}` : `${sentLabel}: no reading yet`}</p>
+          <p>{dirty ? layoutError ? "You have unsaved layout changes." : "Draft changes are previewing. Apply layout to save them." : status?.lastSentAt ? `${sentLabel} ${relativeTime(status.lastSentAt).toLowerCase()}` : `${sentLabel}: no frame sent yet`}</p>
         </div>
         <button className="button secondary pause-button" onClick={onPause} disabled={!status}>
           <span aria-hidden="true">{status?.manualPause ? "▶" : "Ⅱ"}</span>
@@ -556,7 +557,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
 
       <div className="board-workspace">
         <section className="board-stage" aria-label="Board preview">
-          <BoardPreview
+          {previewMode === "lastSent" && !preview ? <div className="empty-output" role="status"><h2>No frame sent yet</h2><p>This process has not successfully delivered a frame. Select Desired to see the pending content.</p></div> : <BoardPreview
             board={board}
             message={preview}
             selectedEntry={selectedEntry}
@@ -564,7 +565,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
             elements={elements}
             selectedEntryIndex={selectedEntryIndex}
             onSelectEntry={setSelectedEntryIndex}
-          />
+          />}
           <div className="board-meta-row">
             <div className="segmented-control" role="group" aria-label="Board message version">
               <button className={previewMode === "desired" ? "selected" : ""} aria-pressed={previewMode === "desired"} onClick={() => setPreviewMode("desired")}>Desired</button>
@@ -577,7 +578,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
           </div>
           <div className="message-caption">
             <span>{previewMode === "desired" ? (dirty ? "Draft message" : "Desired message") : `${sentLabel} message`}</span>
-            <code>{preview?.text || "No reading yet"}</code>
+            <code>{preview?.text ?? (previewMode === "lastSent" ? "No frame sent yet" : "No preview available")}</code>
           </div>
           <RuntimeMessages status={status} />
         </section>
@@ -815,11 +816,4 @@ function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => voi
 
 function removeRow(layout: LayoutEntry[], index: number): LayoutEntry[] {
   return layout.filter((_, entryIndex) => entryIndex !== index);
-}
-
-function pauseReason(status: RuntimeStatus): string {
-  if (status.manualPause && status.haPause) return "Paused manually + by Home Assistant";
-  if (status.haPause) return "Paused by Home Assistant";
-  if (status.manualPause) return "Paused manually";
-  return "Paused";
 }

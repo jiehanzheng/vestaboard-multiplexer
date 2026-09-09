@@ -1,6 +1,6 @@
 import type { AppConfig } from "../../src/contracts/config.js";
 import { characterDisplay } from "../../src/vestaboardCharacters.js";
-import type { BoardKind } from "./types.js";
+import type { RuntimeStatus, BoardKind } from "./types.js";
 import { BOARD_DIMENSIONS } from "./layoutUtils.js";
 
 export const EMPTY_MATRIX = (rows: number, columns: number): number[][] =>
@@ -51,4 +51,13 @@ export function tileColor(code: number): string {
   if (code === 68) return "violet";
   if (code === 69) return "white";
   return "black";
+}
+
+export function pauseReason(status: Pick<RuntimeStatus, "manualPause" | "haPause" | "pauseReason">): string {
+  // A delivery hold is not a content pause: keep the backend's actionable reason visible.
+  if (status.pauseReason) return status.pauseReason;
+  if (status.manualPause && status.haPause) return "Paused manually + by Home Assistant";
+  if (status.haPause) return "Paused by Home Assistant";
+  if (status.manualPause) return "Paused manually";
+  return "Delivery blocked";
 }

@@ -321,3 +321,5 @@ a { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.empty-output { padding: 3rem 1.5rem; text-align: center; border: 1px solid var(--rule); border-radius: 12px; }
