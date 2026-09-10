@@ -38,7 +38,14 @@ const waterHeaterConfigShape = {
   target: InputSchema,
   emvPosition: InputSchema.optional(),
   heating: HeatingInputSchema.optional(),
-  emvProblem: EntityInputSchema.extend({ mode: z.enum(["binary", "missed-flow-off"]) }).nullable().optional(),
+  emvProblem: z.preprocess((value) => {
+    // Earlier deployments saved modes; normalize them without changing the active condition.
+    if (value && typeof value === "object" && !("equals" in value) && "mode" in value) {
+      const { mode, ...binding } = value;
+      if (mode === "binary" || mode === "missed-flow-off") return { ...binding, equals: mode === "binary" ? "on" : "Missed flow off active" };
+    }
+    return value;
+  }, EntityInputSchema.extend({ equals: z.string() })).nullable().optional(),
   heatingCharacter: characterCode,
   barCharacter: characterCode,
   remainingLabel: displayLabel,

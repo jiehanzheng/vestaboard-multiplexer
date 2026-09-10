@@ -116,16 +116,13 @@ export class WaterHeater {
     if (nextConfig.enabled && problem) {
       const entity = entityMap.get(problem.entityId);
       const raw = entity && (problem.attribute ? entity.attributes[problem.attribute] : entity.state);
-      const states = problem.mode === "missed-flow-off"
-        ? ["Missed flow off active", "Missed flow off not active"]
-        : ["on", "off"];
       // Restored HA state is not a fresh device report and must not assert MFO.
-      if (!connected || !entity || entity.attributes.restored || !states.includes(String(raw))) {
+      if (!connected || !entity || entity.attributes.restored || raw === undefined || raw === null || typeof raw === "object" || ["unknown", "unavailable"].includes(String(raw))) {
         problemDiagnostic.error = !connected ? connectionError(problem)
-          : `${problem.entityId}: problem state is missing, restored, or unrecognized.`;
+          : `${problem.entityId}: problem state is missing, restored, or unavailable.`;
         this.diagnostic ??= problemDiagnostic.error;
       } else {
-        this.readings.emvProblem = String(raw) === states[0];
+        this.readings.emvProblem = String(raw) === problem.equals;
         problemDiagnostic.value = this.readings.emvProblem;
       }
     }

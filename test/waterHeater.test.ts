@@ -301,13 +301,17 @@ test("rejects malformed entity and numeric source definitions", () => {
 
 
 test("optional MFO overrides only live active conditions and clears on disable or source failure", () => {
-  const config: WaterHeaterConfig = { ...baseConfig, emvPosition: { constant: 2402 }, emvProblem: { entityId: "sensor.mfo", mode: "missed-flow-off" } };
+  const config: WaterHeaterConfig = { ...baseConfig, emvPosition: { constant: 2402 }, emvProblem: { entityId: "sensor.mfo", equals: "Missed flow off active" } };
   const heater = new WaterHeater(config);
   const frame = () => heater.elements().find((e) => e.id === "water.emv-position")!.render(6)[0];
   const update = (state: string, attributes = {}) => heater.update(config, [...entities, { entity_id: "sensor.mfo", state, attributes }]);
   update("Missed flow off active");
   assert.deepEqual(frame(), [...encode("MV"), 63, ...encode("MFO")]);
   assert.equal(heater.status().inputs.emvProblem?.value, true);
+  update("missed flow off active");
+  assert.equal(heater.status().inputs.emvProblem?.value, false);
+  update("any other value");
+  assert.equal(heater.status().inputs.emvProblem?.value, false);
   update("Missed flow off not active");
   assert.deepEqual(frame(), encode("MV2402"));
   update("Missed flow off active", { restored: true });
@@ -325,7 +329,7 @@ test("optional MFO overrides only live active conditions and clears on disable o
 });
 
 test("binary MFO can display without a position and previews do not alter live readings", () => {
-  const config: WaterHeaterConfig = { ...baseConfig, emvProblem: { entityId: "binary_sensor.problem", mode: "binary" } };
+  const config: WaterHeaterConfig = { ...baseConfig, emvProblem: { entityId: "binary_sensor.problem", equals: "on" } };
   const input = [...entities, { entity_id: "binary_sensor.problem", state: "on", attributes: {} }];
   const heater = new WaterHeater(config);
   heater.update(config, input);
@@ -337,4 +341,12 @@ test("binary MFO can display without a position and previews do not alter live r
   heater.update(config, entities);
   assert.equal(heater.status().inputs.emvProblem?.value, undefined);
   assert.match(waterElementIssue("water.emv-position", heater.status()) ?? "", /missing/);
+});
+
+test("problem condition normalizes saved modes and preserves exact match strings", async () => {
+  const { WaterHeaterConfigSchema } = await import("../src/plugins/waterHeater/config.js");
+  for (const [mode, equals] of [["binary", "on"], ["missed-flow-off", "Missed flow off active"]]) {
+    assert.deepEqual(WaterHeaterConfigSchema.parse({ ...baseConfig, emvProblem: { entityId: "sensor.problem", mode } }).emvProblem, { entityId: "sensor.problem", equals });
+  }
+  assert.equal(WaterHeaterConfigSchema.parse({ ...baseConfig, emvProblem: { entityId: "sensor.problem", equals: " Active " } }).emvProblem?.equals, " Active ");
 });
