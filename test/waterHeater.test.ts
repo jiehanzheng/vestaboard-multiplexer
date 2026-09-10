@@ -298,3 +298,43 @@ test("rejects malformed entity and numeric source definitions", () => {
   }, []);
   assert.match(status.error ?? "", /capacity.*entity/i);
 });
+
+
+test("optional MFO overrides only live active conditions and clears on disable or source failure", () => {
+  const config: WaterHeaterConfig = { ...baseConfig, emvPosition: { constant: 2402 }, emvProblem: { entityId: "sensor.mfo", mode: "missed-flow-off" } };
+  const heater = new WaterHeater(config);
+  const frame = () => heater.elements().find((e) => e.id === "water.emv-position")!.render(6)[0];
+  const update = (state: string, attributes = {}) => heater.update(config, [...entities, { entity_id: "sensor.mfo", state, attributes }]);
+  update("Missed flow off active");
+  assert.deepEqual(frame(), [...encode("MV"), 63, ...encode("MFO")]);
+  assert.equal(heater.status().inputs.emvProblem?.value, true);
+  update("Missed flow off not active");
+  assert.deepEqual(frame(), encode("MV2402"));
+  update("Missed flow off active", { restored: true });
+  assert.deepEqual(frame(), encode("MV2402"));
+  assert.match(heater.status().inputs.emvProblem?.error ?? "", /restored/);
+  update("unknown");
+  assert.equal(heater.status().inputs.emvProblem?.value, undefined);
+  update("Missed flow off active");
+  heater.update(config, entities, false);
+  assert.deepEqual(frame(), encode("MV2402"));
+  update("Missed flow off active");
+  heater.update({ ...config, emvProblem: null }, entities);
+  assert.deepEqual(frame(), encode("MV2402"));
+  assert.equal(heater.status().inputs.emvProblem?.configured, false);
+});
+
+test("binary MFO can display without a position and previews do not alter live readings", () => {
+  const config: WaterHeaterConfig = { ...baseConfig, emvProblem: { entityId: "binary_sensor.problem", mode: "binary" } };
+  const input = [...entities, { entity_id: "binary_sensor.problem", state: "on", attributes: {} }];
+  const heater = new WaterHeater(config);
+  heater.update(config, input);
+  const element = () => heater.elements().find((e) => e.id === "water.emv-position")!;
+  assert.deepEqual(element().render(6)[0], [...encode("MV"), 63, ...encode("MFO")]);
+  assert.equal(waterElementIssue("water.emv-position", heater.status()), undefined);
+  heater.previewElements({ ...config, emvProblem: null }, input);
+  assert.equal(heater.status().inputs.emvProblem?.value, true);
+  heater.update(config, entities);
+  assert.equal(heater.status().inputs.emvProblem?.value, undefined);
+  assert.match(waterElementIssue("water.emv-position", heater.status()) ?? "", /missing/);
+});

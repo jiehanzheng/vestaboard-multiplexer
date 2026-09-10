@@ -38,6 +38,7 @@ const waterHeaterConfigShape = {
   target: InputSchema,
   emvPosition: InputSchema.optional(),
   heating: HeatingInputSchema.optional(),
+  emvProblem: EntityInputSchema.extend({ mode: z.enum(["binary", "missed-flow-off"]) }).nullable().optional(),
   heatingCharacter: characterCode,
   barCharacter: characterCode,
   remainingLabel: displayLabel,

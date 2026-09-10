@@ -35,6 +35,7 @@ export function WaterHeaterSettings({ board = "note", value, status, saved = tru
         {INPUT_FIELDS.map((field) => (
           <WaterInputField key={field.key} label={field.label} hint={field.hint} field={field.key} input={value[field.key] ?? null} status={saved ? status?.inputs[field.key] : undefined} entities={entities} loading={loading} error={error} onChange={(input) => onChange({ ...value, [field.key]: input } as WaterHeaterConfig)} />
         ))}
+        <EMVProblemField value={value.emvProblem} status={saved ? status?.inputs.emvProblem : undefined} entities={entities} loading={loading} error={error} onChange={(emvProblem) => onChange({ ...value, emvProblem })} />
         <HeatingInputField input={value.heating ?? null} status={saved ? status?.inputs.heating : undefined} entities={entities} loading={loading} error={error} onChange={(heating) => onChange({ ...value, heating })} />
         <CharacterSelect label="Heating divider character" value={value.heatingCharacter} board={board} onChange={(heatingCharacter) => onChange({ ...value, heatingCharacter })} />
         <CharacterSelect label="Remaining bar character" value={value.barCharacter} board={board} onChange={(barCharacter) => onChange({ ...value, barCharacter })} />
@@ -189,4 +190,15 @@ function inputValidationMessage(field: InputField, input: Input, entities: reado
   const value = input.attribute ? selected.attributes[input.attribute] : selected.state;
   if (numericValue(value) === undefined) return { tone: "error", message: "Selected value is unavailable or not numeric." };
   return undefined;
+}
+
+function EMVProblemField({ value, status, entities, loading, error, onChange }: { value: WaterHeaterConfig["emvProblem"]; status?: WaterHeaterStatus["inputs"]["emvProblem"]; entities: readonly HAEntity[]; loading: boolean; error?: string; onChange: (value: WaterHeaterConfig["emvProblem"]) => void }): ReactNode {
+  return <fieldset className="config-field">
+    <legend>Optional EMV problem indicator</legend>
+    <p>Select an entity to replace the position digits with a red tile and MFO when active. Leave empty to disable.</p>
+    <EntityPicker id="water-emv-problem" label="Problem entity (optional)" value={value?.entityId ?? ""} entities={entities} loading={loading} error={error} onChange={(entityId) => onChange(entityId ? { entityId, mode: value?.mode ?? "binary" } : null)} />
+    {value ? <label>Problem condition<select value={value.mode} onChange={(event) => onChange({ ...value, mode: event.target.value as "binary" | "missed-flow-off" })}><option value="binary">On / off problem entity</option><option value="missed-flow-off">Missed flow off active / not active</option></select></label> : null}
+    <p>Missing, unavailable, or restored states keep the position display and report a diagnostic.</p>
+    {status?.configured ? <p role={status.error ? "alert" : "status"}>{status.error ?? (status.value === true ? "Saved state: MFO active" : status.value === false ? "Saved state: clear" : "No current reading")}</p> : null}
+  </fieldset>;
 }
