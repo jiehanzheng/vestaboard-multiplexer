@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../../SettingsGroup";
 import type { ReactNode } from "react";
 import { WaterHeaterConfigSchema, type WaterHeaterConfig } from "../../../../src/contracts/config";
 import type { HAEntity } from "../../../../src/contracts/homeAssistant";
@@ -31,23 +32,26 @@ export function WaterHeaterSettings({ board = "note", value, status, saved = tru
     <div className="settings-panel">
       <label className="config-toggle"><input type="checkbox" checked={value.enabled} onChange={(event) => onChange({ ...value, enabled: event.target.checked })} /><span>Show water heater readings</span></label>
       {!saved ? <p className="inline-message info" role="status">Unsaved changes. Save Water Heater to update live readings.</p> : !value.enabled ? <p className="inline-message info" role="status">Disabled. Water heater readings will remain blank on allocated board ranges.</p> : status?.error ? <p className="inline-message error" role="alert">{status.error}</p> : <p className="inline-message info" role="status">Saved current readings are shown for the configured inputs.</p>}
-      <div className="settings-grid">
-        {INPUT_FIELDS.map((field) => (
-          <WaterInputField key={field.key} label={field.label} hint={field.hint} field={field.key} input={value[field.key] ?? null} status={saved ? status?.inputs[field.key] : undefined} entities={entities} loading={loading} error={error} onChange={(input) => onChange({ ...value, [field.key]: input } as WaterHeaterConfig)} />
-        ))}
-        <HeatingInputField input={value.heating ?? null} status={saved ? status?.inputs.heating : undefined} entities={entities} loading={loading} error={error} onChange={(heating) => onChange({ ...value, heating })} />
-        <CharacterSelect label="Heating divider character" value={value.heatingCharacter} board={board} onChange={(heatingCharacter) => onChange({ ...value, heatingCharacter })} />
-        <CharacterSelect label="Remaining bar character" value={value.barCharacter} board={board} onChange={(barCharacter) => onChange({ ...value, barCharacter })} />
-        <DisplayLabelField label="Remaining label" value={value.remainingLabel} field="remainingLabel" config={value} onChange={(remainingLabel) => onChange({ ...value, remainingLabel })} />
-        <DisplayLabelField label="EMV label" value={value.emvLabel} field="emvLabel" config={value} onChange={(emvLabel) => onChange({ ...value, emvLabel })} />
-        <label className="config-field">
-          <span>Temperature unit</span>
-          <select id="water-unit" value={value.unit} onChange={(event) => onChange({ ...value, unit: event.target.value === "C" ? "C" : "F" })}>
-            <option value="F">Fahrenheit (°F)</option>
-            <option value="C">Celsius (°C)</option>
-          </select>
-        </label>
-      </div>
+      {[
+        { title: "Hot water", description: "Usable gallons and the remaining-water bar.", fields: ["remaining", "capacity"] },
+        { title: "Temperature", description: "Current and target temperatures, with an optional heating indicator.", fields: ["temperature", "target"] },
+        { title: "Mixing valve", description: "Valve position and an optional problem indicator.", fields: ["emvPosition"] }
+      ].map((group) => <SettingsGroup key={group.title} title={group.title} description={group.description}>
+        <div className="settings-grid">
+          {INPUT_FIELDS.filter((field) => group.fields.includes(field.key)).map((field) => <WaterInputField key={field.key} label={field.label} hint={field.hint} field={field.key} input={value[field.key] ?? null} status={saved ? status?.inputs[field.key] : undefined} entities={entities} loading={loading} error={error} onChange={(input) => onChange({ ...value, [field.key]: input } as WaterHeaterConfig)} />)}
+          {group.title === "Mixing valve" ? <EMVProblemField value={value.emvProblem} status={saved ? status?.inputs.emvProblem : undefined} entities={entities} loading={loading} error={error} onChange={(emvProblem) => onChange({ ...value, emvProblem })} /> : null}
+        </div>
+        <div className="settings-grid water-appearance">
+          {group.title === "Hot water" ? <>
+            <DisplayLabelField label="Bar label" value={value.remainingLabel} field="remainingLabel" config={value} onChange={(remainingLabel) => onChange({ ...value, remainingLabel })} />
+            <CharacterSelect label="Bar character" value={value.barCharacter} board={board} onChange={(barCharacter) => onChange({ ...value, barCharacter })} />
+          </> : group.title === "Temperature" ? <>
+            <label className="config-field"><span>Temperature unit</span><select id="water-unit" value={value.unit} onChange={(event) => onChange({ ...value, unit: event.target.value === "C" ? "C" : "F" })}><option value="F">Fahrenheit (°F)</option><option value="C">Celsius (°C)</option></select></label>
+            <CharacterSelect label="Heating character" value={value.heatingCharacter} board={board} onChange={(heatingCharacter) => onChange({ ...value, heatingCharacter })} />
+            <HeatingInputField input={value.heating ?? null} status={saved ? status?.inputs.heating : undefined} entities={entities} loading={loading} error={error} onChange={(heating) => onChange({ ...value, heating })} />
+          </> : <DisplayLabelField label="Position label" value={value.emvLabel} field="emvLabel" config={value} onChange={(emvLabel) => onChange({ ...value, emvLabel })} />}
+        </div>
+      </SettingsGroup>)}
     </div>
   );
 }
@@ -92,13 +96,13 @@ function CharacterSelect({ label, value, board, onChange }: { label: string; val
       }}>
         {VESTABOARD_CHARACTER_CATALOG.map((option) => {
           const name = option.code === 62
-            ? board === "note" ? "Heart (Note)" : "Degree (Flagship)"
+            ? board === "note" ? "Red heart (Note)" : "Degree (Flagship)"
             : option.name;
           const display = characterDisplay(option.code, board);
           return <option value={option.code} key={option.code}>{option.code} · {name}{display ? ` · ${display}` : ""}</option>;
         })}
       </select>
-      <small className="screen-footnote">Sends the local character code directly; {board === "note" ? "62 is the red Heart on Note." : "62 is Degree on Flagship."}</small>
+
     </label>
   );
 }
@@ -189,4 +193,15 @@ function inputValidationMessage(field: InputField, input: Input, entities: reado
   const value = input.attribute ? selected.attributes[input.attribute] : selected.state;
   if (numericValue(value) === undefined) return { tone: "error", message: "Selected value is unavailable or not numeric." };
   return undefined;
+}
+
+function EMVProblemField({ value, status, entities, loading, error, onChange }: { value: WaterHeaterConfig["emvProblem"]; status?: WaterHeaterStatus["inputs"]["emvProblem"]; entities: readonly HAEntity[]; loading: boolean; error?: string; onChange: (value: WaterHeaterConfig["emvProblem"]) => void }): ReactNode {
+  return <fieldset className="config-field">
+    <legend>Optional EMV problem indicator</legend>
+    <p>Select an entity to replace the position digits with a red tile and MFO when active. Leave empty to disable.</p>
+    <EntityPicker id="water-emv-problem" label="Problem entity (optional)" value={value?.entityId ?? ""} entities={entities} loading={loading} error={error} onChange={(entityId) => onChange(entityId ? { entityId, equals: value?.equals ?? "on" } : null)} />
+    {value ? <label>Problem value equals<input value={value.equals} onChange={(event) => onChange({ ...value, equals: event.target.value })} /><small>Exact, case-sensitive match (for example, Missed flow off active).</small></label> : null}
+    <p>Missing, unavailable, or restored states keep the position display and report a diagnostic.</p>
+    {status?.configured ? <p role={status.error ? "alert" : "status"}>{status.error ?? (status.value === true ? "Saved state: MFO active" : status.value === false ? "Saved state: clear" : "No current reading")}</p> : null}
+  </fieldset>;
 }

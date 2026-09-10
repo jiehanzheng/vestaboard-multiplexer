@@ -1,3 +1,4 @@
+import { SettingsGroup } from "./SettingsGroup";
 import type { ReactNode } from "react";
 import type { HAConfig } from "../../src/contracts/config";
 import type { HAEntity } from "../../src/contracts/homeAssistant";
@@ -12,10 +13,7 @@ export function PlatformPauseSettings({ value, entities, loading, error, onChang
 }): ReactNode {
   const pause = value.pause;
   return (
-    <section className="settings-panel" aria-labelledby="pause-heading">
-      <h3 id="pause-heading" className="sr-only">Pause from Home Assistant</h3>
-      <p className="screen-footnote">Updates pause when the selected entity matches the pause value.</p>
-      <div className="settings-grid">
+    <SettingsGroup title="Pause from Home Assistant" description="Choose an optional entity and the values that pause and resume the board.">
         <EntityPicker
           id="ha-pause-entity"
           label="Pause entity"
@@ -25,6 +23,7 @@ export function PlatformPauseSettings({ value, entities, loading, error, onChang
           error={error}
           onChange={(entityId) => onChange({ ...value, pause: entityId ? { entityId, pauseValue: pause?.pauseValue ?? "on", resumeValue: pause?.resumeValue ?? "off" } : null })}
         />
+      <div className="settings-grid">
         <label className="config-field">
           <span>Pause value</span>
           <input id="ha-pause-value" value={pause?.pauseValue ?? ""} placeholder="on" disabled={!pause} onChange={(event) => pause && onChange({ ...value, pause: { ...pause, pauseValue: event.target.value } })} />
@@ -34,6 +33,6 @@ export function PlatformPauseSettings({ value, entities, loading, error, onChang
           <input id="ha-resume-value" value={pause?.resumeValue ?? ""} placeholder="off" disabled={!pause} onChange={(event) => pause && onChange({ ...value, pause: { ...pause, resumeValue: event.target.value } })} />
         </label>
       </div>
-    </section>
+    </SettingsGroup>
   );
 }

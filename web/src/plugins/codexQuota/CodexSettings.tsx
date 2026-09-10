@@ -1,3 +1,4 @@
+import { SettingsGroup } from "../../SettingsGroup";
 import type { ReactNode } from "react";
 import { CodexConfigSchema, type CodexConfig } from "../../../../src/contracts/config";
 import { ConfigNumber, ConfigSelect, ConfigToggle } from "../../ConfigControls";
@@ -7,17 +8,24 @@ export function CodexSettings({ value, onChange }: { value: CodexConfig; onChang
   return (
     <>
       <ConfigToggle label="Enable Codex quota" checked={value.enabled} onChange={(enabled) => update({ enabled })} />
+      <SettingsGroup title="Collection" description="Where usage comes from and how often it refreshes."><div className="settings-grid">
       <ConfigSelect label="Quota source" value={value.source} options={[{ value: "app-server", label: "Codex app-server" }, { value: "fixture", label: "Fixture data" }]} onChange={(source) => update({ source: source as CodexConfig["source"] })} />
       <ConfigNumber label="Poll interval (seconds)" value={String(value.pollIntervalSeconds)} onChange={(pollIntervalSeconds) => update({ pollIntervalSeconds })} />
       <label className="config-field">
         <span>Time zone</span>
         <input value={value.timeZone ?? ""} placeholder="Local process time" onChange={(event) => update({ timeZone: event.target.value || undefined })} />
       </label>
+      </div></SettingsGroup>
+      <SettingsGroup title="Display" description="Pacing and labels for your quota windows.">
       <ConfigToggle label="Show pacing" checked={value.showPacing} onChange={(showPacing) => update({ showPacing })} />
-      <ConfigToggle label="Auto-start 5h window" checked={value.autoStartWindow5h} onChange={(autoStartWindow5h) => update({ autoStartWindow5h })} />
-      <ConfigToggle label="Auto-start weekly window" checked={value.autoStartWindowWk} onChange={(autoStartWindowWk) => update({ autoStartWindowWk })} />
+      <div className="settings-grid">
       <WindowLabelField label="Window 1 label" value={value.window1Label} field="window1Label" config={value} onChange={(window1Label) => update({ window1Label })} />
       <WindowLabelField label="Window 2 label" value={value.window2Label} field="window2Label" config={value} onChange={(window2Label) => update({ window2Label })} />
+      </div></SettingsGroup>
+      <SettingsGroup title="Auto-start" description="Start a new quota window automatically when eligible."><div className="settings-grid">
+      <ConfigToggle label="Auto-start 5h window" checked={value.autoStartWindow5h} onChange={(autoStartWindow5h) => update({ autoStartWindow5h })} />
+      <ConfigToggle label="Auto-start weekly window" checked={value.autoStartWindowWk} onChange={(autoStartWindowWk) => update({ autoStartWindowWk })} />
+      </div></SettingsGroup>
     </>
   );
 }

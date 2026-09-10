@@ -1,5 +1,5 @@
 import type { Element } from "../elements.js";
-import { BLANK, encode } from "../vestaboardCharacters.js";
+import { BLANK, RED, encode } from "../vestaboardCharacters.js";
 import type { HAEntity } from "../contracts/homeAssistant.js";
 import type { HomeAssistantService } from "../homeAssistantService.js";
 import {
@@ -38,6 +38,7 @@ interface WaterReadings {
   target?: number;
   emvPosition?: number;
   heating?: boolean;
+  emvProblem?: boolean;
 }
 
 export class WaterHeater {
@@ -49,7 +50,8 @@ export class WaterHeater {
     temperature: "temperature:none",
     target: "target:none",
     emvPosition: "emvPosition:none",
-    heating: "heating:none"
+    heating: "heating:none",
+    emvProblem: "emvProblem:none"
   };
   private diagnostic: string | undefined;
   private inputDiagnostics = emptyWaterHeaterStatus().inputs;
@@ -71,7 +73,7 @@ export class WaterHeater {
     }
 
     const entityMap = new Map(entities.map((entity) => [entity.entity_id, entity]));
-    for (const field of ["remaining", "capacity", "temperature", "target", "emvPosition", "heating"] as const) {
+    for (const field of ["remaining", "capacity", "temperature", "target", "emvPosition", "heating", "emvProblem"] as const) {
       const input = nextConfig[field] ?? null;
       const binding = inputBinding(field, input);
       if (this.bindings[field] !== binding) {
@@ -105,6 +107,24 @@ export class WaterHeater {
       diagnostic.value = resolution.value;
       delete diagnostic.error;
       delete diagnostic.retained;
+    }
+
+    const problem = nextConfig.emvProblem;
+    const problemDiagnostic = this.inputDiagnostics.emvProblem!;
+    delete this.readings.emvProblem;
+    delete problemDiagnostic.value;
+    if (nextConfig.enabled && problem) {
+      const entity = entityMap.get(problem.entityId);
+      const raw = entity && (problem.attribute ? entity.attributes[problem.attribute] : entity.state);
+      // Restored HA state is not a fresh device report and must not assert MFO.
+      if (!connected || !entity || entity.attributes.restored || raw === undefined || raw === null || typeof raw === "object" || ["unknown", "unavailable"].includes(String(raw))) {
+        problemDiagnostic.error = !connected ? connectionError(problem)
+          : `${problem.entityId}: problem state is missing, restored, or unavailable.`;
+        this.diagnostic ??= problemDiagnostic.error;
+      } else {
+        this.readings.emvProblem = String(raw) === problem.equals;
+        problemDiagnostic.value = this.readings.emvProblem;
+      }
     }
 
     const heatingInput = nextConfig.heating ?? null;
@@ -145,7 +165,8 @@ export class WaterHeater {
       temperature: "temperature:none",
       target: "target:none",
       emvPosition: "emvPosition:none",
-      heating: "heating:none"
+      heating: "heating:none",
+    emvProblem: "emvProblem:none"
     };
     this.diagnostic = undefined;
     this.inputDiagnostics = emptyWaterHeaterStatus().inputs;
@@ -231,6 +252,10 @@ export class WaterHeater {
 
   private emvPositionRow(width: number): number[] {
     if (!this.config.enabled) return blankRow(width);
+    if (this.readings.emvProblem === true) {
+      const alert = [...encode(this.config.emvLabel), RED, ...encode("MFO")];
+      return [...alert, ...Array(Math.max(0, width - alert.length)).fill(BLANK)].slice(0, width);
+    }
     const value = this.readings.emvPosition;
     const label = this.config.emvLabel;
     if (value === undefined) return textRow(`${label} N/A`, width);
@@ -256,7 +281,7 @@ export function createWaterHeaterIntegration(config: WaterHeaterConfig, source: 
       if (!diagnostic && previous) logger.info(`Water input diagnostic recovered (${field}).`);
       if (diagnostic) lastInputDiagnostics.set(field, diagnostic); else lastInputDiagnostics.delete(field);
     }
-    const elementDiagnostic = status.error && Object.keys(status.inputs).every((field) => !status.inputs[field as keyof typeof status.inputs].error)
+    const elementDiagnostic = status.error && Object.keys(status.inputs).every((field) => !status.inputs[field as keyof typeof status.inputs]?.error)
       ? status.error : undefined;
     if (elementDiagnostic && elementDiagnostic !== lastElementDiagnostic) logger.warn(`Water element diagnostic: ${elementDiagnostic}`);
     if (!elementDiagnostic && lastElementDiagnostic) logger.info("Water element diagnostics recovered.");
@@ -348,13 +373,14 @@ function cloneConfig(config: WaterHeaterConfig): WaterHeaterConfig {
     temperature: config.temperature ? { ...config.temperature } : null,
     target: config.target ? { ...config.target } : null,
     emvPosition: config.emvPosition ? { ...config.emvPosition } : null,
+    emvProblem: config.emvProblem ? { ...config.emvProblem } : null,
     heating: config.heating ? { ...config.heating } : null
   };
 }
 
 function buildInputDiagnostics(config: WaterHeaterConfig, readings: WaterReadings, configErrors: readonly string[]): WaterHeaterStatus["inputs"] {
   const inputs = {} as WaterHeaterStatus["inputs"];
-  for (const field of ["remaining", "capacity", "temperature", "target", "emvPosition", "heating"] as const) {
+  for (const field of ["remaining", "capacity", "temperature", "target", "emvPosition", "heating", "emvProblem"] as const) {
     const input = config[field] ?? null;
     inputs[field] = {
       configured: input !== null,
