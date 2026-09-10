@@ -350,3 +350,46 @@ test("problem condition normalizes saved modes and preserves exact match strings
   }
   assert.equal(WaterHeaterConfigSchema.parse({ ...baseConfig, emvProblem: { entityId: "sensor.problem", equals: " Active " } }).emvProblem?.equals, " Active ");
 });
+
+test("water expires unavailable readings, keeps quiet valid sources fresh, and recovers", () => {
+  let time = 0;
+  const cfg = { ...baseConfig, staleAfterMinutes: 2 };
+  const heater = new WaterHeater(cfg, () => new Date(time));
+  const temperature = () => heater.elements().find((e) => e.id === "water.temperature-text")!.render(15)[0];
+  heater.update(cfg, entities);
+  time = 3_600_000;
+  assert.equal(heater.status().inputs.temperature.stale, undefined);
+  assert.notDeepEqual(temperature().slice(0, 3), encode("N/A"));
+  heater.update(cfg, [], false);
+  const retained = temperature();
+  time += 119_999;
+  assert.deepEqual(temperature(), retained);
+  time += 1;
+  assert.equal(heater.status().inputs.temperature.stale, true);
+  assert.deepEqual(temperature().slice(0, 3), encode("N/A"));
+  assert.equal(heater.status().inputs.remaining.stale, undefined); // Constant is independent of HA.
+  const before = heater.status();
+  heater.previewElements({ ...cfg, staleAfterMinutes: null }, [], false);
+  assert.deepEqual(heater.status(), before);
+  heater.update({ ...cfg, staleAfterMinutes: null }, [], false);
+  assert.deepEqual(temperature(), retained);
+  heater.update(cfg, entities);
+  assert.equal(heater.status().inputs.temperature.stale, undefined);
+  assert.deepEqual(temperature(), retained);
+});
+
+test("stale optional indicators show N/A and changed sources discard the old deadline", () => {
+  let time = 0;
+  const cfg: WaterHeaterConfig = { ...baseConfig, staleAfterMinutes: 1, emvPosition: { constant: 2402 }, emvProblem: { entityId: "sensor.problem", equals: "fault" }, heating: { entityId: "binary_sensor.heating" } };
+  const heater = new WaterHeater(cfg, () => new Date(time));
+  heater.update(cfg, [...entities, { entity_id: "sensor.problem", state: "fault", attributes: {} }, { entity_id: "binary_sensor.heating", state: "on", attributes: {} }]);
+  heater.update(cfg, entities);
+  time = 60_000;
+  assert.deepEqual(heater.elements().find((e) => e.id === "water.emv-position")!.render(6)[0], encode("MV N/A"));
+  assert.deepEqual(heater.elements().find((e) => e.id === "water.temperature-text")!.render(15)[0].slice(0, 3), encode("N/A"));
+  heater.update({ ...cfg, emvProblem: null, heating: null }, entities);
+  assert.deepEqual(heater.elements().find((e) => e.id === "water.emv-position")!.render(6)[0], encode("MV2402"));
+  heater.update({ ...cfg, temperature: { entityId: "sensor.new" } }, entities);
+  assert.equal(heater.status().inputs.temperature.stale, false);
+  assert.equal(heater.status().inputs.temperature.value, undefined);
+});

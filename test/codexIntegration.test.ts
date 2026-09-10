@@ -76,7 +76,7 @@ test("a Codex source switch clears incompatible readings while outages retain th
   assert.notDeepEqual(retainedFrame, goodFrame);
 
   await integration.configure(config({ source: "app-server" }));
-  assert.deepEqual(integration.status(), {});
+  assert.deepEqual(integration.status(), { stale: false });
   const clearedFrame = integration.elements().find((element) => element.id === "codex.window-1")!.render(15);
   assert.notDeepEqual(clearedFrame, retainedFrame);
   await integration.stop();
@@ -106,4 +106,34 @@ test("stop wins over a configuration waiting for an in-flight collection", async
   await setImmediate();
 
   assert.equal(reads, 1);
+});
+
+test("Codex stale deadline follows successful collection and supports recovery and never expire", async () => {
+  let time = 0;
+  let fail = false;
+  const integration = createCodexIntegration(config({ staleAfterMinutes: 1 }), {
+    now: () => new Date(time), logger: { warn() {}, info() {} },
+    readQuota: async () => {
+      if (fail) throw new Error("offline");
+      return { snapshot: { windows: [{ id: "primary", remainingRatio: 0.8, durationMins: 300 }] } };
+    }
+  });
+  const row = () => integration.elements().find((e) => e.id === "codex.window-1")!.render(15)[0];
+  await integration.collectInitial();
+  time = 59_999;
+  assert.equal(integration.status().stale, false);
+  fail = true;
+  await integration.collectInitial();
+  time = 60_000;
+  assert.equal(integration.status().stale, true);
+  const { encode } = await import("../src/vestaboardCharacters.js");
+  assert.deepEqual(row().slice(0, 3), encode("N/A"));
+  const draft = integration.elements(config({ staleAfterMinutes: null })).find((e) => e.id === "codex.window-1")!.render(15)[0];
+  assert.notDeepEqual(draft.slice(0, 3), encode("N/A"));
+  assert.equal(integration.status().stale, true);
+  fail = false;
+  await integration.collectInitial();
+  assert.equal(integration.status().stale, false);
+  assert.notDeepEqual(row().slice(0, 3), encode("N/A"));
+  await integration.stop();
 });

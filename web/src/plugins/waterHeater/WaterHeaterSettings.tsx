@@ -1,3 +1,4 @@
+import { StalenessSettings } from "../../StalenessSettings";
 import { SettingsGroup } from "../../SettingsGroup";
 import type { ReactNode } from "react";
 import { WaterHeaterConfigSchema, type WaterHeaterConfig } from "../../../../src/contracts/config";
@@ -52,6 +53,7 @@ export function WaterHeaterSettings({ board = "note", value, status, saved = tru
           </> : <DisplayLabelField label="Position label" value={value.emvLabel} field="emvLabel" config={value} onChange={(emvLabel) => onChange({ ...value, emvLabel })} />}
         </div>
       </SettingsGroup>)}
+      <StalenessSettings value={value.staleAfterMinutes} description="Time allowed after an entity becomes unavailable or Home Assistant disconnects. Constants and healthy, unchanged entities do not expire." onChange={(staleAfterMinutes) => onChange({ ...value, staleAfterMinutes })} />
     </div>
   );
 }
@@ -118,7 +120,7 @@ function HeatingInputField({ input, status, entities, loading, error, onChange }
       <span>Optional binary Home Assistant entity. When on, uses the selected heating character between temperatures; otherwise uses /.</span>
       <EntityPicker id="water-heating-entity" label="Heating entity" value={configured?.entityId ?? ""} entities={entities} loading={loading} error={error} onChange={(entityId) => onChange(entityId ? { entityId } : null)} />
       {selected && !validState ? <p className="inline-message error" role="alert">Entity state is not recognized as on or off; the divider stays `/`.</p> : null}
-      {status ? <p className={`screen-footnote${status.error ? " error-text" : ""}`} role={status.error ? "alert" : "status"}>{status.error ? `Saved heating error: ${status.error}` : status.value === undefined ? "Saved input has no current state." : `Saved heating state: ${status.value ? "on" : "off"}`}</p> : null}
+      {status ? <p className={`screen-footnote${status.error ? " error-text" : ""}`} role={status.error ? "alert" : "status"}>{status.error ? `Saved heating${status.stale ? " stale" : " error"}: ${status.error}` : status.value === undefined ? "Saved input has no current state." : `Saved heating state: ${status.value ? "on" : "off"}`}</p> : null}
     </fieldset>
   );
 }
@@ -144,7 +146,7 @@ function WaterInputField({ field, label, hint, input, status, entities, loading,
       {mode === "constant" ? <input aria-label={`${label} constant`} type="number" value={input && "constant" in input && Number.isFinite(input.constant) ? input.constant : ""} onChange={(event) => onChange({ constant: event.target.value === "" ? 0 : Number(event.target.value) })} /> : null}
       {mode === "entity" ? <EntityInput input={input && "entityId" in input ? input : { entityId: "" }} entities={entities} loading={loading} error={error} label={label} onChange={onChange} hasConfiguredAttribute={hasConfiguredAttribute} attributeOptions={attributeOptions} /> : null}
       {message ? <p className={`inline-message ${message.tone}`} role={message.tone === "error" ? "alert" : "status"}>{message.message}</p> : null}
-      {status ? <p className={`screen-footnote${status.error ? " error-text" : ""}`} role={status.error ? "alert" : "status"}>{status.error ? `Saved reading error: ${status.error}${status.value === undefined ? "" : ` · last good value: ${status.value}`}${status.retained ? " · retained" : ""}` : status.configured ? status.value === undefined ? "Saved input has no current reading." : `Saved reading: ${status.value}` : "Not configured."}</p> : null}
+      {status ? <p className={`screen-footnote${status.error ? " error-text" : ""}`} role={status.error ? "alert" : "status"}>{status.error ? `Saved reading${status.stale ? " stale" : " error"}: ${status.error}${status.value === undefined ? "" : ` · last good value: ${status.value}`}${status.retained ? " · retained" : ""}` : status.configured ? status.value === undefined ? "Saved input has no current reading." : `Saved reading: ${status.value}` : "Not configured."}</p> : null}
     </fieldset>
   );
 }
@@ -201,7 +203,7 @@ function EMVProblemField({ value, status, entities, loading, error, onChange }: 
     <p>Select an entity to replace the position digits with a red tile and MFO when active. Leave empty to disable.</p>
     <EntityPicker id="water-emv-problem" label="Problem entity (optional)" value={value?.entityId ?? ""} entities={entities} loading={loading} error={error} onChange={(entityId) => onChange(entityId ? { entityId, equals: value?.equals ?? "on" } : null)} />
     {value ? <label>Problem value equals<input value={value.equals} onChange={(event) => onChange({ ...value, equals: event.target.value })} /><small>Exact, case-sensitive match (for example, Missed flow off active).</small></label> : null}
-    <p>Missing, unavailable, or restored states keep the position display and report a diagnostic.</p>
-    {status?.configured ? <p role={status.error ? "alert" : "status"}>{status.error ?? (status.value === true ? "Saved state: MFO active" : status.value === false ? "Saved state: clear" : "No current reading")}</p> : null}
+    <p>Unavailable states report a diagnostic. The position display becomes N/A once the stale timeout expires.</p>
+    {status?.configured ? <p role={status.error ? "alert" : "status"}>{(status.stale ? `Stale: ${status.error}` : status.error) ?? (status.value === true ? "Saved state: MFO active" : status.value === false ? "Saved state: clear" : "No current reading")}</p> : null}
   </fieldset>;
 }

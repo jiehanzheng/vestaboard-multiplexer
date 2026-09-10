@@ -1,3 +1,4 @@
+import { StalenessSettings } from "../../StalenessSettings";
 import { SettingsGroup } from "../../SettingsGroup";
 import type { ReactNode } from "react";
 import { CodexConfigSchema, type CodexConfig } from "../../../../src/contracts/config";
@@ -26,6 +27,7 @@ export function CodexSettings({ value, onChange }: { value: CodexConfig; onChang
       <ConfigToggle label="Auto-start 5h window" checked={value.autoStartWindow5h} onChange={(autoStartWindow5h) => update({ autoStartWindow5h })} />
       <ConfigToggle label="Auto-start weekly window" checked={value.autoStartWindowWk} onChange={(autoStartWindowWk) => update({ autoStartWindowWk })} />
       </div></SettingsGroup>
+      <StalenessSettings value={value.staleAfterMinutes} description="Maximum age since the last successful Codex quota collection." onChange={(staleAfterMinutes) => update({ staleAfterMinutes })} />
     </>
   );
 }

@@ -794,7 +794,7 @@ function RuntimeMessages({ status }: { status: RuntimeStatus | undefined }): Rea
     status.deliveryError,
     status.configError,
     status.persistenceError,
-    status.codex.error,
+    status.codex.stale ? "Codex readings are stale." : status.codex.error,
     status.homeAssistant?.error ? `Home Assistant: ${status.homeAssistant.error}` : undefined,
     status.water?.error ? `Water heater: ${status.water.error}` : undefined
   ].filter((value): value is string => Boolean(value));

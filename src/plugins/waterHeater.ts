@@ -44,6 +44,7 @@ interface WaterReadings {
 export class WaterHeater {
   private config: WaterHeaterConfig;
   private readings: WaterReadings = {};
+  private unavailableSince: Partial<Record<keyof WaterReadings, number>> = {};
   private bindings: Record<keyof WaterReadings, string> = {
     remaining: "remaining:none",
     capacity: "capacity:none",
@@ -57,7 +58,7 @@ export class WaterHeater {
   private inputDiagnostics = emptyWaterHeaterStatus().inputs;
   private elementIssues: Record<string, string> = {};
 
-  constructor(config: WaterHeaterConfig = DEFAULT_WATER_HEATER_CONFIG) {
+  constructor(config: WaterHeaterConfig = DEFAULT_WATER_HEATER_CONFIG, private readonly now: () => Date = () => new Date()) {
     this.config = cloneConfig(config);
   }
 
@@ -69,7 +70,7 @@ export class WaterHeater {
     this.elementIssues = {};
     if (errors.length) {
       this.inputDiagnostics = buildInputDiagnostics(nextConfig, {}, errors);
-      return this.status();
+      return this.finishUpdate();
     }
 
     const entityMap = new Map(entities.map((entity) => [entity.entity_id, entity]));
@@ -79,6 +80,7 @@ export class WaterHeater {
       if (this.bindings[field] !== binding) {
         this.bindings[field] = binding;
         delete this.readings[field];
+        delete this.unavailableSince[field];
       }
     }
     this.inputDiagnostics = buildInputDiagnostics(nextConfig, this.readings, errors);
@@ -136,7 +138,7 @@ export class WaterHeater {
         delete heatingDiagnostic.retained;
         heatingDiagnostic.error = connectionError(heatingInput);
         this.diagnostic ??= `heating: ${heatingDiagnostic.error}`;
-        return this.status();
+        return this.finishUpdate();
       }
       const resolution = resolveHeatingInput(heatingInput, entityMap);
       if (resolution.value === undefined) {
@@ -152,13 +154,14 @@ export class WaterHeater {
         delete heatingDiagnostic.retained;
       }
     }
-    return this.status();
+    return this.finishUpdate();
   }
 
   /** Drops readings that came from a different Home Assistant source. */
   resetSource(config: WaterHeaterConfig): void {
     this.config = cloneConfig(config);
     this.readings = {};
+    this.unavailableSince = {};
     this.bindings = {
       remaining: "remaining:none",
       capacity: "capacity:none",
@@ -179,19 +182,40 @@ export class WaterHeater {
     if (errors.length) throw new Error(errors[0]);
     // Unchanged bindings retain last-good values even while HA is unavailable.
     // update() clears only bindings changed by this isolated draft.
-    const preview = new WaterHeater(this.config);
+    const preview = new WaterHeater(this.config, this.now);
     preview.readings = { ...this.readings };
+    preview.unavailableSince = { ...this.unavailableSince };
     preview.bindings = { ...this.bindings };
     preview.update(config, entities, connected);
     return preview.elements();
   }
 
+  // HA timestamps track value changes, not health: a quiet available sensor is not stale.
+  private finishUpdate(): WaterHeaterStatus {
+    for (const field of Object.keys(this.inputDiagnostics) as WaterHeaterInputName[]) {
+      if (this.inputDiagnostics[field]?.error) this.unavailableSince[field] ??= this.now().getTime();
+      else delete this.unavailableSince[field];
+    }
+    return this.status();
+  }
+
+  private stale(field: WaterHeaterInputName): boolean {
+    const since = this.unavailableSince[field];
+    const limit = this.config.staleAfterMinutes === undefined ? 15 : this.config.staleAfterMinutes;
+    return this.config.enabled && since !== undefined && limit !== null && this.now().getTime() - since >= limit * 60_000;
+  }
+
   status(): WaterHeaterStatus {
+    const staleFields = (Object.keys(this.inputDiagnostics) as WaterHeaterInputName[]).filter((field) => this.stale(field));
     return WaterHeaterStatusSchema.parse({
       enabled: this.config.enabled,
-      inputs: this.inputDiagnostics,
+      inputs: Object.fromEntries(Object.entries(this.inputDiagnostics).map(([name, input]) => {
+        const field = name as WaterHeaterInputName;
+        const since = this.unavailableSince[field];
+        return [name, { ...input, ...(since === undefined ? {} : { unavailableSince: new Date(since).toISOString(), stale: this.stale(field) }) }];
+      })),
       ...(Object.keys(this.elementIssues).length ? { elementIssues: { ...this.elementIssues } } : {}),
-      ...(this.diagnostic ? { error: this.diagnostic } : {})
+      ...(staleFields.length ? { error: `Stale readings: ${staleFields.join(", ")}.` } : this.diagnostic ? { error: this.diagnostic } : {})
     });
   }
 
@@ -225,7 +249,7 @@ export class WaterHeater {
     if (!this.config.enabled) return blankRow(width);
     const remaining = this.readings.remaining;
     const capacity = this.readings.capacity;
-    if (remaining === undefined || capacity === undefined || capacity <= 0) return textRow("N/A", width);
+    if (this.stale("remaining") || this.stale("capacity") || remaining === undefined || capacity === undefined || capacity <= 0) return textRow("N/A", width);
     const label = this.config.remainingLabel;
     if (width < label.length + 1 + 2) return textRow("N/A", width);
 
@@ -242,7 +266,7 @@ export class WaterHeater {
     if (!this.config.enabled) return blankRow(width);
     const temperature = this.readings.temperature;
     const target = this.readings.target;
-    if (temperature === undefined || target === undefined) return textRow("N/A", width);
+    if (this.stale("temperature") || this.stale("target") || this.stale("heating") || temperature === undefined || target === undefined) return textRow("N/A", width);
     const prefix = encode(displayNumber(temperature));
     const separator = this.readings.heating === true ? this.config.heatingCharacter : encode("/")[0]!;
     const suffix = encode(`${displayNumber(target)}${this.config.unit}`);
@@ -252,13 +276,14 @@ export class WaterHeater {
 
   private emvPositionRow(width: number): number[] {
     if (!this.config.enabled) return blankRow(width);
+    if (this.stale("emvProblem")) return textRow(`${this.config.emvLabel} N/A`, width);
     if (this.readings.emvProblem === true) {
       const alert = [...encode(this.config.emvLabel), RED, ...encode("MFO")];
       return [...alert, ...Array(Math.max(0, width - alert.length)).fill(BLANK)].slice(0, width);
     }
     const value = this.readings.emvPosition;
     const label = this.config.emvLabel;
-    if (value === undefined) return textRow(`${label} N/A`, width);
+    if (this.stale("emvPosition") || value === undefined) return textRow(`${label} N/A`, width);
     const text = `${label}${displayNumber(value)}`;
     return text.length <= width
       ? textRow(text, width)
@@ -266,9 +291,9 @@ export class WaterHeater {
   }
 }
 
-export function createWaterHeaterIntegration(config: WaterHeaterConfig, source: Pick<HomeAssistantService, "snapshot" | "subscribe">, changed: () => void, logger: Pick<Console, "info" | "warn"> = console) {
+export function createWaterHeaterIntegration(config: WaterHeaterConfig, source: Pick<HomeAssistantService, "snapshot" | "subscribe">, changed: () => void, logger: Pick<Console, "info" | "warn"> = console, now: () => Date = () => new Date()) {
   let current = config;
-  const heater = createWaterHeater(config);
+  const heater = new WaterHeater(config, now);
   let identity = source.snapshot().source;
   const lastInputDiagnostics = new Map<string, string>();
   let lastElementDiagnostic: string | undefined;

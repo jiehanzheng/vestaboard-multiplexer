@@ -32,6 +32,7 @@ export const HeatingInputSchema = EntityInputSchema.nullable();
 export type HeatingInput = z.infer<typeof HeatingInputSchema>;
 
 const waterHeaterConfigShape = {
+  staleAfterMinutes: z.number().finite().positive().nullable().optional(),
   remaining: InputSchema,
   capacity: InputSchema,
   temperature: InputSchema,
