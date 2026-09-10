@@ -1,3 +1,4 @@
+import { encode } from "../../vestaboardCharacters.js";
 import type { Element, LayoutEntry } from "../../elements.js";
 import type { VestaboardBoard } from "../../vestaboardTypes.js";
 import { defaultCodexLayout } from "./elements.js";
@@ -21,7 +22,7 @@ export interface CodexIntegration {
   collectInitial(): Promise<void>;
   elements(draftConfig?: CodexConfig): Element[];
   defaultLayout(board: VestaboardBoard, draftConfig?: CodexConfig): LayoutEntry[];
-  status(now?: Date): { error?: string; collectedAt?: string };
+  status(now?: Date): { error?: string; collectedAt?: string; stale?: boolean };
   loginStatus(): ReturnType<CodexQuotaPlugin["loginStatus"]>;
   loginAction(action: "start" | "cancel" | "check"): Promise<void> | void;
   stop(): Promise<void>;
@@ -44,6 +45,12 @@ export function createCodexIntegration(config: CodexConfig, dependencies: CodexI
     changed: dependencies.changed,
     readQuota: dependencies.readQuota
   });
+
+  const isStale = (value: CodexConfig, at = (dependencies.now ?? (() => new Date()))()): boolean => {
+    const collected = plugin.collectedAt();
+    const limit = value.staleAfterMinutes === undefined ? 15 : value.staleAfterMinutes;
+    return value.enabled && collected !== undefined && limit !== null && at.getTime() - collected.getTime() >= limit * 60_000;
+  };
 
   return {
     id: "codex-quota" as const,
@@ -82,13 +89,20 @@ export function createCodexIntegration(config: CodexConfig, dependencies: CodexI
     elements(draftConfig = current) {
       const state = plugin.getDisplayState();
       const enabled = draftConfig.enabled ?? current.enabled;
-      return plugin.elementsFor({
+      const elements = plugin.elementsFor({
         snapshot: enabled ? state.snapshot : undefined,
         statusMessage: enabled ? state.statusMessage : undefined,
         timeZone: draftConfig.timeZone,
         ...(draftConfig.showPacing !== undefined ? { showPacing: draftConfig.showPacing } : {}),
         windowLabels: [draftConfig.window1Label, draftConfig.window2Label]
       }, state);
+      if (!isStale(draftConfig)) return elements;
+      const unavailable = encode("N/A");
+      return elements.map((element) => ({ ...element, render: (width: number) => {
+        const original = element.render(width);
+        if (element.id === "codex.header" || original.every((row) => row.every((cell) => cell === 0))) return original;
+        return Array.from({ length: element.height }, (_, row) => Array.from({ length: width }, (_, column) => row === 0 ? unavailable[column] ?? 0 : 0));
+      } }));
     },
     defaultLayout(board, draftConfig = current) {
       return (draftConfig.enabled ?? current.enabled) ? defaultCodexLayout(board) : [];
@@ -96,6 +110,7 @@ export function createCodexIntegration(config: CodexConfig, dependencies: CodexI
     status(now) {
       const state = plugin.getDisplayState(now);
       return {
+        stale: isStale(current, now),
         ...(plugin.collectionError() ? { error: state.statusMessage ?? "Codex quota collection failed." } : {}),
         ...(plugin.collectedAt() ? { collectedAt: plugin.collectedAt()!.toISOString() } : {})
       };

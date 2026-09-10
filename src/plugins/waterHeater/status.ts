@@ -7,7 +7,9 @@ export const WaterHeaterInputStatusSchema = z.object({
   configured: z.boolean(),
   value: z.union([z.number().finite(), z.boolean()]).optional(),
   error: z.string().optional(),
-  retained: z.boolean().optional()
+  retained: z.boolean().optional(),
+  stale: z.boolean().optional(),
+  unavailableSince: z.string().optional()
 }).strict();
 
 export const WaterHeaterStatusSchema = z.object({
@@ -39,11 +41,14 @@ export function waterElementIssue(elementId: string, status: WaterHeaterStatus):
   if (!(elementId in WATER_ELEMENT_INPUTS)) return undefined;
   if (!status.enabled) return "Water heater is disabled.";
   if (status.elementIssues?.[elementId]) return status.elementIssues[elementId];
+  if (elementId === "water.temperature-text" && status.inputs.heating.stale) return "Heating state is stale.";
+  if (elementId === "water.emv-position" && status.inputs.emvProblem?.stale) return "Problem condition is stale.";
   if (elementId === "water.emv-position" && status.inputs.emvProblem?.value === true) return undefined;
   if (elementId === "water.emv-position" && status.inputs.emvProblem?.error) return status.inputs.emvProblem.error;
   for (const input of WATER_ELEMENT_INPUTS[elementId] ?? []) {
     const diagnostic = status.inputs[input];
     if (!diagnostic?.configured) return `${input} is not configured.`;
+    if (diagnostic.stale) return `${input} is stale.`;
     if (diagnostic.error && !diagnostic.retained) return diagnostic.error;
   }
   return undefined;

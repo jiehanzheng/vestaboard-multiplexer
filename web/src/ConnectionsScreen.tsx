@@ -51,6 +51,7 @@ export function PluginsScreen({ login, plugin, onPluginChange, ...props }: Share
   const savingAny = Boolean(props.saving);
   const paneNotice = props.notice?.section === plugin ? props.notice : undefined;
   if (plugin === "codex") return <PluginDetail title="Codex" onBack={() => onPluginChange(undefined)} dirty={props.dirty("codex")} saving={saving} saveDisabled={savingAny && !saving} onSave={() => props.onSave("codex")} onDiscard={() => props.onDiscard("codex")} notice={paneNotice}>
+    {props.status?.codex.stale ? <p className="inline-message error" role="status">Codex readings are stale. Quota elements display N/A until collection recovers.</p> : null}
     <CodexLoginSettings login={login} quotaError={props.status?.codex.error} onLogin={props.onLogin} onNotice={(next) => props.onNotice(next ? { ...next, section: "codex" } : undefined)} />
     <section className="connection-section" aria-labelledby="codex-quota-heading"><div className="section-heading"><div><h2 id="codex-quota-heading">Quota settings</h2><p>Choose how Codex collects and displays usage for board rows.</p></div></div><div className="settings-panel"><CodexSettings value={props.config.codex} onChange={(codex) => props.onConfigChange({ ...props.config, codex })} /></div></section>
     <button className="text-link" type="button" onClick={() => props.onOpenLogs("codex")}>View Codex logs</button>

@@ -66,7 +66,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
   });
   const pause = await PauseController.open(directory, ha, requestComposition);
   const codex = (dependencies.createCodexIntegration ?? createCodexIntegration)(config.codex, { changed: requestComposition, now, logger: logs.child("codex") });
-  const water = createWaterHeaterIntegration(config.water, ha, requestComposition, logs.child("water"));
+  const water = createWaterHeaterIntegration(config.water, ha, requestComposition, logs.child("water"), now);
   const plugins = [codex, water];
   const delivery = new DeliveryController({
     intervalMs: config.updateIntervalMinutes * 60_000, now,

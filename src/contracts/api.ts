@@ -78,7 +78,7 @@ export const RuntimeStatusSchema = z.object({
   persistenceError: z.string().optional(),
   deliveryError: z.string().optional(),
   configError: z.string().optional(),
-  codex: z.object({ error: z.string().optional(), collectedAt: z.string().optional() }).strict(),
+  codex: z.object({ error: z.string().optional(), collectedAt: z.string().optional(), stale: z.boolean().optional() }).strict(),
   homeAssistant: HAStatusSchema.optional(),
   water: WaterHeaterStatusSchema.optional(),
   login: LoginStatusSchema

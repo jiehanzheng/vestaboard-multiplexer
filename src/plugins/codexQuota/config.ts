@@ -19,6 +19,7 @@ const displayLabelText = z.string()
 const displayLabel = displayLabelText.nullable();
 
 const codexConfigShape = {
+  staleAfterMinutes: z.number().finite().positive().nullable().optional(),
   enabled: z.boolean(),
   source: z.enum(["fixture", "app-server"]),
   pollIntervalSeconds: z.number().finite().positive(),
