@@ -19,6 +19,11 @@ export function HABlockSettings({ value, status, entities, loading, error, layou
         <EntityPicker id="ha-block-entity" label="Source entity" value={value.entityId} entities={entities} loading={loading} error={error} onChange={(entityId) => onChange({ ...value, entityId })} />
         <label className="config-field"><span>Character attribute</span><input value={value.attribute} onChange={(event) => onChange({ ...value, attribute: event.target.value })} /></label>
       </div>
+      <div className="settings-grid">
+        <label className="config-field"><span>Activity attribute (optional)</span><input placeholder="None — always participates" value={value.activityAttribute ?? ""} onChange={(event) => onChange({ ...value, activityAttribute: event.target.value || undefined })} /><small>A native boolean: false yields the whole block; blank codes remain opaque.</small></label>
+        <label className="config-field"><span>Append text attribute (optional)</span><input placeholder="None" value={value.textAttribute ?? ""} onChange={(event) => onChange({ ...value, textAttribute: event.target.value || undefined, ...(!event.target.value ? { textEntityId: undefined } : {}) })} /><small>Text follows the numeric prefix directly, with no added space. Only text is shortened to fit.</small></label>
+        {value.textAttribute ? <EntityPicker id="ha-block-text-entity" label="Append text source" value={value.textEntityId ?? value.entityId} entities={entities} loading={loading} error={error} onChange={(textEntityId) => onChange({ ...value, textEntityId: textEntityId === value.entityId || !textEntityId ? undefined : textEntityId })} /> : null}
+      </div>
       <p className="screen-footnote">The entity must be ready and supply a flat array of Vestaboard character codes. Zero draws a blank cell.</p>
     </SettingsGroup>
     <SettingsGroup title="Block size" description="Characters fill across each row, then continue on the next row. Unused cells stay blank.">
@@ -26,7 +31,9 @@ export function HABlockSettings({ value, status, entities, loading, error, layou
         <label className="config-field"><span>Width (columns)</span><input type="number" min={value.unavailableDisplay === "na" ? 3 : 1} max={22} step={1} value={value.width} onChange={(event) => onChange({ ...value, width: Number(event.target.value) })} /></label>
         <label className="config-field"><span>Height (rows)</span><input type="number" min={1} max={6} step={1} value={value.height} onChange={(event) => onChange({ ...value, height: Number(event.target.value) })} /></label>
       </div>
-      <p className="screen-footnote">Size and layout save together. Place the block on Board; resizing keeps its position and must fit without overlapping other elements.</p>
+      {value.textAttribute ? <p className="screen-footnote">Appended text is uppercased; accents and quotes are normalized, unsupported glyphs become blanks, and text is shortened to fit directly after the numeric prefix.</p> : null}
+      {status?.textTruncated ? <p className="inline-message" role="status">Appended text is shortened to fit this block.</p> : null}
+      <p className="screen-footnote">Size and layout save together. Place the block on Board; resizing keeps its position and must fit the board. Enable priority on every overlapping placement to share space.</p>
     </SettingsGroup>
     <SettingsGroup title="Unavailable display" description="Choose what appears immediately when the source is missing, disconnected, or invalid. Healthy blank data stays blank.">
       <label className="config-field"><span>When unavailable</span><select value={value.unavailableDisplay} onChange={(event) => onChange({ ...value, unavailableDisplay: event.target.value === "na" ? "na" : "blank" })}>

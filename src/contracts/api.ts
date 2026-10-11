@@ -1,3 +1,4 @@
+import { ELEMENT_STATES } from "./layout.js";
 import { HABlockConfigSchema, HABlocksSchema } from "../plugins/haBlock/config.js";
 import { HABlockStatusSchema } from "../plugins/haBlock/status.js";
 import { z } from "zod";
@@ -19,11 +20,17 @@ export const BoardMessageSchema = z.object({
 
 export type BoardMessage = z.infer<typeof BoardMessageSchema>;
 
+export const LayoutDecisionSchema = z.object({
+  index: z.number().int().nonnegative(), elementId: z.string(), state: z.enum(ELEMENT_STATES),
+  reason: z.enum(["shown", "inactive", "suppressed"]), blockedBy: z.number().int().nonnegative().optional()
+}).strict();
+
 export const BoardElementSchema = z.object({
   id: z.string().min(1),
   label: z.string(),
   height: z.number().int().positive(),
   minWidth: z.number().int().positive().optional(),
+  state: z.enum(ELEMENT_STATES).optional(),
   preview: z.array(z.array(cell))
 }).strict();
 
@@ -49,6 +56,7 @@ export const PreviewRequestSchema = z.object({
 
 export type PreviewRequest = z.infer<typeof PreviewRequestSchema>;
 export const PreviewResponseSchema = z.object({
+  selection: z.array(LayoutDecisionSchema).optional(),
   text: z.string(),
   characters: z.array(z.array(cell))
 }).strict();
@@ -71,6 +79,7 @@ export const RuntimeStatusSchema = z.object({
   board: z.enum(["note", "flagship"]),
   dryRun: z.boolean().optional(),
   desired: BoardMessageSchema.optional(),
+  layoutSelection: z.array(LayoutDecisionSchema).optional(),
   lastSent: BoardMessageSchema.optional(),
   pauseBackground: BoardMessageSchema.optional(),
   nextAttemptAt: z.number(),

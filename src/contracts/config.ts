@@ -11,7 +11,8 @@ export const LayoutEntrySchema = z.object({
   elementId: z.string().min(1),
   startRow: z.number().int().nonnegative(),
   startColumn: z.number().int().nonnegative().optional(),
-  width: z.number().int().positive().optional()
+  width: z.number().int().positive().optional(),
+  priority: z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).optional()
 }).strict();
 
 export type LayoutEntry = z.infer<typeof LayoutEntrySchema>;

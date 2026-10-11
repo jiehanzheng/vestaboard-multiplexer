@@ -295,7 +295,9 @@ test("server and one-shot share frames, and status/preview cannot collect or del
     const layout = server.actions.elements().defaultLayout!;
     for (let i = 0; i < 3; i++) {
       server.actions.status(); server.actions.elements();
-      assert.deepEqual(await server.actions.preview({ layout, board: "note" }), desired);
+      const { selection, ...previewFrame } = server.actions.preview({ layout, board: "note" });
+      assert.deepEqual(previewFrame, desired);
+      assert.ok(selection?.every((entry) => entry.reason === "shown"));
     }
     assert.deepEqual({ reads, writes: sent.length }, before);
     await server.stop();
@@ -769,4 +771,49 @@ test("multiple HA blocks retain independent sources, diagnostics, and placements
     assert.equal(store.get().updateIntervalMinutes, 3);
     assert.equal(clients.length, 1);
   } finally { await app.stop(); assert.ok(clients.every((client) => client.stopped)); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("priority drafts and saved output distinguish inactive, paused and unavailable music", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-priority-draft-"));
+  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture" });
+  const music = { id: "music", name: "Music", enabled: true, entityId: "sensor.music", attribute: "characters", width: 15, height: 1,
+    activityAttribute: "active", textAttribute: "media_title", textEntityId: "media_player.music", unavailableDisplay: "blank" as const, staleAfterMinutes: 15 };
+  await store.save({ board: "note", updateIntervalMinutes: 3, ha: { url: "http://ha.test" },
+    water: { enabled: true, remaining: { constant: 40 }, capacity: { constant: 80 }, temperature: { constant: 120 }, target: { constant: 140 } },
+    haBlocks: [music], layout: [{ elementId: "water.temperature-text", startRow: 2, width: 8, priority: 0 },
+      { elementId: "ha-block.music", startRow: 2, width: 15, priority: 100 }] });
+  let client!: FakeHomeAssistantClient; let clients = 0;
+  const app = await createApplication(store, directory, true, { createHomeAssistantClient: (options) => { clients++; client = new FakeHomeAssistantClient(options); return asHomeAssistantClient(client); } });
+  const emit = async (active: boolean, color: number, title: string) => client.emit([
+    { entity_id: "sensor.music", state: "ready", attributes: { active, characters: [10, 26, color] } },
+    { entity_id: "media_player.music", state: "paused", attributes: { media_title: title } },
+    { entity_id: "media_player.draft", state: "playing", attributes: { media_title: "Draft title" } }
+  ]);
+  try {
+    await app.start(); await emit(true, 68, "1989");
+    assert.match(app.actions.status().desired!.text, /JZ 1989/);
+    assert.deepEqual(app.actions.status().layoutSelection!.map((entry) => entry.reason), ["suppressed", "shown"]);
+    await emit(true, 69, "Beyoncé — Song");
+    assert.equal(app.actions.status().desired!.characters![2]![2], 69);
+    assert.match(app.actions.status().desired!.text, /JZ BEYONCE/);
+    await emit(false, 0, "TV");
+    assert.match(app.actions.status().desired!.text, /120\/140F/);
+    assert.deepEqual(app.actions.status().layoutSelection!.map((entry) => entry.reason), ["shown", "inactive"]);
+    const before = store.get();
+    const draft = { ...music, textEntityId: "media_player.draft", activityAttribute: undefined };
+    const preview = app.actions.preview({ haBlocks: [draft], layout: before.layout!, board: "note" });
+    assert.match(preview.text, /JZ DRAFT TIT/);
+    assert.equal(preview.selection![0]!.reason, "suppressed");
+    assert.deepEqual(store.get(), before, "draft source/eligibility do not change saved settings");
+    await assert.rejects(app.actions.save({ haBlocks: [{ ...music, width: 22 }] }), /at least 22/);
+    assert.deepEqual(store.get(), before, "inactive geometry fails atomically");
+    await app.actions.save({ haBlocks: [draft] });
+    await emit(false, 0, "TV");
+    assert.match(app.actions.status().desired!.text, /DRAFT TIT/);
+    client.setConnected(false); await client.emit([]);
+    assert.equal(app.actions.status().layoutSelection![1]!.state, "unavailable");
+    assert.equal(app.actions.status().layoutSelection![1]!.reason, "shown");
+    assert.deepEqual(app.actions.status().desired!.characters![2], Array(15).fill(0));
+    assert.equal(clients, 1); assert.equal(store.get().updateIntervalMinutes, 3);
+  } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
 });

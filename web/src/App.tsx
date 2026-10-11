@@ -1,3 +1,5 @@
+import { ConfigToggle } from "./ConfigControls";
+import type { LayoutDecision } from "../../src/contracts/layout.js";
 import { HABlocksSchema, haBlockElementId, haBlockGeometry } from "../../src/plugins/haBlock/config.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CSSProperties } from "react";
@@ -18,6 +20,7 @@ import { LegacyEnvironmentWarning } from "./LegacyEnvironmentWarning";
 import { configPatchForSection, replaceSection, reconcileSectionSave, sectionIsDirty, type ConfigSection } from "./draftState";
 import type {
   BoardMessage,
+  PreviewResponse,
   BoardElement,
   BoardKind,
   ConfigResponse,
@@ -99,7 +102,7 @@ export default function App(): ReactNode {
   const [draftConfig, setDraftConfig] = useState<AppConfig>();
   const [selectedEntryIndex, setSelectedEntryIndex] = useState<number>();
   const [previewMode, setPreviewMode] = useState<PreviewMode>("desired");
-  const [draftPreview, setDraftPreview] = useState<BoardMessage>();
+  const [draftPreview, setDraftPreview] = useState<PreviewResponse>();
   const [previewError, setPreviewError] = useState<string>();
   const [previewPending, setPreviewPending] = useState(false);
   const [events, setEvents] = useState<{ connected: boolean; error?: string }>({ connected: false, error: "Connecting to live updates…" });
@@ -113,8 +116,8 @@ export default function App(): ReactNode {
   const entitySourceKeyRef = useRef("");
   const previewPayloadRevisionRef = useRef(0);
   const previewPayloadKeyRef = useRef<string | undefined>(undefined);
-  const previewQueueRef = useRef<ReturnType<typeof createLatestPreviewQueue<BoardMessage>> | undefined>(undefined);
-  if (!previewQueueRef.current) previewQueueRef.current = createLatestPreviewQueue<BoardMessage>();
+  const previewQueueRef = useRef<ReturnType<typeof createLatestPreviewQueue<PreviewResponse>> | undefined>(undefined);
+  if (!previewQueueRef.current) previewQueueRef.current = createLatestPreviewQueue<PreviewResponse>();
   const [savingSection, setSavingSection] = useState<ConfigSection>();
   const savingSectionRef = useRef<ConfigSection | undefined>(undefined);
 
@@ -230,9 +233,9 @@ export default function App(): ReactNode {
     if (!draftConfig) return saved;
     const byId = new Map(saved.map((element) => [element.id, element]));
     return [...saved.filter((element) => !element.id.startsWith("ha-block.")), ...draftConfig.haBlocks.map((block) => ({
-      id: haBlockElementId(block.id), label: block.name, ...haBlockGeometry(block), preview: byId.get(haBlockElementId(block.id))?.preview ?? []
+      id: haBlockElementId(block.id), label: block.name, ...haBlockGeometry(block), state: !block.enabled ? "inactive" as const : status?.haBlocks?.[block.id]?.state ?? byId.get(haBlockElementId(block.id))?.state, preview: byId.get(haBlockElementId(block.id))?.preview ?? []
     }))];
-  }, [elementsResponse, draftConfig]);
+  }, [elementsResponse, draftConfig, status?.haBlocks]);
   const defaultLayout = elementsResponse?.defaultLayouts?.[board] ?? elementsResponse?.defaultLayout ?? [];
   const draftLayout = draftConfig?.layout ?? defaultLayout;
   const blockValidation = draftConfig ? HABlocksSchema.safeParse(draftConfig.haBlocks) : undefined;
@@ -441,6 +444,7 @@ export default function App(): ReactNode {
             saving={savingSection === "layout"}
             savingAny={Boolean(savingSection)}
             dirty={sectionDirty("layout")}
+            selection={isDirty ? draftPreview?.selection : status?.layoutSelection}
             blockSettingsDirty={Boolean(draftConfig && configResponse && JSON.stringify(draftConfig.haBlocks) !== JSON.stringify(configResponse.config.haBlocks))}
             layoutError={layoutError}
             notice={notice?.section === "layout" || notice?.section === "runtime" ? notice : undefined}
@@ -522,6 +526,7 @@ interface BoardScreenProps {
   savingAny: boolean;
   dirty: boolean;
   blockSettingsDirty: boolean;
+  selection?: LayoutDecision[];
   layoutError: string | undefined;
   notice: Notice;
   waterStatus: WaterHeaterStatus | undefined;
@@ -532,7 +537,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
   const {
     board, boardPreference, status, elements, draftLayout, selectedEntryIndex, setSelectedEntryIndex, setDraftLayout,
     previewMode, setPreviewMode, preview, layoutPreview, previewPending, previewError,
-    onPause, onApply, onDiscard, saving, savingAny, dirty, blockSettingsDirty, layoutError, notice, waterStatus, onOpenWaterSettings
+    selection, onPause, onApply, onDiscard, saving, savingAny, dirty, blockSettingsDirty, layoutError, notice, waterStatus, onOpenWaterSettings
   } = props;
   const selectedEntry = selectedEntryIndex !== undefined ? draftLayout[selectedEntryIndex] : undefined;
   const selectedElement = selectedEntry ? elementById(elements, selectedEntry.elementId) : undefined;
@@ -575,6 +580,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
             board={board}
             message={preview}
             selectedEntry={selectedEntry}
+            selection={selection}
             layout={draftLayout}
             elements={elements}
             selectedEntryIndex={selectedEntryIndex}
@@ -605,6 +611,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
           <LayoutEditor
             board={board}
             elements={elements}
+            selection={selection}
             layout={draftLayout}
             selectedEntryIndex={selectedEntryIndex}
             onSelectEntry={setSelectedEntryIndex}
@@ -616,7 +623,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
               <h3>{selectedElement ? `${selectedElement.label} preview` : "Layout preview"}</h3>
               {selectedElement && selectedEntry ? <span className="height-label">{selectedElement.height} row{selectedElement.height === 1 ? "" : "s"}</span> : null}
             </div>
-            <MiniPreview element={selectedElement} entry={selectedEntry} board={board} message={layoutPreview} />
+            <MiniPreview element={selectedElement} entry={selectedEntry} board={board} message={selection?.[selectedEntryIndex ?? -1]?.reason === "shown" ? layoutPreview : undefined} />
             {selectedElement && selectedElement.id.startsWith("water.") ? <WaterLayoutNotice issue={waterStatus ? waterElementIssue(selectedElement.id, waterStatus) : "Water heater status is not available. Open Water Heater settings to check it."} onOpenSettings={onOpenWaterSettings} /> : null}
           </div>
           <div className="editor-actions">
@@ -648,18 +655,21 @@ interface BoardPreviewProps {
   message: BoardMessage | undefined;
   selectedEntry: LayoutEntry | undefined;
   layout: LayoutEntry[];
+  selection?: LayoutDecision[];
   elements: BoardElement[];
   selectedEntryIndex: number | undefined;
   onSelectEntry: (index: number | undefined) => void;
 }
 
-function BoardPreview({ board, message, selectedEntry, layout, elements, selectedEntryIndex, onSelectEntry }: BoardPreviewProps): ReactNode {
+function BoardPreview({ board, message, selectedEntry, layout, selection, elements, selectedEntryIndex, onSelectEntry }: BoardPreviewProps): ReactNode {
   const matrix = getBoardMatrix(message?.characters, board);
   const dimensions = BOARD_DIMENSIONS[board];
   return (
     <div className={`board-frame ${board}`}>
       <BoardSurface board={board} rows={matrix} className="vestaboard" rowLabel={(rowIndex) => `Board row ${rowIndex + 1}`} renderRow={(row, rowIndex) => {
           const segments = layout.map((entry, index) => {
+            if (selection && selection[index]?.reason !== "shown") return undefined;
+            if (!selection && entry.priority !== undefined) return undefined;
             const element = elementById(elements, entry.elementId);
             if (!element || rowIndex < entry.startRow || rowIndex >= entry.startRow + element.height) return undefined;
             const rawStart = layoutEntryStartColumn(entry);
@@ -706,13 +716,14 @@ function BoardPreview({ board, message, selectedEntry, layout, elements, selecte
 interface LayoutEditorProps {
   board: BoardKind;
   elements: BoardElement[];
+  selection?: LayoutDecision[];
   layout: LayoutEntry[];
   selectedEntryIndex: number | undefined;
   onSelectEntry: (index: number | undefined) => void;
   onChange: (layout: LayoutEntry[]) => void;
 }
 
-function LayoutEditor({ board, elements, layout, selectedEntryIndex, onSelectEntry, onChange }: LayoutEditorProps): ReactNode {
+function LayoutEditor({ board, elements, layout, selection, selectedEntryIndex, onSelectEntry, onChange }: LayoutEditorProps): ReactNode {
   const sortedIndexes = sortLayoutIndexes(layout);
   return (
     <>
@@ -729,19 +740,47 @@ function LayoutEditor({ board, elements, layout, selectedEntryIndex, onSelectEnt
           })}
         </select>
       </div>
+      {selectedEntryIndex !== undefined && layout[selectedEntryIndex] ? <div className="picker-field">
+        <label htmlFor="alternative-picker">Add alternative here</label>
+        <select id="alternative-picker" value="" onChange={(event) => {
+          const selected = layout[selectedEntryIndex];
+          const element = elementById(elements, event.target.value);
+          if (!element) return;
+          const alternative = { ...selected, elementId: element.id, width: Math.max(element.minWidth ?? 1, layoutEntryWidth(selected, board)), priority: (selected.priority ?? 0) + 1 };
+          const next = layout.map((entry, index) => index === selectedEntryIndex ? { ...entry, priority: entry.priority ?? 0 } : entry);
+          onChange([...next, alternative]); onSelectEntry(next.length);
+        }}>
+          <option value="">Choose alternative content</option>
+          {elements.map((element) => <option key={element.id} value={element.id}>{element.label}</option>)}
+        </select>
+        <p className="field-hint">Both placements share this space by priority. Set the alternative’s size and position before saving.</p>
+      </div> : null}
       {layout.length > 0 ? <div className="row-list" role="list" aria-label="Board layout">
       {sortedIndexes.map((index) => {
         const entry = layout[index];
         const element = elementById(elements, entry.elementId);
         const label = element?.label ?? `Row ${entry.startRow + 1}`;
         const range = element ? layoutEntrySummary(entry, element, elements, board) : "Unavailable range";
+        const decision = selection?.[index];
+        const reason = decision?.reason === "suppressed" ? `Hidden by ${elementById(elements, layout[decision.blockedBy!]?.elementId ?? "")?.label ?? "higher priority content"}`
+          : decision?.reason === "inactive" ? "Inactive" : decision?.state === "unavailable" ? "Showing fallback" : decision ? "Shown" : "Checking preview";
         return (
           <div className={selectedEntryIndex === index ? "row-item selected" : "row-item"} key={`${entry.elementId}-${index}`} role="listitem">
             <button className="row-main" onClick={() => onSelectEntry(index)} aria-label={`Edit ${label}, ${range}`}>
               <span className="row-number">{`Row ${entry.startRow + 1}`}</span>
-              <span className="row-label"><strong>{label}</strong><small>{range}</small></span>
+              <span className="row-label"><strong>{label}</strong><small className="placement-summary">{range}{entry.priority !== undefined ? ` · priority ${entry.priority} · tie order ${index + 1}` : ""} · {reason}</small></span>
             </button>
             <div className="row-actions">
+              {entry.priority !== undefined ? <>
+                <button className="icon-button" type="button" aria-label={`Move ${label} earlier for ties`} disabled={index === 0} onClick={() => {
+                  const next = [...layout]; [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                  onChange(next); onSelectEntry(index - 1);
+                }}>↑</button>
+                <button className="icon-button" type="button" aria-label={`Move ${label} later for ties`} disabled={index === layout.length - 1} onClick={() => {
+                  const next = [...layout]; [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                  onChange(next); onSelectEntry(index + 1);
+                }}>↓</button>
+              </> : null}
               <button className="icon-button danger" aria-label={`Remove ${label}`} onClick={() => {
                 onChange(removeRow(layout, index));
                 if (selectedEntryIndex === index) onSelectEntry(undefined);
@@ -758,7 +797,6 @@ function LayoutEditor({ board, elements, layout, selectedEntryIndex, onSelectEnt
 
 function MiniPreview({ element, entry, board, message }: { element: BoardElement | undefined; entry: LayoutEntry | undefined; board: BoardKind; message: BoardMessage | undefined }): ReactNode {
   if (!element) return <div className="mini-preview empty">Choose an element to preview it.</div>;
-  if (entry && !message) return <div className="mini-preview empty">Preview unavailable until this placement is valid.</div>;
   const rawStart = entry ? layoutEntryStartColumn(entry) : 0;
   const rawWidth = entry ? layoutEntryWidth(entry, board) : element.preview[0]?.length ?? BOARD_DIMENSIONS[board].columns;
   const start = Number.isInteger(rawStart) ? Math.max(0, rawStart) : 0;
@@ -766,8 +804,9 @@ function MiniPreview({ element, entry, board, message }: { element: BoardElement
   const renderedRows = entry && message?.characters
     ? message.characters.slice(entry.startRow, entry.startRow + element.height)
     : undefined;
-  const rows = renderedRows && renderedRows.length === element.height ? renderedRows : element.preview;
-  const miniRow = rows.flatMap((row) => row.slice(start, start + width));
+  const composed = Boolean(renderedRows && renderedRows.length === element.height);
+  const rows = composed ? renderedRows! : element.preview;
+  const miniRow = rows.flatMap((row) => row.slice(composed ? start : 0, (composed ? start : 0) + width));
   return <BoardSurface
     board={board}
     rows={[miniRow]}
@@ -791,6 +830,8 @@ function SelectedLayoutFields({ entry, element, board, elements, onChange }: { e
       <label className="config-field"><span>Width</span><input type="number" min={1} max={dimensions.columns - startColumn} value={width} onChange={(event) => onChange({ width: Number(event.target.value) })} /></label>
       <div className="config-field"><span>Height</span><output>{element.height} row{element.height === 1 ? "" : "s"}</output></div>
     </div>
+    <ConfigToggle label="Share space by priority" checked={entry.priority !== undefined} onChange={(enabled) => onChange({ priority: enabled ? 0 : undefined })} />
+    {entry.priority !== undefined ? <label className="config-field"><span>Priority</span><input type="number" step={1} value={entry.priority} onChange={(event) => onChange({ priority: Number(event.target.value) })} /><small>Higher wins. Equal priorities use saved order; use the arrows to choose which comes first. A winning block owns its whole rectangle, including blanks.</small></label> : null}
     <p className="screen-footnote">{layoutEntrySummary(entry, element, elements, board)} · minimum width {element.minWidth ?? 1}</p>
   </section>;
 }

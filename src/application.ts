@@ -1,3 +1,4 @@
+import type { LayoutDecision } from "./contracts/layout.js";
 import { mergeHABlocks } from "./plugins/haBlock/config.js";
 import { createHABlocksIntegration, haBlockEntityIds } from "./plugins/haBlock.js";
 import { ConfigStore, type AppConfig } from "./config.js";
@@ -39,6 +40,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
   let stopped = false;
   let ready = false;
   let changed = (): void => {};
+  let layoutSelection: LayoutDecision[] | undefined;
   let renderError: string | undefined;
   let deliveryError: string | undefined;
   let saveError: string | undefined;
@@ -108,8 +110,8 @@ export async function createApplication(store: ConfigStore, directory: string, d
     const snapshot = ha.snapshot([...waterEntityIds(waterConfig), ...haBlockEntityIds(blocks)]);
     return [...codex.elements(draft?.codex), ...water.elements(waterConfig, snapshot), ...haBlocks.elements(blocks, snapshot)];
   }
-  function compose(layout: LayoutEntry[] | null = config.layout, value = board, draft?: Pick<PreviewRequest, "codex" | "water" | "haBlock" | "haBlocks">) {
-    return composeElements(elements(draft), layout ?? codex.defaultLayout(value, draft?.codex), dimensions(value), value);
+  function compose(layout: LayoutEntry[] | null = config.layout, value = board, draft?: Pick<PreviewRequest, "codex" | "water" | "haBlock" | "haBlocks">, onSelection?: (selection: LayoutDecision[]) => void) {
+    return composeElements(elements(draft), layout ?? codex.defaultLayout(value, draft?.codex), dimensions(value), value, onSelection);
   }
   function configurationError() {
     return store.getPublic().error ?? (!dryRun && !config.transport.token && !config.transport.localApiKey ? "Configure a board connection in config.json." : undefined);
@@ -176,7 +178,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       } else {
         frozenBase = undefined;
         frozenBoard = undefined;
-        delivery.updateFrame(compose(), userPaused);
+        delivery.updateFrame(compose(config.layout, board, undefined, (selection) => { layoutSelection = selection; }), userPaused);
       }
       renderError = undefined;
     }
@@ -229,7 +231,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
   function status(): RuntimeStatus {
     const pauseState = pause.status();
     return {
-      board, dryRun, desired: delivery.currentFrame(), lastSent: delivery.lastSent(),
+      board, dryRun, layoutSelection, desired: delivery.currentFrame(), lastSent: delivery.lastSent(),
       pauseBackground: pauseState.manualPause || pauseState.haPause ? frozenBase : undefined,
       nextAttemptAt: delivery.status().nextAttemptAt?.getTime() ?? 0,
       lastSentAt: delivery.status().lastSuccessfulAt?.getTime(),
@@ -249,6 +251,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       elements: elements().map((element) => ({
         id: element.id,
         label: element.label,
+        state: element.state,
         height: element.height,
         ...(element.minWidth === undefined ? {} : { minWidth: element.minWidth }),
         // Unplaced blocks may be sized for a larger supported board; the catalog must still load.
@@ -257,7 +260,11 @@ export async function createApplication(store: ConfigStore, directory: string, d
       defaultLayout: defaultLayout(),
       defaultLayouts: { note: defaultLayout("note"), flagship: defaultLayout("flagship") }
     }),
-    preview: (input) => compose(input.layout, input.board === "note" || input.board === "flagship" ? input.board : board, input),
+    preview: (input) => {
+      let selection: LayoutDecision[] = [];
+      const frame = compose(input.layout, input.board === "note" || input.board === "flagship" ? input.board : board, input, (value) => { selection = value; });
+      return { ...frame, selection };
+    },
     save: async (input) => {
       const task = saveQueue.then(async (): Promise<ConfigSaveResponse> => {
         if (stopped) throw new Error("Application is stopping.");

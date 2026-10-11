@@ -95,7 +95,7 @@ export function createCodexIntegration(config: CodexConfig, dependencies: CodexI
         timeZone: draftConfig.timeZone,
         ...(draftConfig.showPacing !== undefined ? { showPacing: draftConfig.showPacing } : {}),
         windowLabels: [draftConfig.window1Label, draftConfig.window2Label]
-      }, state);
+      }, state).map((element) => ({ ...element, state: !enabled ? "inactive" as const : isStale(draftConfig) || state.staleWindowIds?.length || state.statusMessage && !state.snapshot ? "unavailable" as const : "active" as const }));
       if (!isStale(draftConfig)) return elements;
       const unavailable = encode("N/A");
       return elements.map((element) => ({ ...element, render: (width: number) => {

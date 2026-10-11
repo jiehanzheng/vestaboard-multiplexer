@@ -4,6 +4,9 @@ const shape = {
   enabled: z.boolean(),
   entityId: z.string(),
   attribute: z.string().trim().min(1),
+  activityAttribute: z.string().trim().min(1).optional(),
+  textAttribute: z.string().trim().min(1).optional(),
+  textEntityId: z.string().trim().min(1).optional(),
   width: z.number().int().min(1).max(22),
   height: z.number().int().min(1).max(6),
   unavailableDisplay: z.enum(["blank", "na"]),
@@ -16,6 +19,7 @@ export const DEFAULT_HA_BLOCK_CONFIG = {
 };
 
 export const HABlockConfigSchema = z.object(shape).strict().superRefine((value, context) => {
+  if (value.textEntityId !== undefined && value.textAttribute === undefined) context.addIssue({ code: "custom", path: ["textAttribute"], message: "Choose a text attribute for the text source." });
   if (value.enabled && !value.entityId.trim()) {
     context.addIssue({ code: "custom", path: ["entityId"], message: "Select a Home Assistant entity." });
   }

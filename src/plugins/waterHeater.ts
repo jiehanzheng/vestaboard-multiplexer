@@ -227,23 +227,27 @@ export class WaterHeater {
         label: "Water remaining",
         height: 1,
         minWidth: 6,
-        render: (width) => [this.remainingRow(width)]
+        render: (width: number) => [this.remainingRow(width)]
       },
       {
         id: "water.temperature-text",
         label: "Water temperature text",
         height: 1,
         minWidth: 8,
-        render: (width) => [this.temperatureTextRow(width)]
+        render: (width: number) => [this.temperatureTextRow(width)]
       },
       {
         id: "water.emv-position",
         label: "Water EMV position",
         height: 1,
         minWidth: 6,
-        render: (width) => [this.emvPositionRow(width)]
+        render: (width: number) => [this.emvPositionRow(width)]
       }
-    ];
+    ].map((element) => {
+      const fields: WaterHeaterInputName[] = element.id === "water.remaining" ? ["remaining", "capacity", "heating"]
+        : element.id === "water.temperature-text" ? ["temperature", "target"] : ["emvPosition", "emvProblem"];
+      return { ...element, state: !this.config.enabled ? "inactive" as const : this.elementIssues[element.id] || fields.some((field) => this.inputDiagnostics[field]?.error) ? "unavailable" as const : "active" as const };
+    });
   }
 
   private remainingRow(width: number): number[] {
