@@ -1,4 +1,4 @@
-import { DEFAULT_HA_BLOCK_CONFIG } from "./plugins/haBlock/config.js";
+import { mergeHABlocks, normalizeLegacyHABlocks } from "./plugins/haBlock/config.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { AppConfigSchema, type AppConfig, type ConfigPatch, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, type WaterHeaterConfig, PublicConfigSchema } from "./contracts/config.js";
@@ -47,7 +47,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     pause: null
   },
   water: { ...DEFAULT_WATER_HEATER_CONFIG },
-  haBlock: { ...DEFAULT_HA_BLOCK_CONFIG },
+  haBlocks: [],
   transport: {
     cloudUrl: "https://cloud.vestaboard.com/",
     localUrl: "http://vestaboard.local:7000/local-api/message",
@@ -171,9 +171,9 @@ function parseSavedConfig(raw: string): Partial<AppConfig> {
   const { version: _version, ...config } = record;
   if (config.codex && typeof config.codex === "object" && !Array.isArray(config.codex)) {
     const { demoPauseMinutes: _demoPauseMinutes, ...codex } = config.codex as Record<string, unknown>;
-    return normalizeLegacyWaterHeaterConfig({ ...config, codex }) as Partial<AppConfig>;
+    return normalizeLegacyHABlocks(normalizeLegacyWaterHeaterConfig({ ...config, codex })) as Partial<AppConfig>;
   }
-  return normalizeLegacyWaterHeaterConfig(config) as Partial<AppConfig>;
+  return normalizeLegacyHABlocks(normalizeLegacyWaterHeaterConfig(config)) as Partial<AppConfig>;
 }
 
 function legacyConfig(env: ConfigEnvironment): AppConfig {
@@ -216,6 +216,7 @@ function warnObsoleteEnvironmentVariables(env: ConfigEnvironment): void {
 
 function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
   const baseConfig = cloneConfig(base);
+  const { haBlock: legacyBlock, ...canonicalPatch } = patch;
   const haPatch = patch.ha;
   const transport = patch.transport ?? {};
   const codex: Partial<AppConfig["codex"]> = patch.codex ?? {};
@@ -235,10 +236,10 @@ function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
       : { ...baseConfig.water, ...patch.water };
   return {
     ...baseConfig,
-    ...patch,
+    ...canonicalPatch,
     ha,
     water,
-    haBlock: { ...baseConfig.haBlock, ...patch.haBlock },
+    haBlocks: mergeHABlocks(baseConfig.haBlocks, patch.haBlocks, legacyBlock),
     transport: {
       ...baseConfig.transport,
       ...transport,

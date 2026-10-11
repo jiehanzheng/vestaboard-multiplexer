@@ -1,4 +1,4 @@
-import { HA_BLOCK_ELEMENT_ID, HABlockConfigSchema, haBlockGeometry } from "../../src/plugins/haBlock/config.js";
+import { HABlocksSchema, haBlockElementId, haBlockGeometry } from "../../src/plugins/haBlock/config.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CSSProperties } from "react";
 import type { AppConfig, DeliveryOutcome } from "../../src/contracts/config";
@@ -225,10 +225,17 @@ export default function App(): ReactNode {
 
   const boardPreference = draftConfig?.board ?? "auto";
   const board = boardPreference === "auto" ? (status?.board ?? "note") : boardPreference;
-  const elements = useMemo(() => (elementsResponse?.elements ?? []).map((element) => element.id === HA_BLOCK_ELEMENT_ID && draftConfig ? { ...element, ...haBlockGeometry(draftConfig.haBlock) } : element), [elementsResponse, draftConfig]);
+  const elements = useMemo(() => {
+    const saved = elementsResponse?.elements ?? [];
+    if (!draftConfig) return saved;
+    const byId = new Map(saved.map((element) => [element.id, element]));
+    return [...saved.filter((element) => !element.id.startsWith("ha-block.")), ...draftConfig.haBlocks.map((block) => ({
+      id: haBlockElementId(block.id), label: block.name, ...haBlockGeometry(block), preview: byId.get(haBlockElementId(block.id))?.preview ?? []
+    }))];
+  }, [elementsResponse, draftConfig]);
   const defaultLayout = elementsResponse?.defaultLayouts?.[board] ?? elementsResponse?.defaultLayout ?? [];
   const draftLayout = draftConfig?.layout ?? defaultLayout;
-  const blockValidation = draftConfig ? HABlockConfigSchema.safeParse(draftConfig.haBlock) : undefined;
+  const blockValidation = draftConfig ? HABlocksSchema.safeParse(draftConfig.haBlocks) : undefined;
   const layoutError = blockValidation && !blockValidation.success ? blockValidation.error.issues.map((issue) => issue.message).join(" ") : validateLayout(draftLayout, elements, board);
   useEffect(() => {
     if (draftLayout.length === 0) {
@@ -271,7 +278,7 @@ export default function App(): ReactNode {
       board: boardPreference,
       water: draftConfig?.water,
       codex: draftConfig?.codex,
-      haBlock: draftConfig?.haBlock
+      haBlocks: draftConfig?.haBlocks
     };
     const payloadKey = JSON.stringify(payload);
     const payloadChanged = previewPayloadKeyRef.current !== payloadKey;
@@ -284,7 +291,7 @@ export default function App(): ReactNode {
     // Keep status live for unsaved bindings, but background refreshes do not reopen the busy state.
     if (payloadChanged) setPreviewPending(true);
     previewQueueRef.current?.schedule({
-      task: () => requestPreview(payload.layout, payload.board, payload.water, payload.codex, payload.haBlock),
+      task: () => requestPreview(payload.layout, payload.board, payload.water, payload.codex, payload.haBlocks),
       onSuccess: (nextPreview) => {
         if (previewPayloadRevisionRef.current !== payloadRevision) return;
         setDraftPreview(nextPreview);
@@ -349,7 +356,7 @@ export default function App(): ReactNode {
         setDraftConfig(reconciled.draftConfig);
         let elementsRefreshed = true;
         try { setElementsResponse(await getElements()); } catch { elementsRefreshed = false; }
-        const savedLabel = section === "haBlock" ? "HA character block and layout" : section === "layout" ? "layout and HA character block" : section === "ha" ? "Home Assistant" : section === "pause" ? "pause settings" : section === "water" ? "water heater" : section === "board" ? "board settings" : "Codex";
+        const savedLabel = section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "layout and HA character blocks" : section === "ha" ? "Home Assistant" : section === "pause" ? "pause settings" : section === "water" ? "water heater" : section === "board" ? "board settings" : "Codex";
         const delivery = saveDeliveryFeedback(response.delivery, status?.dryRun, savedLabel);
         const refreshSuffix = elementsRefreshed ? "" : " Board elements could not be refreshed yet.";
         const newerSuffix = reconciled.newerEdits ? " Newer edits remain unsaved." : "";
@@ -369,7 +376,7 @@ export default function App(): ReactNode {
     const nextDraft = replaceSection(draftConfig, configResponse.config, section);
     draftConfigRef.current = nextDraft;
     setDraftConfig(nextDraft);
-    setNotice({ tone: "info", section, message: `${section === "haBlock" ? "HA character block and layout" : section === "layout" ? "Layout and HA character block" : section === "ha" ? "Home Assistant" : section === "pause" ? "Pause settings" : section === "water" ? "Water heater" : section === "board" ? "Board settings" : "Codex"} draft discarded.` });
+    setNotice({ tone: "info", section, message: `${section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "Layout and HA character blocks" : section === "ha" ? "Home Assistant" : section === "pause" ? "Pause settings" : section === "water" ? "Water heater" : section === "board" ? "Board settings" : "Codex"} draft discarded.` });
   }, [configResponse, draftConfig]);
 
   const handlePause = useCallback(async () => {
@@ -434,7 +441,7 @@ export default function App(): ReactNode {
             saving={savingSection === "layout"}
             savingAny={Boolean(savingSection)}
             dirty={sectionDirty("layout")}
-            blockSettingsDirty={Boolean(draftConfig && configResponse && JSON.stringify(draftConfig.haBlock) !== JSON.stringify(configResponse.config.haBlock))}
+            blockSettingsDirty={Boolean(draftConfig && configResponse && JSON.stringify(draftConfig.haBlocks) !== JSON.stringify(configResponse.config.haBlocks))}
             layoutError={layoutError}
             notice={notice?.section === "layout" || notice?.section === "runtime" ? notice : undefined}
             waterStatus={waterStatus}

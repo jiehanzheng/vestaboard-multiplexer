@@ -614,30 +614,66 @@ test("HA block shares the live connection and validates size plus placement atom
     await emit([69, 25, 13]);
     assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(12), [69, 25, 13]);
     const before = store.get();
-    const expanded = { ...before.haBlock, width: 4 };
+    const expanded = { ...before.haBlocks[0]!, width: 4 };
     const newLayout = initialLayout.map((entry) => entry.elementId === "ha-block.characters" ? { ...entry, startColumn: 11, width: 4 } : entry);
-    const preview = app.actions.preview({ layout: newLayout, haBlock: expanded, board: "note" });
+    const preview = app.actions.preview({ layout: newLayout, haBlocks: [expanded], board: "note" });
     assert.deepEqual(preview.characters?.[2]?.slice(11), [69, 25, 13, 0]);
     assert.deepEqual(store.get(), before);
-    await assert.rejects(app.actions.save({ haBlock: expanded }), /at least 4/);
+    await assert.rejects(app.actions.save({ haBlocks: [expanded] }), /at least 4/);
     await assert.rejects(app.actions.save({ haBlock: { height: 2 } }), /out of bounds/);
     await assert.rejects(app.actions.save({ layout: initialLayout.map((entry) => entry.elementId === "ha-block.characters" ? { ...entry, startColumn: 7 } : entry) }), /overlaps/);
     assert.deepEqual(store.get(), before);
-    await app.actions.save({ haBlock: expanded, layout: newLayout });
-    assert.equal(store.get().haBlock.width, 4);
+    await app.actions.save({ haBlocks: [expanded], layout: newLayout });
+    assert.equal(store.get().haBlocks[0]!.width, 4);
     assert.equal(store.get().updateIntervalMinutes, 3);
     assert.equal(clients.length, 1);
     client.setConnected(false); await client.emit([]);
     assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(11), [0, 0, 0, 0]);
-    assert.ok(app.actions.status().haBlock?.error);
+    assert.ok(app.actions.status().haBlocks?.characters?.error);
     await app.actions.save({ haBlock: { unavailableDisplay: "na" } });
     assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(11), [14, 59, 1, 0]);
     client.setConnected(true); await emit([0, 0, 0]);
     assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(11), [0, 0, 0, 0]);
-    assert.equal(app.actions.status().haBlock?.error, undefined);
+    assert.equal(app.actions.status().haBlocks?.characters?.error, undefined);
     await app.actions.save({ layout: [], haBlock: { width: 22, height: 6 } });
     const catalog = app.actions.elements().elements.find((element) => element.id === "ha-block.characters");
     assert.equal(catalog?.preview.length, 6);
     assert.equal(catalog?.preview[0]?.length, 22);
+  } finally { await app.stop(); assert.ok(clients.every((client) => client.stopped)); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("multiple HA blocks retain independent sources, diagnostics, and placements across saves", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-ha-blocks-"));
+  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", VESTABOARD_BOARD: "note" });
+  const first = { enabled: true, id: "music", name: "Music", entityId: "sensor.music", attribute: "characters", width: 3, height: 1, unavailableDisplay: "blank" as const, staleAfterMinutes: 15 };
+  const second = { ...first, id: "other", name: "Other", entityId: "sensor.other", attribute: "tiles", unavailableDisplay: "na" as const };
+  const layout = [{ elementId: "ha-block.music", startRow: 0, startColumn: 0, width: 3 }, { elementId: "ha-block.other", startRow: 0, startColumn: 4, width: 3 }];
+  await store.save({ ha: { url: "http://ha.local" }, haBlocks: [first, second], layout, updateIntervalMinutes: 3 });
+  const clients: FakeHomeAssistantClient[] = [];
+  const app = await createApplication(store, directory, true, {
+    createHomeAssistantClient: (options) => { const client = new FakeHomeAssistantClient(options); clients.push(client); return asHomeAssistantClient(client); }
+  });
+  try {
+    await app.start(); assert.equal(clients.length, 1);
+    const client = clients[0]!;
+    const other: HAEntity = { entity_id: "sensor.other", state: "ready", attributes: { tiles: [1, 2, 3] } };
+    await client.emit([{ entity_id: "sensor.music", state: "ready", attributes: { characters: [68, 25, 13] } }, other]);
+    assert.deepEqual(app.actions.status().desired?.characters?.[0]?.slice(0, 7), [68, 25, 13, 0, 1, 2, 3]);
+    await client.emit([other]);
+    assert.deepEqual(app.actions.status().desired?.characters?.[0]?.slice(0, 7), [0, 0, 0, 0, 1, 2, 3]);
+    assert.ok(app.actions.status().haBlocks?.music?.error);
+    assert.equal(app.actions.status().haBlocks?.other?.error, undefined);
+    const before = store.get();
+    await assert.rejects(app.actions.save({ haBlocks: [first, { ...second, id: "music" }] }), /unique/);
+    await assert.rejects(app.actions.save({ haBlocks: [first], layout }), /unknown element/);
+    assert.deepEqual(store.get(), before);
+    const draft = app.actions.preview({ haBlocks: [{ ...first, id: "draft", name: "Draft" }], layout: [{ elementId: "ha-block.draft", startRow: 2, width: 3 }] });
+    assert.equal(draft.characters?.[2]?.length, 15);
+    assert.deepEqual(store.get(), before);
+    await app.actions.save({ haBlocks: [second], layout: [layout[1]!] });
+    assert.deepEqual(Object.keys(app.actions.status().haBlocks ?? {}), ["other"]);
+    assert.equal(app.actions.elements().elements.filter((element) => element.id.startsWith("ha-block.")).length, 1);
+    assert.equal(store.get().updateIntervalMinutes, 3);
+    assert.equal(clients.length, 1);
   } finally { await app.stop(); assert.ok(clients.every((client) => client.stopped)); await rm(directory, { recursive: true, force: true }); }
 });

@@ -1,5 +1,4 @@
-import { HABlockSettings } from "./plugins/haBlock/HABlockSettings";
-import { updateHABlockDraft } from "./draftState";
+import { HABlocksSettings } from "./plugins/haBlock/HABlocksSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import type { ReactNode } from "react";
 import type { HAEntity } from "../../src/contracts/homeAssistant";
@@ -48,7 +47,7 @@ export function PluginsScreen({ login, plugin, onPluginChange, ...props }: Share
     <section className="plugin-list" aria-label="Plugins">
       <PluginRow title="Codex" purpose="Quota account, pacing, polling, and auto-start behavior." status={props.status?.codex.error || login.error ? "Needs attention" : login.account ? `Connected · ${login.account}` : login.pending ? "Sign-in pending" : "Account not checked"} dirty={props.dirty("codex")} onOpen={() => onPluginChange("codex")} />
       <PluginRow title="Water heater" purpose="Readings, units, entity selection, and display settings." status={props.status?.water?.error ? "Needs attention" : props.config.water.enabled ? "Enabled" : "Disabled"} dirty={props.dirty("water")} onOpen={() => onPluginChange("water")} />
-      <PluginRow title="HA character block" purpose="Home Assistant characters, block size, and unavailable display." status={props.status?.haBlock?.error ? "Needs attention" : props.config.haBlock.enabled ? "Enabled" : "Disabled"} dirty={props.dirty("haBlock")} onOpen={() => onPluginChange("haBlock")} />
+      <PluginRow title="HA character blocks" purpose="Independent Home Assistant sources, sizes, and displays." status={Object.values(props.status?.haBlocks ?? {}).some((block) => block.error) ? "Needs attention" : `${props.config.haBlocks.length} blocks`} dirty={props.dirty("haBlock")} onOpen={() => onPluginChange("haBlock")} />
     </section>
   </>;
   const saving = props.saving === plugin;
@@ -61,9 +60,9 @@ export function PluginsScreen({ login, plugin, onPluginChange, ...props }: Share
     <button className="text-link" type="button" onClick={() => props.onOpenLogs("codex")}>View Codex logs</button>
   </PluginDetail>;
   const savedHaUrl = props.configResponse?.config.ha.url.trim() ?? "";
-  if (plugin === "haBlock") return <PluginDetail title="HA character block and layout" onBack={() => onPluginChange(undefined)} dirty={props.dirty("haBlock")} saving={saving} saveDisabled={(savingAny && !saving) || Boolean(props.layoutError)} onSave={() => props.onSave("haBlock")} onDiscard={() => props.onDiscard("haBlock")} notice={paneNotice}>
+  if (plugin === "haBlock") return <PluginDetail title="HA character blocks and layout" onBack={() => onPluginChange(undefined)} dirty={props.dirty("haBlock")} saving={saving} saveDisabled={(savingAny && !saving) || Boolean(props.layoutError)} onSave={() => props.onSave("haBlock")} onDiscard={() => props.onDiscard("haBlock")} notice={paneNotice}>
     <section className="connection-section" aria-label="HA character block settings">
-      <HABlockSettings layoutError={props.layoutError} value={props.config.haBlock} status={props.dirty("haBlock") ? undefined : props.status?.haBlock} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onChange={(haBlock) => props.onConfigChange(updateHABlockDraft(props.config, haBlock))} />
+      <HABlocksSettings layoutError={props.layoutError} config={props.config} status={props.dirty("haBlock") ? undefined : props.status?.haBlocks} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onChange={props.onConfigChange} />
       <WaterCatalogMessage savedHaUrl={savedHaUrl} haDirty={props.dirty("ha")} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onRefresh={props.onRefreshEntities} onOpenSettings={props.onOpenSettings} />
     </section>
     <button className="text-link" type="button" onClick={() => props.onOpenLogs("ha-block")}>View HA character block logs</button>
