@@ -1,3 +1,4 @@
+import { UpdateLimitsSchema } from "./updateLimits.js";
 import { HABlocksSchema, HABlockConfigPatchSchema } from "../plugins/haBlock/config.js";
 import { z } from "zod";
 import { HttpUrlSchema } from "./url.js";
@@ -44,7 +45,7 @@ const appConfigShape = {
   water: WaterHeaterConfigSchema,
   haBlocks: HABlocksSchema.default([]),
   transport: TransportSchema,
-  updateIntervalMinutes: z.number().finite().positive(),
+  updateLimits: UpdateLimitsSchema,
   codex: CodexConfigSchema,
   layout: z.array(LayoutEntrySchema).nullable(),
   pauseOverlay: PauseOverlaySchema
@@ -75,6 +76,7 @@ export const ConfigPatchSchema = z.object({
     localMessageTransition: LocalMessageTransitionSchema.partial().optional(),
     pauseMessageTransition: LocalMessageTransitionSchema.partial().nullable().optional()
   }).nullable().optional(),
+  updateLimits: UpdateLimitsSchema.optional(),
   updateIntervalMinutes: z.number().finite().positive().optional(),
   codex: CodexConfigPatchSchema.optional(),
   layout: z.array(LayoutEntrySchema).nullable().optional(),

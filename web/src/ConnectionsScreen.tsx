@@ -1,3 +1,4 @@
+import { AutomaticUpdateLimitsSettings, limitsError } from "./AutomaticUpdateLimits";
 import { HABlocksSettings } from "./plugins/haBlock/HABlocksSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import type { ReactNode } from "react";
@@ -80,7 +81,7 @@ export function SettingsScreen(props: SharedProps): ReactNode {
       <div className="page-heading"><div><h1>Settings</h1><p>Manage board output and shared services. Each section saves independently.</p><button className="text-link" type="button" onClick={() => props.onOpenLogs()}>View live logs</button></div></div>
       <section className="settings-section" aria-labelledby="board-output-heading">
         <div className="section-heading"><div><h2 id="board-output-heading">Board output</h2><p>Choose the board and delivery credentials used by vbmux.</p></div></div>
-        <BoardOutputSettings config={props.config} response={props.configResponse} onChange={props.onConfigChange} dirty={props.dirty("board")} saving={props.saving === "board"} saveDisabled={savingAny && props.saving !== "board"} feedback={sectionNotice(props.notice, "board")} onSave={() => props.onSave("board")} onDiscard={() => props.onDiscard("board")} />
+        <BoardOutputSettings status={props.status} config={props.config} response={props.configResponse} onChange={props.onConfigChange} dirty={props.dirty("board")} saving={props.saving === "board"} saveDisabled={savingAny && props.saving !== "board"} feedback={sectionNotice(props.notice, "board")} onSave={() => props.onSave("board")} onDiscard={() => props.onDiscard("board")} />
       </section>
       <section className="settings-section" aria-labelledby="home-assistant-heading">
         <HAConnectionSettings value={props.config.ha} hasToken={Boolean(props.configResponse?.hasSecrets.haToken)} saved={!props.dirty("ha")} status={props.status?.homeAssistant?.connected ? "Connected" : props.status?.homeAssistant?.error ? "Connection error" : "Not connected"} onChange={(ha) => props.onConfigChange({ ...props.config, ha: { ...ha, pause: props.config.ha.pause } })} />
@@ -106,7 +107,7 @@ function PluginDetail({ title, onBack, dirty, saving, saveDisabled, onSave, onDi
   return <section className="connection-pane" aria-labelledby="plugin-detail-heading"><button className="back-link" type="button" onClick={onBack}>← Back to Plugins</button><div className="page-heading connection-pane-heading"><div><h1 id="plugin-detail-heading">{title}</h1></div></div><div className="connection-pane-savebar"><SectionSaveActions label={title} dirty={dirty} saving={saving} saveDisabled={saveDisabled} feedback={notice} onSave={onSave} onDiscard={onDiscard} /></div>{children}</section>;
 }
 
-function BoardOutputSettings({ config, response, onChange, dirty, saving, saveDisabled, feedback, onSave, onDiscard }: { config: AppConfig; response: ConfigResponse | undefined; onChange: (config: AppConfig) => void; dirty: boolean; saving: boolean; saveDisabled?: boolean; feedback?: Exclude<Notice, undefined>; onSave: () => void; onDiscard: () => void }): ReactNode {
+function BoardOutputSettings({ status, config, response, onChange, dirty, saving, saveDisabled, feedback, onSave, onDiscard }: { status: RuntimeStatus | undefined; config: AppConfig; response: ConfigResponse | undefined; onChange: (config: AppConfig) => void; dirty: boolean; saving: boolean; saveDisabled?: boolean; feedback?: Exclude<Notice, undefined>; onSave: () => void; onDiscard: () => void }): ReactNode {
   const hasSecrets = response?.hasSecrets;
   const transportValue = hasSecrets?.localApiKey ? "local" : hasSecrets?.token ? "cloud" : "";
   const animationEnabled = localApiAvailable(config, response);
@@ -115,8 +116,9 @@ function BoardOutputSettings({ config, response, onChange, dirty, saving, saveDi
       <div className="settings-grid">
         <div className="config-field"><span>Active transport</span><output>{transportValue === "local" ? "Local API" : transportValue === "cloud" ? "Cloud API" : "Not configured"}</output></div>
         <ConfigSelect label="Board" value={config.board} options={[{ value: "auto", label: "Auto detect" }, { value: "note", label: "Note · 3 × 15" }, { value: "flagship", label: "Flagship · 6 × 22" }]} onChange={(board) => onChange({ ...config, board: board as AppConfig["board"] })} />
-        <ConfigNumber label="Delivery interval (minutes)" value={String(config.updateIntervalMinutes)} onChange={(updateIntervalMinutes) => onChange({ ...config, updateIntervalMinutes })} />
+
       </div>
+      <AutomaticUpdateLimitsSettings rules={config.updateLimits} saved={response?.config.updateLimits} live={status?.updateLimits} onChange={(updateLimits) => onChange({ ...config, updateLimits })} />
       <SettingsGroup title="Local API" description="Connect directly to your board. A saved local key takes precedence over cloud delivery."><div className="settings-grid">
         <label className="config-field"><span>Local API URL</span><input type="url" value={config.transport.localUrl} onChange={(event) => onChange({ ...config, transport: { ...config.transport, localUrl: event.target.value } })} /></label>
         <label className="config-field"><span>Local API key</span><input type="password" autoComplete="new-password" value={config.transport.localApiKey ?? ""} placeholder={hasSecrets?.localApiKey ? "Saved key · type to replace" : "Paste key"} onChange={(event) => onChange({ ...config, transport: { ...config.transport, localApiKey: event.target.value } })} /><button className="button quiet" type="button" onClick={() => onChange({ ...config, transport: { ...config.transport, localApiKey: "" } })} disabled={!hasSecrets?.localApiKey && !config.transport.localApiKey}>Clear saved key</button></label>
@@ -126,7 +128,7 @@ function BoardOutputSettings({ config, response, onChange, dirty, saving, saveDi
         <label className="config-field"><span>Cloud token</span><input type="password" autoComplete="new-password" value={config.transport.token ?? ""} placeholder={hasSecrets?.token ? "Saved token · type to replace" : "Paste token"} onChange={(event) => onChange({ ...config, transport: { ...config.transport, token: event.target.value } })} /><button className="button quiet" type="button" onClick={() => onChange({ ...config, transport: { ...config.transport, token: "" } })} disabled={!hasSecrets?.token && !config.transport.token}>Clear saved token</button></label>
       </div></SettingsGroup>
       <section className="settings-subsection" aria-labelledby="normal-animation-heading"><div className="section-heading"><div><h3 id="normal-animation-heading">Local API animation</h3><p>Choose how the board changes on normal writes.</p></div></div><AnimationSettings value={config.transport.localMessageTransition} onChange={(localMessageTransition) => onChange({ ...config, transport: { ...config.transport, localMessageTransition } })} disabled={!animationEnabled} />{!animationEnabled ? <p className="screen-footnote">Animation settings apply only when Local API is the active board connection. Saved values remain available if you switch back.</p> : null}</section>
-      <SectionSaveActions label="board settings" dirty={dirty} saving={saving} saveDisabled={saveDisabled} feedback={feedback} onSave={onSave} onDiscard={onDiscard} />
+      <SectionSaveActions label="board settings" dirty={dirty} saving={saving} saveDisabled={saveDisabled || Boolean(limitsError(config.updateLimits))} feedback={feedback} onSave={onSave} onDiscard={onDiscard} />
     </div>
   );
 }

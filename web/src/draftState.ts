@@ -21,7 +21,7 @@ export function configPatchForSection(section: ConfigSection, config: AppConfig)
         const { pauseMessageTransition: _pauseMessageTransition, ...transport } = structuredClone(config.transport);
         return transport;
       })(),
-      updateIntervalMinutes: config.updateIntervalMinutes
+      updateLimits: structuredClone(config.updateLimits)
     };
     case "haBlock":
     case "layout": return { layout: config.layout === null ? null : structuredClone(config.layout), haBlocks: structuredClone(config.haBlocks) };
@@ -36,7 +36,7 @@ function sectionValue(section: ConfigSection, config: AppConfig | PublicAppConfi
     case "pause": return { pause: config.ha.pause, pauseOverlay: config.pauseOverlay, pauseMessageTransition: config.transport.pauseMessageTransition };
     case "board": {
       const { pauseMessageTransition: _pauseMessageTransition, ...transport } = config.transport;
-      return { board: config.board, transport, updateIntervalMinutes: config.updateIntervalMinutes };
+      return { board: config.board, transport, updateLimits: structuredClone(config.updateLimits) };
     }
     case "haBlock":
     case "layout": return { layout: config.layout, haBlocks: config.haBlocks };
@@ -64,7 +64,7 @@ export function replaceSection(draft: AppConfig, saved: PublicAppConfig, section
         ...structuredClone(saved.transport),
         pauseMessageTransition: next.transport.pauseMessageTransition
       } as AppConfig["transport"];
-      next.updateIntervalMinutes = saved.updateIntervalMinutes;
+      next.updateLimits = structuredClone(saved.updateLimits);
       break;
     case "haBlock":
     case "layout":

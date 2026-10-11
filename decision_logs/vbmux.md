@@ -32,3 +32,8 @@
 - Board layout entries support rectangular placement with optional starting column and width; omitted values preserve legacy full-row placement. Element metadata may require a minimum width, and each plugin remains responsible for rendering its allocated width. Water Heater exposes EMV position as its own compact element and setting.
 
 Remember the HA pause binding identity alongside its boolean so a different entity configured while the service is stopped cannot inherit an old unpaused value. Late events from a replaced connection must not resume the new binding. This is persistence metadata, not a separate pause mode.
+
+# Automatic update limits
+
+- User decision (2026-10-11): replace the single interval with any number of configurable rolling-window and gradual-refill rules, evaluated jointly. Failed attempted writes consume capacity; no-op checks do not. While limited, only the latest desired frame is delivered.
+- The user chose to retain the settings-save and startup exceptions above and reset usage on restart. Settings writes bypass admission but consume every rule, including refill debt; startup banners stay outside accounting. New or changed rules reset on save; unchanged stable-ID rules retain usage. The UI labels these automatic update limits and distinguishes draft edits from live saved-rule capacity.

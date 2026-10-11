@@ -74,7 +74,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
   const haBlocks = createHABlocksIntegration(config.haBlocks, ha, requestComposition, logs.child("ha-block"), now);
   const plugins = [codex, water, haBlocks];
   const delivery = new DeliveryController({
-    intervalMs: config.updateIntervalMinutes * 60_000, now,
+    limits: config.updateLimits, now,
     logger: logs.child("delivery"),
     send: async (frame, usePauseAnimation) => {
       const stateAtAttempt = pause.status();
@@ -230,13 +230,16 @@ export async function createApplication(store: ConfigStore, directory: string, d
   }
   function status(): RuntimeStatus {
     const pauseState = pause.status();
+    const deliveryState = delivery.status();
     return {
       board, dryRun, layoutSelection, desired: delivery.currentFrame(), lastSent: delivery.lastSent(),
       pauseBackground: pauseState.manualPause || pauseState.haPause ? frozenBase : undefined,
-      nextAttemptAt: delivery.status().nextAttemptAt?.getTime() ?? 0,
-      lastSentAt: delivery.status().lastSuccessfulAt?.getTime(),
-      ...pauseState, paused: delivery.status().paused || pauseState.paused,
-      pauseReason: delivery.status().pauseReason ?? pauseState.pauseReason,
+      nextAttemptAt: deliveryState.nextAttemptAt?.getTime() ?? 0,
+      lastSentAt: deliveryState.lastSuccessfulAt?.getTime(),
+      updateLimits: deliveryState.limits,
+      pendingDelivery: deliveryState.pending,
+      ...pauseState, paused: deliveryState.paused || pauseState.paused,
+      pauseReason: deliveryState.pauseReason ?? pauseState.pauseReason,
       persistenceError: pauseState.persistenceError ?? saveError,
       configError: configurationError() ?? renderError, deliveryError,
       codex: codex.status(), homeAssistant: (() => { const { source: _source, ...status } = ha.status(); return status; })(),
@@ -321,7 +324,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
             boardResolver = candidateResolver;
             boardResolverCanDetect = candidateResolverCanDetect;
           }
-          delivery.setInterval(config.updateIntervalMinutes * 60_000);
+          delivery.setLimits(config.updateLimits);
           applicationLog.info(`Configuration applied for sections: ${configSections(input).join(", ")}.`);
         } catch (error) {
           saveError = "Could not apply saved settings. Check the configuration directory and try again.";
@@ -424,7 +427,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
 
 function configurationFailure(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  const sections = ["board", "ha", "water", "haBlocks", "haBlock", "transport", "codex", "layout", "pauseOverlay", "updateIntervalMinutes"]
+  const sections = ["board", "ha", "water", "haBlocks", "haBlock", "transport", "codex", "layout", "pauseOverlay", "updateLimits", "updateIntervalMinutes"]
     .filter((section) => text.includes(section));
   return sections.length > 0
     ? `Configuration save failed for ${sections.join(", ")}.`

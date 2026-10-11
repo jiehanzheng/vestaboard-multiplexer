@@ -216,12 +216,12 @@ test("existing config remains authoritative when legacy environment variables ar
   await initial.save({ ...DEFAULT_APP_CONFIG, updateIntervalMinutes: 5 });
 
   const existing = await ConfigStore.open(dataDir, { ORCHESTRATOR_INTERVAL_MINUTES: "10" });
-  assert.equal(existing.get().updateIntervalMinutes, 5);
+  assert.equal(existing.get().updateLimits[0]!.windowMinutes, 5);
   assert.deepEqual(existing.getPublic().legacyEnvironmentVariables, ["ORCHESTRATOR_INTERVAL_MINUTES"]);
   await existing.save({ ...existing.get(), layout: [] });
 
   const reopened = await ConfigStore.open(dataDir, {});
-  assert.equal(reopened.get().updateIntervalMinutes, 5);
+  assert.equal(reopened.get().updateLimits[0]!.windowMinutes, 5);
   assert.deepEqual(reopened.get().layout, []);
 });
 

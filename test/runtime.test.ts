@@ -1,3 +1,4 @@
+import { intervalLimit } from "../src/contracts/updateLimits.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CollectionController } from "../src/runtime/collection.js";
@@ -12,7 +13,7 @@ test("delivery attempts are separated by the configured interval and failures co
   let sends = 0;
   let shouldFail = true;
   const delivery = new DeliveryController({
-    intervalMs: 300_000,
+    limits: intervalLimit((300_000) / 60_000),
     now: () => new Date(nowMs),
     send: async () => {
       sends += 1;
@@ -31,42 +32,24 @@ test("delivery attempts are separated by the configured interval and failures co
   assert.equal(sends, 2);
 });
 
-test("delivery lengthens a pending deadline from the last normal attempt", async () => {
+test("editing a rule resets its usage while an unchanged rule keeps usage", async () => {
   let nowMs = 0;
   let sends = 0;
-  const delivery = new DeliveryController({
-    intervalMs: 5 * 60_000,
-    now: () => new Date(nowMs),
-    send: async () => { sends += 1; },
-    logger: { info() {}, warn() {} }
-  });
+  const delivery = new DeliveryController({ limits: intervalLimit(5), now: () => new Date(nowMs),
+    send: async () => { sends++; }, logger: { info() {}, warn() {} } });
   delivery.updateFrame(message("first"));
   assert.equal((await delivery.attempt()).outcome, "sent");
-  delivery.setInterval(30 * 60_000);
+  delivery.setLimits(intervalLimit(5));
   delivery.updateFrame(message("second"));
-  nowMs = 5 * 60_000;
   assert.equal((await delivery.attempt()).outcome, "limited");
-  nowMs = 30 * 60_000;
+  delivery.setLimits(intervalLimit(30));
   assert.equal((await delivery.attempt()).outcome, "sent");
-  assert.equal(sends, 2);
-});
-
-test("delivery shortens a pending deadline from the last normal attempt", async () => {
-  let nowMs = 0;
-  let sends = 0;
-  const delivery = new DeliveryController({
-    intervalMs: 30 * 60_000,
-    now: () => new Date(nowMs),
-    send: async () => { sends += 1; },
-    logger: { info() {}, warn() {} }
-  });
-  delivery.updateFrame(message("first"));
-  assert.equal((await delivery.attempt()).outcome, "sent");
-  delivery.setInterval(5 * 60_000);
-  delivery.updateFrame(message("second"));
   nowMs = 5 * 60_000;
+  delivery.updateFrame(message("third"));
+  assert.equal((await delivery.attempt()).outcome, "limited");
+  delivery.setLimits(intervalLimit(5));
   assert.equal((await delivery.attempt()).outcome, "sent");
-  assert.equal(sends, 2);
+  assert.equal(sends, 3);
 });
 
 test("unchanged frames skip a write without blocking the next changed frame", async () => {
@@ -76,7 +59,7 @@ test("unchanged frames skip a write without blocking the next changed frame", as
   const infos: unknown[] = [];
   const warnings: unknown[] = [];
   const delivery = new DeliveryController({
-    intervalMs: 60_000,
+    limits: intervalLimit((60_000) / 60_000),
     now: () => new Date(nowMs),
     send: async () => { sends += 1; if (shouldFail) throw new Error("board unavailable"); },
     logger: { info: (message) => infos.push(message), warn: (message) => warnings.push(message) }
@@ -103,7 +86,7 @@ test("pause animation follows the physical pause state and coalesces toggles", a
   let shouldFail = false;
   const animationFlags: boolean[] = [];
   const delivery = new DeliveryController({
-    intervalMs: 60_000,
+    limits: intervalLimit((60_000) / 60_000),
     now: () => new Date(nowMs),
     send: async (_frame, usePauseAnimation) => {
       animationFlags.push(Boolean(usePauseAnimation));
@@ -138,7 +121,7 @@ test("pause animation follows the physical pause state and coalesces toggles", a
 
   const coalescedFlags: boolean[] = [];
   const coalesced = new DeliveryController({
-    intervalMs: 60_000,
+    limits: intervalLimit((60_000) / 60_000),
     send: async (_frame, usePauseAnimation) => { coalescedFlags.push(Boolean(usePauseAnimation)); },
     logger: { info() {}, warn() {} }
   });
@@ -155,7 +138,7 @@ test("startup bypasses the normal limiter and holds the next attempt only after 
   let sends = 0;
   let shouldFail = true;
   const delivery = new DeliveryController({
-    intervalMs: 300_000,
+    limits: intervalLimit((300_000) / 60_000),
     now: () => new Date(nowMs),
     send: async () => {
       sends += 1;
@@ -182,7 +165,7 @@ test("manual delivery bypasses the normal interval once and starts a new interva
   let nowMs = 0;
   let sends = 0;
   const delivery = new DeliveryController({
-    intervalMs: 300_000,
+    limits: intervalLimit((300_000) / 60_000),
     now: () => new Date(nowMs),
     send: async () => { sends += 1; },
     logger: { info() {}, warn() {} }
@@ -206,7 +189,7 @@ test("manual failure consumes the normal interval", async () => {
   let sends = 0;
   let shouldFail = true;
   const delivery = new DeliveryController({
-    intervalMs: 60_000,
+    limits: intervalLimit((60_000) / 60_000),
     now: () => new Date(nowMs),
     send: async () => {
       sends += 1;
@@ -229,7 +212,7 @@ test("manual failure consumes the normal interval", async () => {
 test("manual delivery skips unchanged and paused frames without writing", async () => {
   let sends = 0;
   const delivery = new DeliveryController({
-    intervalMs: 60_000,
+    limits: intervalLimit((60_000) / 60_000),
     send: async () => { sends += 1; },
     logger: { info() {}, warn() {} }
   });
@@ -248,7 +231,7 @@ test("manual delivery waits for an in-flight write and sends the latest frame", 
   const started = new Promise<void>((resolve) => { release = resolve; });
   const sent: string[] = [];
   const delivery = new DeliveryController({
-    intervalMs: 60_000,
+    limits: intervalLimit((60_000) / 60_000),
     send: async (frame) => {
       sent.push(frame.text);
       if (frame.text === "old") await started;
@@ -273,7 +256,7 @@ test("manual delivery respects the startup hold", async () => {
   let nowMs = 0;
   let sends = 0;
   const delivery = new DeliveryController({
-    intervalMs: 300_000,
+    limits: intervalLimit((300_000) / 60_000),
     now: () => new Date(nowMs),
     send: async () => { sends += 1; },
     logger: { info() {}, warn() {} }
@@ -292,7 +275,7 @@ test("paused delivery exposes status and resumes with the latest frame", async (
   let nowMs = 0;
   const sent: string[] = [];
   const delivery = new DeliveryController({
-    intervalMs: 60_000,
+    limits: intervalLimit((60_000) / 60_000),
     now: () => new Date(nowMs),
     send: async (frame) => { sent.push(frame.text); },
     logger: { info() {}, warn() {} }
@@ -311,7 +294,7 @@ test("a target transition waits for an old write and invalidates its cache", asy
   let release!: () => void;
   const writeStarted = new Promise<void>((resolve) => { release = resolve; });
   const delivery = new DeliveryController({
-    intervalMs: 60_000,
+    limits: intervalLimit((60_000) / 60_000),
     send: async () => writeStarted,
     logger: { info() {}, warn() {} }
   });

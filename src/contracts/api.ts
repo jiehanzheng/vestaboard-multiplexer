@@ -1,3 +1,4 @@
+import { UpdateLimitStatusSchema } from "./updateLimits.js";
 import { ELEMENT_STATES } from "./layout.js";
 import { HABlockConfigSchema, HABlocksSchema } from "../plugins/haBlock/config.js";
 import { HABlockStatusSchema } from "../plugins/haBlock/status.js";
@@ -83,6 +84,8 @@ export const RuntimeStatusSchema = z.object({
   lastSent: BoardMessageSchema.optional(),
   pauseBackground: BoardMessageSchema.optional(),
   nextAttemptAt: z.number(),
+  updateLimits: z.array(UpdateLimitStatusSchema).optional(),
+  pendingDelivery: z.boolean().optional(),
   lastSentAt: z.number().optional(),
   manualPause: z.boolean(),
   haPause: z.boolean(),
