@@ -1,3 +1,4 @@
+import { DEFAULT_HA_BLOCK_CONFIG } from "./plugins/haBlock/config.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { AppConfigSchema, type AppConfig, type ConfigPatch, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, type WaterHeaterConfig, PublicConfigSchema } from "./contracts/config.js";
@@ -46,6 +47,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     pause: null
   },
   water: { ...DEFAULT_WATER_HEATER_CONFIG },
+  haBlock: { ...DEFAULT_HA_BLOCK_CONFIG },
   transport: {
     cloudUrl: "https://cloud.vestaboard.com/",
     localUrl: "http://vestaboard.local:7000/local-api/message",
@@ -236,6 +238,7 @@ function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
     ...patch,
     ha,
     water,
+    haBlock: { ...baseConfig.haBlock, ...patch.haBlock },
     transport: {
       ...baseConfig.transport,
       ...transport,

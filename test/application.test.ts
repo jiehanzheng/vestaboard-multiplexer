@@ -589,3 +589,55 @@ test("Home Assistant pause stays fail-closed and all clients stop with the appli
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("HA block shares the live connection and validates size plus placement atomically", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-ha-block-"));
+  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", VESTABOARD_BOARD: "note" });
+  const initialLayout = [
+    { elementId: "water.remaining", startRow: 1 },
+    { elementId: "codex.window-1", startRow: 0 },
+    { elementId: "water.temperature-text", startRow: 2, startColumn: 0, width: 8 },
+    { elementId: "ha-block.characters", startRow: 2, startColumn: 12, width: 3 }
+  ];
+  await store.save({ ha: { url: "http://ha.local" }, layout: initialLayout,
+    haBlock: { enabled: true, entityId: "sensor.living_room_music_vestaboard", unavailableDisplay: "blank" }, updateIntervalMinutes: 3 });
+  const clients: FakeHomeAssistantClient[] = [];
+  const app = await createApplication(store, directory, true, {
+    createHomeAssistantClient: (options) => { const client = new FakeHomeAssistantClient(options); clients.push(client); return asHomeAssistantClient(client); }
+  });
+  try {
+    await app.start(); assert.equal(clients.length, 1);
+    const client = clients[0]!;
+    const emit = (characters: number[]) => client.emit([{ entity_id: "sensor.living_room_music_vestaboard", state: "ready", attributes: { characters } }]);
+    await emit([68, 25, 13]);
+    assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(12), [68, 25, 13]);
+    await emit([69, 25, 13]);
+    assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(12), [69, 25, 13]);
+    const before = store.get();
+    const expanded = { ...before.haBlock, width: 4 };
+    const newLayout = initialLayout.map((entry) => entry.elementId === "ha-block.characters" ? { ...entry, startColumn: 11, width: 4 } : entry);
+    const preview = app.actions.preview({ layout: newLayout, haBlock: expanded, board: "note" });
+    assert.deepEqual(preview.characters?.[2]?.slice(11), [69, 25, 13, 0]);
+    assert.deepEqual(store.get(), before);
+    await assert.rejects(app.actions.save({ haBlock: expanded }), /at least 4/);
+    await assert.rejects(app.actions.save({ haBlock: { height: 2 } }), /out of bounds/);
+    await assert.rejects(app.actions.save({ layout: initialLayout.map((entry) => entry.elementId === "ha-block.characters" ? { ...entry, startColumn: 7 } : entry) }), /overlaps/);
+    assert.deepEqual(store.get(), before);
+    await app.actions.save({ haBlock: expanded, layout: newLayout });
+    assert.equal(store.get().haBlock.width, 4);
+    assert.equal(store.get().updateIntervalMinutes, 3);
+    assert.equal(clients.length, 1);
+    client.setConnected(false); await client.emit([]);
+    assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(11), [0, 0, 0, 0]);
+    assert.ok(app.actions.status().haBlock?.error);
+    await app.actions.save({ haBlock: { unavailableDisplay: "na" } });
+    assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(11), [14, 59, 1, 0]);
+    client.setConnected(true); await emit([0, 0, 0]);
+    assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(11), [0, 0, 0, 0]);
+    assert.equal(app.actions.status().haBlock?.error, undefined);
+    await app.actions.save({ layout: [], haBlock: { width: 22, height: 6 } });
+    const catalog = app.actions.elements().elements.find((element) => element.id === "ha-block.characters");
+    assert.equal(catalog?.preview.length, 6);
+    assert.equal(catalog?.preview[0]?.length, 22);
+  } finally { await app.stop(); assert.ok(clients.every((client) => client.stopped)); await rm(directory, { recursive: true, force: true }); }
+});

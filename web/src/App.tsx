@@ -1,3 +1,4 @@
+import { HA_BLOCK_ELEMENT_ID, HABlockConfigSchema, haBlockGeometry } from "../../src/plugins/haBlock/config.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CSSProperties } from "react";
 import type { AppConfig, DeliveryOutcome } from "../../src/contracts/config";
@@ -68,6 +69,7 @@ function routeFromHash(hash: string): RouteState {
   const [path, query] = value.split("?", 2);
   const source = new URLSearchParams(query ?? "").get("source") ?? undefined;
   if (path === "plugins/codex") return { view: "plugins", plugin: "codex", settingsSubview: "main" };
+  if (path === "plugins/haBlock") return { view: "plugins", plugin: "haBlock", settingsSubview: "main" };
   if (path === "plugins/water") return { view: "plugins", plugin: "water", settingsSubview: "main" };
   if (path === "plugins") return { view: "plugins", settingsSubview: "main" };
   if (path === "settings/logs") return { view: "settings", settingsSubview: "logs", logsSource: source };
@@ -223,10 +225,11 @@ export default function App(): ReactNode {
 
   const boardPreference = draftConfig?.board ?? "auto";
   const board = boardPreference === "auto" ? (status?.board ?? "note") : boardPreference;
-  const elements = elementsResponse?.elements ?? [];
+  const elements = useMemo(() => (elementsResponse?.elements ?? []).map((element) => element.id === HA_BLOCK_ELEMENT_ID && draftConfig ? { ...element, ...haBlockGeometry(draftConfig.haBlock) } : element), [elementsResponse, draftConfig]);
   const defaultLayout = elementsResponse?.defaultLayouts?.[board] ?? elementsResponse?.defaultLayout ?? [];
   const draftLayout = draftConfig?.layout ?? defaultLayout;
-  const layoutError = validateLayout(draftLayout, elements, board);
+  const blockValidation = draftConfig ? HABlockConfigSchema.safeParse(draftConfig.haBlock) : undefined;
+  const layoutError = blockValidation && !blockValidation.success ? blockValidation.error.issues.map((issue) => issue.message).join(" ") : validateLayout(draftLayout, elements, board);
   useEffect(() => {
     if (draftLayout.length === 0) {
       if (selectedEntryIndex !== undefined) setSelectedEntryIndex(undefined);
@@ -267,7 +270,8 @@ export default function App(): ReactNode {
       layout: draftLayout,
       board: boardPreference,
       water: draftConfig?.water,
-      codex: draftConfig?.codex
+      codex: draftConfig?.codex,
+      haBlock: draftConfig?.haBlock
     };
     const payloadKey = JSON.stringify(payload);
     const payloadChanged = previewPayloadKeyRef.current !== payloadKey;
@@ -280,7 +284,7 @@ export default function App(): ReactNode {
     // Keep status live for unsaved bindings, but background refreshes do not reopen the busy state.
     if (payloadChanged) setPreviewPending(true);
     previewQueueRef.current?.schedule({
-      task: () => requestPreview(payload.layout, payload.board, payload.water, payload.codex),
+      task: () => requestPreview(payload.layout, payload.board, payload.water, payload.codex, payload.haBlock),
       onSuccess: (nextPreview) => {
         if (previewPayloadRevisionRef.current !== payloadRevision) return;
         setDraftPreview(nextPreview);
@@ -328,7 +332,7 @@ export default function App(): ReactNode {
     const submittedDraft = draftConfigRef.current;
     const run = async (): Promise<void> => {
       if (!submittedDraft || !configResponse) return;
-      if (section === "layout" && layoutError) {
+      if ((section === "layout" || section === "haBlock") && layoutError) {
         setNotice({ tone: "error", section, message: layoutError });
         return;
       }
@@ -345,7 +349,7 @@ export default function App(): ReactNode {
         setDraftConfig(reconciled.draftConfig);
         let elementsRefreshed = true;
         try { setElementsResponse(await getElements()); } catch { elementsRefreshed = false; }
-        const savedLabel = section === "layout" ? "layout" : section === "ha" ? "Home Assistant" : section === "pause" ? "pause settings" : section === "water" ? "water heater" : section === "board" ? "board settings" : "Codex";
+        const savedLabel = section === "haBlock" ? "HA character block and layout" : section === "layout" ? "layout and HA character block" : section === "ha" ? "Home Assistant" : section === "pause" ? "pause settings" : section === "water" ? "water heater" : section === "board" ? "board settings" : "Codex";
         const delivery = saveDeliveryFeedback(response.delivery, status?.dryRun, savedLabel);
         const refreshSuffix = elementsRefreshed ? "" : " Board elements could not be refreshed yet.";
         const newerSuffix = reconciled.newerEdits ? " Newer edits remain unsaved." : "";
@@ -365,7 +369,7 @@ export default function App(): ReactNode {
     const nextDraft = replaceSection(draftConfig, configResponse.config, section);
     draftConfigRef.current = nextDraft;
     setDraftConfig(nextDraft);
-    setNotice({ tone: "info", section, message: `${section === "layout" ? "Layout" : section === "ha" ? "Home Assistant" : section === "pause" ? "Pause settings" : section === "water" ? "Water heater" : section === "board" ? "Board settings" : "Codex"} draft discarded.` });
+    setNotice({ tone: "info", section, message: `${section === "haBlock" ? "HA character block and layout" : section === "layout" ? "Layout and HA character block" : section === "ha" ? "Home Assistant" : section === "pause" ? "Pause settings" : section === "water" ? "Water heater" : section === "board" ? "Board settings" : "Codex"} draft discarded.` });
   }, [configResponse, draftConfig]);
 
   const handlePause = useCallback(async () => {
@@ -430,6 +434,7 @@ export default function App(): ReactNode {
             saving={savingSection === "layout"}
             savingAny={Boolean(savingSection)}
             dirty={sectionDirty("layout")}
+            blockSettingsDirty={Boolean(draftConfig && configResponse && JSON.stringify(draftConfig.haBlock) !== JSON.stringify(configResponse.config.haBlock))}
             layoutError={layoutError}
             notice={notice?.section === "layout" || notice?.section === "runtime" ? notice : undefined}
             waterStatus={waterStatus}
@@ -437,6 +442,7 @@ export default function App(): ReactNode {
           />
         ) : view === "plugins" && draftConfig ? (
           <PluginsScreen
+            layoutError={layoutError}
             login={login}
             plugin={pluginView}
             onPluginChange={openPlugin}
@@ -508,6 +514,7 @@ interface BoardScreenProps {
   saving: boolean;
   savingAny: boolean;
   dirty: boolean;
+  blockSettingsDirty: boolean;
   layoutError: string | undefined;
   notice: Notice;
   waterStatus: WaterHeaterStatus | undefined;
@@ -518,7 +525,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
   const {
     board, boardPreference, status, elements, draftLayout, selectedEntryIndex, setSelectedEntryIndex, setDraftLayout,
     previewMode, setPreviewMode, preview, layoutPreview, previewPending, previewError,
-    onPause, onApply, onDiscard, saving, savingAny, dirty, layoutError, notice, waterStatus, onOpenWaterSettings
+    onPause, onApply, onDiscard, saving, savingAny, dirty, blockSettingsDirty, layoutError, notice, waterStatus, onOpenWaterSettings
   } = props;
   const selectedEntry = selectedEntryIndex !== undefined ? draftLayout[selectedEntryIndex] : undefined;
   const selectedElement = selectedEntry ? elementById(elements, selectedEntry.elementId) : undefined;
@@ -609,6 +616,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
             <button className="button secondary" onClick={onDiscard} disabled={!dirty || savingAny}>Discard layout</button>
             <button className="button primary" onClick={onApply} disabled={!dirty || savingAny || Boolean(layoutError)}>{saving ? "Saving…" : "Apply layout"}</button>
           </div>
+          {blockSettingsDirty ? <p className="screen-footnote">Applying or discarding layout also applies or discards HA character block settings.</p> : null}
           {layoutError ? <p className="inline-message error" role="alert">{layoutError}</p> : null}
           {previewError && !layoutError ? <p className="inline-message error" role="alert">{previewError}</p> : null}
           {notice ? <p className={`inline-message ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.message}</p> : null}
