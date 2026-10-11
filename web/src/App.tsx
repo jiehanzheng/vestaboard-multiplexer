@@ -598,10 +598,7 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
               {deliveryHeld ? <span className="fact-warning">{currentPauseReason}</span> : null}
             </div>
           </div>
-          <div className="message-caption">
-            <span>{previewMode === "desired" ? (dirty ? "Draft message" : "Desired message") : `${sentLabel} message`}</span>
-            <code>{preview?.text ?? (previewMode === "lastSent" ? "No frame sent yet" : "No preview available")}</code>
-          </div>
+          <p className="sr-only">{previewMode === "desired" ? (dirty ? "Draft message" : "Desired message") : `${sentLabel} message`}: {preview?.text ?? (previewMode === "lastSent" ? "No frame sent yet" : "No preview available")}</p>
           <RuntimeMessages status={status} />
         </section>
 
@@ -860,12 +857,7 @@ function RuntimeMessages({ status }: { status: RuntimeStatus | undefined }): Rea
     <div className="runtime-messages" role="alert">
       {messages.map((message) => <p key={message}>{message}</p>)}
     </div>
-  ) : (
-    <div className="runtime-reading">
-      <span className="reading-dot" aria-hidden="true" />
-      <span>Codex {status.codex.collectedAt ? `read ${relativeTime(status.codex.collectedAt).toLowerCase()}` : "reading unavailable"}</span>
-    </div>
-  );
+  ) : null;
 }
 
 function ErrorScreen({ message, onRetry }: { message: string; onRetry: () => void }): ReactNode {
