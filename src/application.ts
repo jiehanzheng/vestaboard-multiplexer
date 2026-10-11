@@ -1,3 +1,5 @@
+import { mergeHABlocks } from "./plugins/haBlock/config.js";
+import { createHABlocksIntegration } from "./plugins/haBlock.js";
 import { ConfigStore, type AppConfig } from "./config.js";
 import { composeElements, type LayoutEntry } from "./elements.js";
 import { createCodexIntegration } from "./plugins/codexQuota/integration.js";
@@ -67,7 +69,8 @@ export async function createApplication(store: ConfigStore, directory: string, d
   const pause = await PauseController.open(directory, ha, requestComposition);
   const codex = (dependencies.createCodexIntegration ?? createCodexIntegration)(config.codex, { changed: requestComposition, now, logger: logs.child("codex") });
   const water = createWaterHeaterIntegration(config.water, ha, requestComposition, logs.child("water"), now);
-  const plugins = [codex, water];
+  const haBlocks = createHABlocksIntegration(config.haBlocks, ha, requestComposition, logs.child("ha-block"), now);
+  const plugins = [codex, water, haBlocks];
   const delivery = new DeliveryController({
     intervalMs: config.updateIntervalMinutes * 60_000, now,
     logger: logs.child("delivery"),
@@ -99,10 +102,10 @@ export async function createApplication(store: ConfigStore, directory: string, d
   function defaultLayout(value = board): LayoutEntry[] {
     return codex.defaultLayout(value);
   }
-  function elements(draft?: Pick<PreviewRequest, "codex" | "water">) {
-    return [...codex.elements(draft?.codex), ...water.elements(draft?.water)];
+  function elements(draft?: Pick<PreviewRequest, "codex" | "water" | "haBlock" | "haBlocks">) {
+    return [...codex.elements(draft?.codex), ...water.elements(draft?.water), ...haBlocks.elements(mergeHABlocks(config.haBlocks, draft?.haBlocks, draft?.haBlock))];
   }
-  function compose(layout: LayoutEntry[] | null = config.layout, value = board, draft?: Pick<PreviewRequest, "codex" | "water">) {
+  function compose(layout: LayoutEntry[] | null = config.layout, value = board, draft?: Pick<PreviewRequest, "codex" | "water" | "haBlock" | "haBlocks">) {
     return composeElements(elements(draft), layout ?? codex.defaultLayout(value, draft?.codex), dimensions(value), value);
   }
   function configurationError() {
@@ -199,7 +202,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       persistenceError: pauseState.persistenceError ?? saveError,
       configError: configurationError() ?? renderError, deliveryError,
       codex: codex.status(), homeAssistant: { connected: ha.snapshot().connected, error: ha.snapshot().error },
-      water: water.status(), login: codex.loginStatus()
+      water: water.status(), haBlocks: haBlocks.status(), login: codex.loginStatus()
     };
   }
   const actions: RuntimeActions = {
@@ -212,7 +215,8 @@ export async function createApplication(store: ConfigStore, directory: string, d
         label: element.label,
         height: element.height,
         ...(element.minWidth === undefined ? {} : { minWidth: element.minWidth }),
-        preview: element.render(dimensions().width)
+        // Unplaced blocks may be sized for a larger supported board; the catalog must still load.
+        preview: element.render(Math.max(dimensions().width, element.minWidth ?? 1))
       })),
       defaultLayout: defaultLayout(),
       defaultLayouts: { note: defaultLayout("note"), flagship: defaultLayout("flagship") }
@@ -263,6 +267,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
           if (stopped) return { ...store.getPublic(), delivery: "stopped" };
           await codex.configure(config.codex);
           water.configure(config.water);
+          haBlocks.configure(config.haBlocks);
           await ha.configure(config.ha);
           if (targetChanged) {
             ready = false;
@@ -360,6 +365,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       clearIntervalImpl(minute);
       const stopDelivery = delivery.stop();
       water.stop();
+      haBlocks.stop();
       const stopModules = Promise.all([codex.stop(), ha.stop()]);
       stopTask = (async () => {
         await Promise.all([startTask?.catch(() => {}), onceTask?.catch(() => {}), saveQueue, boardResolutionTask, stopModules]);
@@ -372,7 +378,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
 
 function configurationFailure(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  const sections = ["board", "ha", "water", "transport", "codex", "layout", "pauseOverlay", "updateIntervalMinutes"]
+  const sections = ["board", "ha", "water", "haBlocks", "haBlock", "transport", "codex", "layout", "pauseOverlay", "updateIntervalMinutes"]
     .filter((section) => text.includes(section));
   return sections.length > 0
     ? `Configuration save failed for ${sections.join(", ")}.`

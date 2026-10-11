@@ -1,3 +1,4 @@
+import { HABlocksSchema, HABlockConfigPatchSchema } from "../plugins/haBlock/config.js";
 import { z } from "zod";
 import { HttpUrlSchema } from "./url.js";
 import { HAConfigSchema, type HAConfig } from "./homeAssistant.js";
@@ -40,6 +41,7 @@ const appConfigShape = {
   board: z.enum(["auto", "note", "flagship"]),
   ha: HAConfigSchema,
   water: WaterHeaterConfigSchema,
+  haBlocks: HABlocksSchema.default([]),
   transport: TransportSchema,
   updateIntervalMinutes: z.number().finite().positive(),
   codex: CodexConfigSchema,
@@ -66,6 +68,8 @@ export const ConfigPatchSchema = z.object({
   board: z.enum(["auto", "note", "flagship"]).optional(),
   ha: HAConfigSchema.partial().nullable().optional(),
   water: WaterHeaterConfigPatchSchema.nullable().optional(),
+  haBlocks: HABlocksSchema.optional(),
+  haBlock: HABlockConfigPatchSchema.optional(),
   transport: TransportSchema.partial().extend({
     localMessageTransition: LocalMessageTransitionSchema.partial().optional(),
     pauseMessageTransition: LocalMessageTransitionSchema.partial().nullable().optional()

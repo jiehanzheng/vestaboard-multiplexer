@@ -1,6 +1,7 @@
+import { DEFAULT_HA_BLOCK_CONFIG, haBlockElementId, type HABlockInstance } from "../../src/plugins/haBlock/config.js";
 import type { AppConfig, ConfigPatch, ConfigSaveResponse, PublicAppConfig } from "../../src/contracts/config.js";
 
-export type ConfigSection = "codex" | "water" | "ha" | "pause" | "board" | "layout";
+export type ConfigSection = "codex" | "water" | "haBlock" | "ha" | "pause" | "board" | "layout";
 
 export interface SaveReconciliation<TConfig> { draftConfig: TConfig; newerEdits: boolean }
 
@@ -22,7 +23,8 @@ export function configPatchForSection(section: ConfigSection, config: AppConfig)
       })(),
       updateIntervalMinutes: config.updateIntervalMinutes
     };
-    case "layout": return { layout: config.layout === null ? null : structuredClone(config.layout) };
+    case "haBlock":
+    case "layout": return { layout: config.layout === null ? null : structuredClone(config.layout), haBlocks: structuredClone(config.haBlocks) };
   }
 }
 
@@ -36,7 +38,8 @@ function sectionValue(section: ConfigSection, config: AppConfig | PublicAppConfi
       const { pauseMessageTransition: _pauseMessageTransition, ...transport } = config.transport;
       return { board: config.board, transport, updateIntervalMinutes: config.updateIntervalMinutes };
     }
-    case "layout": return config.layout;
+    case "haBlock":
+    case "layout": return { layout: config.layout, haBlocks: config.haBlocks };
   }
 }
 
@@ -63,7 +66,11 @@ export function replaceSection(draft: AppConfig, saved: PublicAppConfig, section
       } as AppConfig["transport"];
       next.updateIntervalMinutes = saved.updateIntervalMinutes;
       break;
-    case "layout": next.layout = saved.layout === null ? null : structuredClone(saved.layout); break;
+    case "haBlock":
+    case "layout":
+      next.layout = saved.layout === null ? null : structuredClone(saved.layout);
+      next.haBlocks = structuredClone(saved.haBlocks);
+      break;
   }
   return next;
 }
@@ -77,4 +84,27 @@ export function reconcileSectionSave(input: {
   const newerEdits = JSON.stringify(sectionValue(input.section, input.currentDraft)) !== JSON.stringify(sectionValue(input.section, input.submittedDraft));
   if (newerEdits) return { draftConfig: input.currentDraft, newerEdits };
   return { draftConfig: replaceSection(input.currentDraft, input.acknowledgement.config, input.section), newerEdits };
+}
+
+
+/** A resize must travel with its placement so saved geometry never trails the block settings. */
+export function updateHABlockDraft(config: AppConfig, block: HABlockInstance): AppConfig {
+  const previous = config.haBlocks.find((value) => value.id === block.id);
+  if (!previous) throw new Error("The block no longer exists.");
+  const resized = block.width !== previous.width || block.height !== previous.height;
+  return { ...config, haBlocks: config.haBlocks.map((value) => value.id === block.id ? block : value),
+    layout: resized && config.layout
+      ? config.layout.map((entry) => entry.elementId === haBlockElementId(block.id) ? { ...entry, width: block.width } : entry)
+      : config.layout };
+}
+
+export function addHABlockDraft(config: AppConfig, id: string): AppConfig {
+  let suffix = 1;
+  while (config.haBlocks.some((block) => block.name === `HA block ${suffix}`)) suffix++;
+  return { ...config, haBlocks: [...config.haBlocks, { ...DEFAULT_HA_BLOCK_CONFIG, id, name: `HA block ${suffix}` }] };
+}
+
+export function removeHABlockDraft(config: AppConfig, id: string): AppConfig {
+  return { ...config, haBlocks: config.haBlocks.filter((block) => block.id !== id),
+    layout: config.layout?.filter((entry) => entry.elementId !== haBlockElementId(id)) ?? null };
 }

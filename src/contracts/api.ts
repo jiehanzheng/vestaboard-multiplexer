@@ -1,3 +1,5 @@
+import { HABlockConfigSchema, HABlocksSchema } from "../plugins/haBlock/config.js";
+import { HABlockStatusSchema } from "../plugins/haBlock/status.js";
 import { z } from "zod";
 import { LayoutEntrySchema, PublicConfigSchema } from "./config.js";
 import { CodexConfigSchema } from "../plugins/codexQuota/config.js";
@@ -40,6 +42,8 @@ export const PreviewRequestSchema = z.object({
   layout: z.array(LayoutEntrySchema),
   board: z.enum(["auto", "note", "flagship"]).optional(),
   water: WaterHeaterConfigSchema.optional(),
+  haBlock: HABlockConfigSchema.optional(),
+  haBlocks: HABlocksSchema.optional(),
   codex: CodexConfigSchema.optional()
 }).strict();
 
@@ -81,6 +85,7 @@ export const RuntimeStatusSchema = z.object({
   codex: z.object({ error: z.string().optional(), collectedAt: z.string().optional(), stale: z.boolean().optional() }).strict(),
   homeAssistant: HAStatusSchema.optional(),
   water: WaterHeaterStatusSchema.optional(),
+  haBlocks: z.record(z.string(), HABlockStatusSchema).optional(),
   login: LoginStatusSchema
 }).strict();
 
