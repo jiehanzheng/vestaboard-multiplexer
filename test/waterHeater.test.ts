@@ -29,7 +29,7 @@ const entities: HAEntity[] = [
 test("water owns HA source replacement and unsubscribes on stop", () => {
   let snapshot: HomeAssistantSnapshot = { source: "http://first", entities, connected: true };
   let listener: ((snapshot: HomeAssistantSnapshot) => void) | undefined;
-  const source = { snapshot: () => snapshot, subscribe: (callback: typeof listener) => { listener = callback; return () => { listener = undefined; }; } };
+  const source = { snapshot: () => snapshot, subscribe: (_ids: readonly string[], callback: typeof listener) => { listener = callback; return () => { listener = undefined; }; } };
   const water = createWaterHeaterIntegration(baseConfig, source, () => {});
   const initial = water.elements()[1]!.render(15);
   snapshot = { source: "http://first", entities: [], connected: false };
@@ -49,7 +49,7 @@ test("water integration logs one diagnostic transition and one recovery", () => 
   const infos: string[] = [];
   const source = {
     snapshot: () => snapshot,
-    subscribe: (callback: HomeAssistantSnapshotListener) => { listener = () => callback(snapshot); return () => { listener = undefined; }; }
+    subscribe: (_ids: readonly string[], callback: HomeAssistantSnapshotListener) => { listener = () => callback(snapshot); return () => { listener = undefined; }; }
   };
   const water = createWaterHeaterIntegration(baseConfig, source, () => {}, {
     warn: (message) => warnings.push(message),

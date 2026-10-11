@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigStore, type PublicConfig } from "../src/config.js";
 import { createApplication } from "../src/application.js";
-import type { HAEntity, HomeAssistantClient, HomeAssistantClientOptions } from "../src/homeAssistant.js";
+import { HomeAssistantClient, type HAEntity, type HomeAssistantClientOptions, type HomeAssistantSocket } from "../src/homeAssistant.js";
 import { createCodexIntegration } from "../src/plugins/codexQuota/integration.js";
 import type { VestaboardMessage } from "../src/vestaboard.js";
 import { PauseStore } from "../src/pause.js";
@@ -21,17 +21,110 @@ class FakeHomeAssistantClient {
   start(): void { this.started = true; this.connected = true; }
   stop(): void { this.stopped = true; }
   waitUntilReady(): Promise<void> { return Promise.resolve(); }
+  readEntities(ids: readonly string[]): readonly HAEntity[] { return this.entities.filter((entity) => ids.includes(entity.entity_id)); }
   states(): HAEntity[] { return this.entities.map((entity) => ({ ...entity, attributes: { ...entity.attributes } })); }
   status(): { connected: boolean } { return { connected: this.started && !this.stopped && this.connected }; }
   setConnected(value: boolean): void { this.connected = value; }
   async emit(entities: HAEntity[]): Promise<void> {
     this.entities = entities;
-    const callback = (this.options.changed as unknown as (() => void | Promise<void>) | undefined)?.();
+    const callback = (this.options.changed as unknown as ((change: {kind: "initial"}) => void | Promise<void>) | undefined)?.({kind: "initial"});
     if (callback instanceof Promise) await callback;
   }
 }
 
 const asHomeAssistantClient = (client: FakeHomeAssistantClient): HomeAssistantClient => client as unknown as HomeAssistantClient;
+
+test("HA event storms cache all entities but compose only relevant changes once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-scoped-events-"));
+  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture" });
+  const binding = (id: string, entityId: string) => ({ id, name: id, enabled: true, entityId, attribute: "characters",
+    width: 3, height: 1, unavailableDisplay: "blank" as const, staleAfterMinutes: 15 });
+  const music = (characters: number[], temperature = 120): HAEntity => ({ entity_id: "sensor.music", state: "ready", attributes: { characters, temperature } });
+  const other: HAEntity = { entity_id: "sensor.other", state: "ready", attributes: { characters: [1, 2, 3] } };
+  const initial = [music([68, 10, 26]), other,
+    ...Array.from({ length: 3_000 }, (_, i) => ({ entity_id: `sensor.noise_${i}`, state: "0", attributes: {} }))];
+  await store.save({ board: "note", updateIntervalMinutes: 3, codex: { enabled: false }, ha: { url: "http://ha.test" },
+    water: { enabled: true, remaining: { constant: 40 }, capacity: { constant: 80 },
+      temperature: { entityId: "sensor.music", attribute: "temperature" }, target: { constant: 140 } },
+    haBlocks: [binding("music", "sensor.music"), binding("other", "sensor.other")],
+    layout: [{ elementId: "water.temperature-text", startRow: 0, width: 8 },
+      { elementId: "ha-block.other", startRow: 1, startColumn: 12, width: 3 },
+      { elementId: "ha-block.music", startRow: 2, startColumn: 12, width: 3 }] });
+  let client!: HomeAssistantClient;
+  let socket!: HomeAssistantSocket;
+  let compositions = 0; let broadcasts = 0; let exports = 0; let reads = 0; let references = 0; let time = 0;
+  const sent: VestaboardMessage[] = [];
+  const receive = (message: unknown) => socket.onmessage?.({ data: JSON.stringify(message) });
+  const app = await createApplication(store, directory, true, {
+    now: () => new Date(time), setInterval: (() => 1) as unknown as typeof setInterval, clearInterval() {},
+    createVestaboardClient: () => ({ send: async (frame) => { sent.push(frame); }, detectBoard: async () => "note" as const }),
+    createCodexIntegration: (config, dependencies) => {
+      const integration = createCodexIntegration(config, dependencies); const elements = integration.elements.bind(integration);
+      integration.elements = (draft) => { compositions++; return elements(draft); }; return integration;
+    },
+    createHomeAssistantClient: (options) => {
+      client = new HomeAssistantClient({ ...options, socketFactory: () => {
+        socket = { onopen: null, onclose: null, onerror: null, onmessage: null, close() {}, send(raw) {
+          const message = JSON.parse(raw) as { type: string; id: number };
+          if (message.type === "auth") queueMicrotask(() => receive({ type: "auth_ok" }));
+          if (message.type === "subscribe_events") queueMicrotask(() => receive({ type: "result", id: message.id, success: true, result: null }));
+          if (message.type === "get_states") queueMicrotask(() => receive({ type: "result", id: message.id, success: true, result: initial }));
+        } };
+        queueMicrotask(() => receive({ type: "auth_required" })); return socket;
+      } });
+      const states = client.states.bind(client); const selected = client.readEntities.bind(client);
+      client.states = () => { exports++; return states(); };
+      client.readEntities = (ids) => { reads++; const values = selected(ids); references += values.length; return values; };
+      return client;
+    }
+  });
+  const event = (entityId: string, new_state: HAEntity | null) => receive({ type: "event", event: { event_type: "state_changed", data: { entity_id: entityId, new_state } } });
+  try {
+    app.onChange(() => { broadcasts++; app.actions.status(); });
+    await app.start(); await client.waitUntilReady(); await Promise.resolve();
+    assert.deepEqual(app.actions.status().desired!.characters![2]!.slice(12), [68, 10, 26]);
+    compositions = 0; broadcasts = 0; reads = 0; references = 0;
+    for (let i = 0; i < 500; i++) event(`sensor.noise_${i}`, { entity_id: `sensor.noise_${i}`, state: "1", attributes: {} });
+    await Promise.resolve();
+    assert.equal(compositions, 0); assert.equal(broadcasts, 0); assert.equal(reads, 0); assert.equal(exports, 0);
+    const sentBeforePause = sent.length;
+    event("sensor.music", music([69, 10, 26], 121)); await Promise.resolve();
+    assert.equal(compositions, 1, "water and two block instances share one composition");
+    assert.equal(broadcasts, 1);
+    assert.equal(reads, 3, "water callback, block callback and coherent composition only");
+    assert.equal(references, 5, "one water source plus two block and two composition references");
+    assert.deepEqual(app.actions.status().desired!.characters![2]!.slice(12), [69, 10, 26]);
+    assert.equal(sent.length, sentBeforePause, "physical delivery remains interval-limited");
+    const inspection = await app.actions.homeAssistant!("entities", {}) as { entities: HAEntity[] };
+    assert.equal(inspection.entities.find((e) => e.entity_id === "sensor.noise_499")!.state, "1");
+    assert.equal(exports, 1);
+    compositions = 0; broadcasts = 0;
+    event("sensor.music", music([69, 10, 26], 121)); await Promise.resolve();
+    assert.equal(compositions, 0); assert.equal(broadcasts, 0, "unchanged visible inputs do not redraw");
+    await app.actions.save({ haBlocks: [binding("music", "sensor.new"), binding("other", "sensor.other")] });
+    compositions = 0; broadcasts = 0;
+    event("sensor.music", music([68, 10, 26], 121)); await Promise.resolve();
+    assert.equal(compositions, 0, "old block binding is removed; unchanged water data also stays quiet");
+    event("sensor.new", { entity_id: "sensor.new", state: "ready", attributes: { characters: [68, 25, 13] } }); await Promise.resolve();
+    assert.deepEqual(app.actions.status().desired!.characters![2]!.slice(12), [68, 25, 13]);
+    assert.deepEqual(app.actions.status().desired!.characters![1]!.slice(12), [1, 2, 3]);
+    event("sensor.new", null); await Promise.resolve();
+    assert.deepEqual(app.actions.status().desired!.characters![2]!.slice(12), [0, 0, 0]);
+    socket.onerror?.(); await Promise.resolve();
+    assert.equal(app.actions.status().homeAssistant!.connected, false);
+    assert.deepEqual(app.actions.status().desired!.characters![1]!.slice(12), [0, 0, 0]);
+    client.stop(); client.start(); await client.waitUntilReady(); await Promise.resolve();
+    assert.equal(app.actions.status().homeAssistant!.connected, true);
+    assert.deepEqual(app.actions.status().desired!.characters![1]!.slice(12), [1, 2, 3], "recovery refreshes all bindings");
+    await app.actions.save({ haBlocks: [binding("music", "sensor.new")],
+      layout: store.get().layout!.filter((entry) => entry.elementId !== "ha-block.other") });
+    compositions = 0; broadcasts = 0;
+    event("sensor.other", { ...other, attributes: { characters: [4, 5, 6] } }); await Promise.resolve();
+    assert.equal(compositions, 0); assert.equal(broadcasts, 0, "removed instances leave no subscription");
+    assert.equal(store.get().updateIntervalMinutes, 3);
+    time += 180_000;
+  } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
+});
 
 test("auto-detected board changes reject layouts before persisting the new target", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-target-layout-"));

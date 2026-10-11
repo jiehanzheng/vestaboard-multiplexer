@@ -151,12 +151,12 @@ export class PauseController {
       this.controllerError = PERSISTENCE_ERROR;
     }
     if (this.stopped || generation !== this.generation) return;
-    this.unsubscribe = this.service.subscribe((snapshot) => {
+    this.unsubscribe = this.service.subscribe(nextBinding && config.pause ? [config.pause.entityId] : [], (snapshot) => {
       if (snapshot.source !== this.config.url) return;
       const task = this.handleSnapshot(snapshot, generation);
       this.track(task);
     });
-    await this.handleSnapshot(this.service.snapshot(), generation);
+    await this.handleSnapshot(this.service.snapshot(nextBinding && config.pause ? [config.pause.entityId] : []), generation);
     this.notifyChanged();
   }
 
@@ -203,6 +203,8 @@ export class PauseController {
     if (this.stopped || generation !== this.generation || snapshot.source !== this.config.url || !this.binding || !snapshot.connected) return;
     const value = readHAPause(this.config, snapshot.entities);
     if (value === undefined) return;
+    const previous = this.status();
+    if (previous.haPause === value && !previous.persistenceError) return;
     const persistHA = this.store.setHA(value, this.binding);
     this.notifyChanged();
     try {

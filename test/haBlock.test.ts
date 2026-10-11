@@ -17,7 +17,7 @@ function fixture(config: HABlockConfig = active) {
     entities: [{ entity_id: "sensor.block", state: "ready", attributes: { characters: [68, 10, 26] }, last_updated: "2000-01-01T00:00:00Z" }] };
   const listeners = new Set<HomeAssistantSnapshotListener>();
   let changes = 0;
-  const plugin = createHABlockIntegration(config, { snapshot: () => snapshot, subscribe(callback) { listeners.add(callback); return () => { listeners.delete(callback); }; } }, () => { changes++; }, { info() {}, warn() {} }, () => new Date(time));
+  const plugin = createHABlockIntegration(config, { snapshot: () => snapshot, subscribe(_ids, callback) { listeners.add(callback); return () => { listeners.delete(callback); }; } }, () => { changes++; }, { info() {}, warn() {} }, () => new Date(time));
   return { plugin, listeners, changes: () => changes, now: (value: number) => { time = value; },
     emit(patch: Partial<HomeAssistantSnapshot>) { snapshot = { ...snapshot, ...patch }; for (const listener of listeners) listener(snapshot); },
     payload(characters: unknown, state = "ready", extra = {}) {
@@ -35,7 +35,9 @@ test("HA badges update from attribute-only events; valid zeros and unchanged pau
   f.payload([69, 25, 13]); f.now(24 * 60 * 60_000);
   assert.deepEqual(f.row(), [[69, 25, 13]]);
   assert.equal(f.plugin.status().stale, false);
-  assert.equal(f.changes(), 7);
+  assert.equal(f.changes(), 5);
+  f.payload([69, 25, 13]);
+  assert.equal(f.changes(), 5, "unchanged healthy payload does not emit another UI update");
   f.plugin.stop(); assert.equal(f.listeners.size, 0);
 });
 
@@ -142,7 +144,7 @@ test("independent blocks share one subscription and isolate fallback, staleness,
   const music = { ...legacyHABlock(active), id: "music", name: "Music", entityId: "sensor.music", unavailableDisplay: "blank" as const, staleAfterMinutes: 1 };
   const weather = { ...legacyHABlock(active), id: "weather", name: "Weather", entityId: "sensor.weather", attribute: "tiles", width: 4, staleAfterMinutes: 2 };
   const plugin = createHABlocksIntegration([music, weather], {
-    snapshot: () => snapshot, subscribe(callback) { listeners.add(callback); return () => { listeners.delete(callback); }; }
+    snapshot: () => snapshot, subscribe(_ids, callback) { listeners.add(callback); return () => { listeners.delete(callback); }; }
   }, () => { changes++; }, { info() {}, warn() {} }, () => new Date(time));
   const emit = () => { for (const listener of listeners) listener(snapshot); };
   assert.equal(listeners.size, 1);

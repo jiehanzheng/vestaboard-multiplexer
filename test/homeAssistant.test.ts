@@ -30,6 +30,59 @@ class FakeSocket implements HomeAssistantSocket {
   }
 }
 
+test("scoped HA subscriptions ingest unrelated events without snapshots and own immutable records", async () => {
+  const socket = new FakeSocket();
+  let client!: HomeAssistantClient;
+  let exports = 0;
+  let reads = 0;
+  let references = 0;
+  const service = new HomeAssistantService({ createClient: (options) => {
+    client = new HomeAssistantClient({ ...options, socketFactory: () => socket });
+    const states = client.states.bind(client);
+    const selected = client.readEntities.bind(client);
+    client.states = () => { exports++; return states(); };
+    client.readEntities = (ids) => { reads++; const entities = selected(ids); references += entities.length; return entities; };
+    return client;
+  }, logger: { info() {}, warn() {} } });
+  let notifications = 0;
+  service.subscribe(["sensor.music"], () => { notifications++; });
+  service.configure({ url: "http://ha.test" }); service.start();
+  socket.receive({ type: "auth_ok" });
+  socket.receive({ type: "result", id: socket.sent.at(-1)!.id, success: true, result: null });
+  const music = (characters: number[]) => ({ entity_id: "sensor.music", state: "ready", attributes: { characters, nested: { values: [1] } } });
+  socket.receive({ type: "result", id: socket.sent.at(-1)!.id, success: true,
+    result: [music([68, 10, 26]), ...Array.from({ length: 3_000 }, (_, i) => ({ entity_id: `sensor.other_${i}`, state: "0", attributes: {} }))] });
+  try {
+    const captured = service.snapshot(["sensor.music"]);
+    assert.equal(Object.isFrozen(captured.entities[0]!.attributes.characters), true);
+    assert.throws(() => (captured.entities[0]!.attributes.characters as number[])[0] = 0, TypeError);
+    notifications = 0; reads = 0; references = 0;
+    for (let i = 0; i < 500; i++) socket.receive({ type: "event", event: { data: { entity_id: `sensor.other_${i}`,
+      new_state: { entity_id: `sensor.other_${i}`, state: "1", attributes: {} } } } });
+    assert.equal(notifications, 0);
+    assert.equal(reads, 0);
+    assert.equal(exports, 0);
+    socket.receive({ type: "event", event: { data: { entity_id: "sensor.music", new_state: music([69, 10, 26]) } } });
+    assert.equal(notifications, 1);
+    assert.equal(reads, 1);
+    assert.equal(references, 1, "copying is bounded by dependencies, not 3,001 cached entities");
+    assert.deepEqual(captured.entities[0]!.attributes.characters, [68, 10, 26]);
+    const inspection = await service.inspect("entities") as { entities: import("../src/homeAssistant.js").HAEntity[] };
+    assert.equal(exports, 1, "inspection performs one defensive export, without a service clone pass");
+    assert.equal(inspection.entities.find((e) => e.entity_id === "sensor.other_499")!.state, "1");
+    const exportedMusic = inspection.entities.find((e) => e.entity_id === "sensor.music")!;
+    (exportedMusic.attributes.characters as number[])[0] = 0;
+    (exportedMusic.attributes.nested as { values: number[] }).values[0] = 9;
+    assert.deepEqual(service.snapshot(["sensor.music"]).entities[0]!.attributes.characters, [69, 10, 26]);
+    assert.deepEqual(service.snapshot(["sensor.music"]).entities[0]!.attributes.nested, { values: [1] });
+    socket.receive({ type: "event", event: { data: { entity_id: "sensor.music", new_state: null } } });
+    assert.equal(service.snapshot(["sensor.music"]).entities[0]!.state, "unknown");
+    socket.onerror?.();
+    assert.equal(service.status().connected, false);
+    assert.equal(notifications, 3, "removal and disconnection notify the binding");
+  } finally { await service.stop(); }
+});
+
 test("socket errors reconnect and resynchronize the snapshot", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   const sockets: FakeSocket[] = [];
@@ -65,7 +118,7 @@ test("Home Assistant service logs the first connection failure once and recovery
   const infos: string[] = [];
   const service = new HomeAssistantService({
     createClient: (options) => {
-      notify = options.changed;
+      notify = () => options.changed?.({ kind: "initial" });
       return {
         start() {}, stop() {}, waitUntilReady: async () => {}, states: () => [],
         status: () => ({ connected, ...(error ? { error } : {}) })
@@ -254,8 +307,8 @@ test("shares the configured client and closes temporary inspection clients", asy
   const statesId = active.sent.find((message) => message.type === "get_states")?.id as number;
   active.receive({ id: statesId, type: "result", success: true, result: [{ entity_id: "sensor.tank", state: "50", attributes: {} }] });
   await ready;
-  assert.equal(service.snapshot().source, "http://ha.local:8123");
-  assert.equal(service.snapshot().entities[0]?.state, "50");
+  assert.equal(service.snapshot(["sensor.tank"]).source, "http://ha.local:8123");
+  assert.equal(service.snapshot(["sensor.tank"]).entities[0]?.state, "50");
   const entities = await service.inspect("entities", { url: "http://ha.local:8123" });
   assert.equal((entities as { entities: readonly { state: string }[] }).entities[0]?.state, "50");
   assert.equal(sockets.length, 1);

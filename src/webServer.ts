@@ -18,6 +18,7 @@ export async function startWebServer(actions: RuntimeActions, options: {
   port: number; host?: string; assets?: string;
 }): Promise<{ broadcast(): void; close(): Promise<void>; port: number }> {
   const clients = new Set<EventClient>();
+  let runtimePayload: string | undefined;
   const assets = resolve(options.assets ?? "dist/public");
   const queue = (client: EventClient, kind: "runtime" | "logs"): void => {
     if (client.closed) return;
@@ -30,7 +31,7 @@ export async function startWebServer(actions: RuntimeActions, options: {
     if (!kind) return;
     client.pending.delete(kind);
     const payload = kind === "runtime"
-      ? `data: ${JSON.stringify(RuntimeStatusSchema.parse(actions.status()))}\n\n`
+      ? (runtimePayload ??= `data: ${JSON.stringify(RuntimeStatusSchema.parse(actions.status()))}\n\n`)
       : `event: logs\ndata: ${JSON.stringify(LogsResponseSchema.parse(actions.logs?.() ?? { entries: [] }))}\n\n`;
     client.writing = true;
     if (!client.response.write(payload)) {
@@ -40,7 +41,7 @@ export async function startWebServer(actions: RuntimeActions, options: {
       flush(client);
     }
   };
-  const broadcast = (): void => { for (const client of clients) queue(client, "runtime"); };
+  const broadcast = (): void => { runtimePayload = undefined; for (const client of clients) queue(client, "runtime"); };
   const broadcastLogs = (): void => { for (const client of clients) queue(client, "logs"); };
   const unsubscribeLogs = actions.subscribeLogs?.(broadcastLogs);
   const server = createServer(async (request, response) => {
@@ -57,6 +58,7 @@ export async function startWebServer(actions: RuntimeActions, options: {
         });
         const client: EventClient = { response, pending: new Set(), writing: false, closed: false };
         clients.add(client);
+        runtimePayload = undefined;
         client.pending.add("runtime");
         client.pending.add("logs");
         flush(client);

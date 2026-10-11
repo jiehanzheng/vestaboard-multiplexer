@@ -1,9 +1,9 @@
 import { mergeHABlocks } from "./plugins/haBlock/config.js";
-import { createHABlocksIntegration } from "./plugins/haBlock.js";
+import { createHABlocksIntegration, haBlockEntityIds } from "./plugins/haBlock.js";
 import { ConfigStore, type AppConfig } from "./config.js";
 import { composeElements, type LayoutEntry } from "./elements.js";
 import { createCodexIntegration } from "./plugins/codexQuota/integration.js";
-import { createWaterHeaterIntegration } from "./plugins/waterHeater.js";
+import { createWaterHeaterIntegration, waterEntityIds } from "./plugins/waterHeater.js";
 import { HomeAssistantService } from "./homeAssistantService.js";
 import { PauseController } from "./pause.js";
 import { composePauseOverlay } from "./pauseOverlay.js";
@@ -63,7 +63,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
   const makeBoard = dependencies.createVestaboardClient ?? createVestaboardClient;
   const ha = new HomeAssistantService({
     createClient: dependencies.createHomeAssistantClient,
-    changed: () => changed(),
+    changed: notifyChanged,
     logger: logs.child("home-assistant")
   });
   const pause = await PauseController.open(directory, ha, requestComposition);
@@ -94,7 +94,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       }
     }
   });
-  delivery.onStatusChange(() => changed());
+  delivery.onStatusChange(notifyChanged);
 
   function dimensions(value = board) {
     return value === "note" ? { width: 15, height: 3 } : { width: 22, height: 6 };
@@ -103,7 +103,10 @@ export async function createApplication(store: ConfigStore, directory: string, d
     return codex.defaultLayout(value);
   }
   function elements(draft?: Pick<PreviewRequest, "codex" | "water" | "haBlock" | "haBlocks">) {
-    return [...codex.elements(draft?.codex), ...water.elements(draft?.water), ...haBlocks.elements(mergeHABlocks(config.haBlocks, draft?.haBlocks, draft?.haBlock))];
+    const waterConfig = draft?.water ?? config.water;
+    const blocks = mergeHABlocks(config.haBlocks, draft?.haBlocks, draft?.haBlock);
+    const snapshot = ha.snapshot([...waterEntityIds(waterConfig), ...haBlockEntityIds(blocks)]);
+    return [...codex.elements(draft?.codex), ...water.elements(waterConfig, snapshot), ...haBlocks.elements(blocks, snapshot)];
   }
   function compose(layout: LayoutEntry[] | null = config.layout, value = board, draft?: Pick<PreviewRequest, "codex" | "water" | "haBlock" | "haBlocks">) {
     return composeElements(elements(draft), layout ?? codex.defaultLayout(value, draft?.codex), dimensions(value), value);
@@ -124,7 +127,40 @@ export async function createApplication(store: ConfigStore, directory: string, d
     if (!effectiveReason && lastDeliveryPauseReason) logs.child("pause").info("Updates resumed.");
     lastDeliveryPauseReason = effectiveReason;
   }
+  let compositionDirty = false;
+  let notificationDirty = false;
+  let flushQueued = false;
+  let flushing = false;
+  let publishedStatus: string | undefined;
+  function scheduleFlush() {
+    if (flushQueued || flushing || stopped) return;
+    flushQueued = true;
+    queueMicrotask(flushPending);
+  }
+  function notifyChanged() { notificationDirty = true; scheduleFlush(); }
   function requestComposition() {
+    if (!ready || stopped) return;
+    compositionDirty = true;
+    scheduleFlush();
+  }
+  // HA consumers update together before one coherent render; no debounce delays playback changes.
+  function flushPending() {
+    flushQueued = false;
+    if (stopped || flushing) return;
+    flushing = true;
+    try {
+      if (compositionDirty) { compositionDirty = false; composeNow(); }
+      if (notificationDirty) {
+        notificationDirty = false;
+        const next = JSON.stringify(status());
+        if (next !== publishedStatus) { publishedStatus = next; changed(); }
+      }
+    } finally {
+      flushing = false;
+      if (compositionDirty || notificationDirty) scheduleFlush();
+    }
+  }
+  function composeNow() {
     if (!ready || stopped) return;
     const state = pause.status();
     const userPaused = state.manualPause || state.haPause;
@@ -146,7 +182,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
     }
     catch (error) { renderError = error instanceof Error ? error.message : "Unable to render layout"; delivery.clearFrame(); }
     syncPause();
-    changed();
+    notifyChanged();
   }
   async function resolveBoard(settings: AppConfig): Promise<{ board: VestaboardBoard; resolver: VestaboardBoardResolver; canDetect: boolean }> {
     const client = makeBoard({ dryRun: true, ...settings.transport, logger: logs.child("vestaboard") });
@@ -201,7 +237,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       pauseReason: delivery.status().pauseReason ?? pauseState.pauseReason,
       persistenceError: pauseState.persistenceError ?? saveError,
       configError: configurationError() ?? renderError, deliveryError,
-      codex: codex.status(), homeAssistant: { connected: ha.snapshot().connected, error: ha.snapshot().error },
+      codex: codex.status(), homeAssistant: (() => { const { source: _source, ...status } = ha.status(); return status; })(),
       water: water.status(), haBlocks: haBlocks.status(), login: codex.loginStatus()
     };
   }
@@ -284,7 +320,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
           saveError = "Could not apply saved settings. Check the configuration directory and try again.";
           applicationLog.error(configurationFailure(error));
           throw error;
-        } finally { ready = !stopped; requestComposition(); }
+        } finally { ready = !stopped; requestComposition(); flushPending(); }
         const pauseRelated = pauseOverlayChanged || haPauseChanged;
         if (pause.status().paused && !pauseRelated) return { ...store.getPublic(), delivery: "paused" as const };
         const attempt = pauseRelated ? await delivery.attempt() : await delivery.attemptManual();
@@ -302,6 +338,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       } finally {
         requestComposition();
       }
+      flushPending();
       await delivery.attempt();
       return status();
     },
@@ -333,6 +370,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
         }
         if (stopped) return;
         requestComposition();
+        flushPending();
         minute = setIntervalImpl(() => {
           retryBoardDetection();
           requestComposition();
@@ -354,6 +392,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
         if (stopped) return;
         ready = true;
         requestComposition();
+        flushPending();
         return delivery.attempt();
       })();
       return onceTask;
