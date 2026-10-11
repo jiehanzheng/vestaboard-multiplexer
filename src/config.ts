@@ -1,3 +1,4 @@
+import { intervalLimit } from "./contracts/updateLimits.js";
 import { mergeHABlocks, normalizeLegacyHABlocks } from "./plugins/haBlock/config.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -53,7 +54,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     localUrl: "http://vestaboard.local:7000/local-api/message",
     localMessageTransition: { ...DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS }
   },
-  updateIntervalMinutes: 5,
+  updateLimits: intervalLimit(5),
   codex: { ...DEFAULT_CODEX_CONFIG },
   layout: null,
   pauseOverlay: defaultPauseOverlay()
@@ -186,7 +187,7 @@ function legacyConfig(env: ConfigEnvironment): AppConfig {
   if (env.VESTABOARD_LOCAL_MESSAGE_STRATEGY) config.transport.localMessageTransition.strategy = strategyFromEnv(env.VESTABOARD_LOCAL_MESSAGE_STRATEGY);
   if (env.VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS) config.transport.localMessageTransition.stepIntervalMs = positiveNumber(env.VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS, "VESTABOARD_LOCAL_MESSAGE_STEP_INTERVAL_MS");
   if (env.VESTABOARD_LOCAL_MESSAGE_STEP_SIZE) config.transport.localMessageTransition.stepSize = positiveNumber(env.VESTABOARD_LOCAL_MESSAGE_STEP_SIZE, "VESTABOARD_LOCAL_MESSAGE_STEP_SIZE");
-  if (env.ORCHESTRATOR_INTERVAL_MINUTES) config.updateIntervalMinutes = positiveNumber(env.ORCHESTRATOR_INTERVAL_MINUTES, "ORCHESTRATOR_INTERVAL_MINUTES");
+  if (env.ORCHESTRATOR_INTERVAL_MINUTES) config.updateLimits = intervalLimit(positiveNumber(env.ORCHESTRATOR_INTERVAL_MINUTES, "ORCHESTRATOR_INTERVAL_MINUTES"));
   config.codex = applyCodexEnvironment(config.codex, env);
   return config;
 }
@@ -216,7 +217,7 @@ function warnObsoleteEnvironmentVariables(env: ConfigEnvironment): void {
 
 function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
   const baseConfig = cloneConfig(base);
-  const { haBlock: legacyBlock, ...canonicalPatch } = patch;
+  const { haBlock: legacyBlock, updateIntervalMinutes: legacyInterval, ...canonicalPatch } = patch;
   const haPatch = patch.ha;
   const transport = patch.transport ?? {};
   const codex: Partial<AppConfig["codex"]> = patch.codex ?? {};
@@ -237,6 +238,7 @@ function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
   return {
     ...baseConfig,
     ...canonicalPatch,
+    updateLimits: patch.updateLimits === undefined ? (legacyInterval === undefined ? baseConfig.updateLimits : intervalLimit(legacyInterval)) : patch.updateLimits,
     ha,
     water,
     haBlocks: mergeHABlocks(baseConfig.haBlocks, patch.haBlocks, legacyBlock),

@@ -1,3 +1,4 @@
+import { AutomaticUpdateCapacity } from "./AutomaticUpdateLimits";
 import { ConfigToggle } from "./ConfigControls";
 import type { LayoutDecision } from "../../src/contracts/layout.js";
 import { HABlocksSchema, haBlockElementId, haBlockGeometry } from "../../src/plugins/haBlock/config.js";
@@ -54,7 +55,7 @@ function saveDeliveryFeedback(delivery: DeliveryOutcome, dryRun: boolean | undef
     case "unchanged": return { message: `Saved ${savedLabel}; output is already current${dryRun === true ? " (preview simulated)." : "."}` };
     case "failed": return { tone: "warning", message: `Saved ${savedLabel}; board update failed. Retry on the next eligible attempt.` };
     case "paused": return { message: `Saved ${savedLabel}; updates are paused.` };
-    case "limited": return { message: `Saved ${savedLabel}; update waits for startup banner.` };
+    case "limited": return { message: `Saved ${savedLabel}; update waits for its next eligible attempt.` };
     case "empty": return { message: `Saved ${savedLabel}; no eligible board output was available.` };
     case "stopped": return { message: `Saved ${savedLabel}; the app is stopping before it can update the board.` };
   }
@@ -571,9 +572,10 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
         <OutputStatusItem label={outputLabel} detail={outputDetail} />
         <OutputStatusItem label={dirty ? "Draft layout" : "Saved layout"} detail={dirty ? "Unsaved changes" : "Matches saved settings"} />
         <OutputStatusItem label={status?.lastSentAt ? sentLabel : "Last output"} detail={status?.lastSentAt ? relativeTime(status.lastSentAt) : "No output yet"} />
-        <OutputStatusItem label={contentPaused ? "Content paused" : deliveryHeld ? "Delivery held" : "Next attempt"} detail={contentPaused ? `${currentPauseReason}${status?.pauseBackground ? status.nextAttemptAt ? ` · overlay next ${formatDate(status.nextAttemptAt)}` : " · overlay follows normal cadence" : ""}` : deliveryHeld ? currentPauseReason : status?.nextAttemptAt ? formatDate(status.nextAttemptAt) : "Ready"} warning={deliveryHeld} />
+        <OutputStatusItem label={contentPaused ? "Content paused" : deliveryHeld ? "Delivery held" : status?.pendingDelivery === false ? "Output current" : "Next allowed update"} detail={contentPaused ? `${currentPauseReason}${status?.pauseBackground ? status.nextAttemptAt ? ` · overlay next ${formatDate(status.nextAttemptAt)}` : " · overlay follows normal cadence" : ""}` : deliveryHeld ? currentPauseReason : status?.pendingDelivery === false ? "Waiting for content changes" : status?.nextAttemptAt ? formatDate(status.nextAttemptAt) : "Ready"} warning={deliveryHeld} />
       </div>
 
+      <AutomaticUpdateCapacity live={status?.updateLimits} pending={status?.pendingDelivery} nextAttemptAt={status?.nextAttemptAt} held={deliveryHeld} />
       <div className="board-workspace">
         <section className="board-stage" aria-label="Board preview">
           {previewMode === "lastSent" && !preview ? <div className="empty-output" role="status"><h2>No frame sent yet</h2><p>This process has not successfully delivered a frame. Select Desired to see the pending content.</p></div> : <BoardPreview

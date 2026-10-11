@@ -181,7 +181,7 @@ test("singleton saved configuration migrates without losing settings, placement,
   const directory = await mkdtemp(join(tmpdir(), "ha-block-migration-"));
   try {
     const { writeFile } = await import("node:fs/promises");
-    const { haBlocks: _blocks, ...base } = structuredClone(DEFAULT_APP_CONFIG);
+    const { haBlocks: _blocks, updateLimits: _limits, ...base } = structuredClone(DEFAULT_APP_CONFIG);
     const layout = [{ elementId: HA_BLOCK_ELEMENT_ID, startRow: 2, startColumn: 12, width: 3 }];
     const singleton = { ...active, unavailableDisplay: "blank" as const, staleAfterMinutes: null };
     await writeFile(join(directory, "config.json"), JSON.stringify({ version: 1, ...base, haBlock: singleton, layout, updateIntervalMinutes: 3 }));
@@ -189,7 +189,7 @@ test("singleton saved configuration migrates without losing settings, placement,
     assert.equal(store.getPublic().error, undefined);
     assert.deepEqual(store.get().haBlocks, [legacyHABlock(singleton)]);
     assert.deepEqual(store.get().layout, layout);
-    assert.equal(store.get().updateIntervalMinutes, 3);
+    assert.equal(store.get().updateLimits[0]!.windowMinutes, 3);
     await store.save({ haBlocks: [...store.get().haBlocks, { ...legacyHABlock(active), id: "second", name: "Second", entityId: "sensor.second" }] });
     await store.save({ haBlock: { staleAfterMinutes: 5 } });
     assert.equal(store.get().haBlocks[0]!.staleAfterMinutes, 5);

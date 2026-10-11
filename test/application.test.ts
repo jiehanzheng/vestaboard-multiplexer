@@ -121,7 +121,7 @@ test("HA event storms cache all entities but compose only relevant changes once"
     compositions = 0; broadcasts = 0;
     event("sensor.other", { ...other, attributes: { characters: [4, 5, 6] } }); await Promise.resolve();
     assert.equal(compositions, 0); assert.equal(broadcasts, 0, "removed instances leave no subscription");
-    assert.equal(store.get().updateIntervalMinutes, 3);
+    assert.equal(store.get().updateLimits[0]!.windowMinutes, 3);
     time += 180_000;
   } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
 });
@@ -499,7 +499,7 @@ test("Home Assistant pause binding saves use normal cadence when they pause or r
     assert.equal(app.actions.status().paused, true, "a newly configured HA binding is fail-closed until its state is observed");
     assert.equal(sent.length, initialWrites, "binding save must not bypass delivery while it fail-closes paused");
     const cleared = { ...store.get(), ha: { url: "", pause: null } };
-    assert.equal((await app.actions.save(cleared)).delivery, "limited");
+    assert.equal((await app.actions.save(cleared)).delivery, "unchanged", "the resumed frame already matches the last output");
     assert.equal(app.actions.status().paused, false, "removing the HA binding resumes semantic delivery");
     assert.equal(sent.length, initialWrites, "binding removal must respect the normal delivery deadline");
   } finally {
@@ -720,7 +720,7 @@ test("HA block shares the live connection and validates size plus placement atom
     assert.deepEqual(store.get(), before);
     await app.actions.save({ haBlocks: [expanded], layout: newLayout });
     assert.equal(store.get().haBlocks[0]!.width, 4);
-    assert.equal(store.get().updateIntervalMinutes, 3);
+    assert.equal(store.get().updateLimits[0]!.windowMinutes, 3);
     assert.equal(clients.length, 1);
     client.setConnected(false); await client.emit([]);
     assert.deepEqual(app.actions.status().desired?.characters?.[2]?.slice(11), [0, 0, 0, 0]);
@@ -768,7 +768,7 @@ test("multiple HA blocks retain independent sources, diagnostics, and placements
     await app.actions.save({ haBlocks: [second], layout: [layout[1]!] });
     assert.deepEqual(Object.keys(app.actions.status().haBlocks ?? {}), ["other"]);
     assert.equal(app.actions.elements().elements.filter((element) => element.id.startsWith("ha-block.")).length, 1);
-    assert.equal(store.get().updateIntervalMinutes, 3);
+    assert.equal(store.get().updateLimits[0]!.windowMinutes, 3);
     assert.equal(clients.length, 1);
   } finally { await app.stop(); assert.ok(clients.every((client) => client.stopped)); await rm(directory, { recursive: true, force: true }); }
 });
@@ -814,6 +814,6 @@ test("priority drafts and saved output distinguish inactive, paused and unavaila
     assert.equal(app.actions.status().layoutSelection![1]!.state, "unavailable");
     assert.equal(app.actions.status().layoutSelection![1]!.reason, "shown");
     assert.deepEqual(app.actions.status().desired!.characters![2], Array(15).fill(0));
-    assert.equal(clients, 1); assert.equal(store.get().updateIntervalMinutes, 3);
+    assert.equal(clients, 1); assert.equal(store.get().updateLimits[0]!.windowMinutes, 3);
   } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -1,3 +1,5 @@
+import { AutomaticUpdateLimits } from "./updateLimits.js";
+import type { UpdateLimit, UpdateLimitStatus } from "../contracts/updateLimits.js";
 import type { VestaboardMessage } from "../vestaboard.js";
 import type { DeliveryOutcome } from "../contracts/config.js";
 
@@ -7,7 +9,8 @@ export interface DeliveryStatus {
   running: boolean;
   paused: boolean;
   pauseReason?: string;
-  intervalMs: number;
+  limits: UpdateLimitStatus[];
+  pending: boolean;
   nextAttemptAt?: Date;
   lastAttemptAt?: Date;
   lastSuccessfulAt?: Date;
@@ -21,7 +24,7 @@ export interface DeliveryAttempt {
 }
 
 export interface DeliveryControllerOptions {
-  intervalMs: number;
+  limits: UpdateLimit[];
   send: (message: VestaboardMessage, usePauseAnimation?: boolean) => Promise<void>;
   now?: () => Date;
   logger?: Pick<Console, "info" | "warn">;
@@ -36,7 +39,7 @@ export class DeliveryController {
   private readonly logger: Pick<Console, "info" | "warn">;
   private frame: VestaboardMessage | undefined;
   private lastAttemptAt: Date | undefined;
-  private lastNormalAttemptAt: Date | undefined;
+  private readonly limits: AutomaticUpdateLimits;
   private lastSuccessfulAt: Date | undefined;
   private startupHoldUntil: Date | undefined;
   private lastSentFrame: VestaboardMessage | undefined;
@@ -54,10 +57,8 @@ export class DeliveryController {
   private schedulerTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly options: DeliveryControllerOptions) {
-    if (!Number.isFinite(options.intervalMs) || options.intervalMs <= 0) {
-      throw new Error("Delivery interval must be a positive number.");
-    }
     this.now = options.now ?? (() => new Date());
+    this.limits = new AutomaticUpdateLimits(options.limits, this.now().getTime());
     this.logger = options.logger ?? console;
   }
 
@@ -67,9 +68,8 @@ export class DeliveryController {
     this.requestNow();
   }
 
-  setInterval(intervalMs: number): void {
-    validateInterval(intervalMs, "Delivery");
-    this.options.intervalMs = intervalMs;
+  setLimits(limits: UpdateLimit[]): void {
+    this.limits.configure(limits, this.now().getTime());
     this.notifyStatus();
     this.requestNow();
   }
@@ -147,7 +147,7 @@ export class DeliveryController {
 
   /**
    * Sends the latest frame when the limiter allows it. The attempt slot is
-   * reserved before the write begins, so failures consume the full interval.
+   * reserved before the write begins, so failures consume capacity in every rule.
    */
   async attempt(): Promise<DeliveryAttempt> {
     if (this.inFlight) return this.inFlight;
@@ -177,24 +177,20 @@ export class DeliveryController {
     if (!this.running) return this.finish("stopped");
     if (this.paused) return this.finish("paused");
 
-    const now = this.now();
-    const eligibleAt = manual ? this.startupHoldUntil : this.nextEligibleAt();
-    if (eligibleAt && now.getTime() < eligibleAt.getTime()) {
-      return this.finish("limited");
-    }
-
     if (!this.frame) return this.finish("empty");
-
     const message = this.frame;
     if (this.sentMessageKey === messageKey(message)) {
       if (this.frameUserPaused !== undefined) this.lastSentUserPaused = this.frameUserPaused;
       return this.finish("unchanged");
     }
+    const now = this.now();
+    const eligibleAt = manual ? this.startupHoldUntil : this.nextEligibleAt(now.getTime());
+    if (eligibleAt && now.getTime() < eligibleAt.getTime()) return this.finish("limited");
     const userPaused = this.frameUserPaused;
     const usePauseAnimation = userPaused !== undefined && (this.lastSentUserPaused === undefined ? userPaused : userPaused !== this.lastSentUserPaused);
 
     this.lastAttemptAt = new Date(now);
-    this.lastNormalAttemptAt = new Date(now);
+    this.limits.reserve(now.getTime());
 
     try {
       await this.options.send(message, usePauseAnimation);
@@ -247,13 +243,15 @@ export class DeliveryController {
   }
 
   status(): DeliveryStatus {
-    const nextEligibleAt = this.nextEligibleAt();
     const now = this.now().getTime();
+    const limits = this.limits.status(now);
+    const nextEligibleAt = this.nextEligibleAt(now, limits);
     return {
       running: this.running,
       paused: this.paused,
       pauseReason: this.pauseReason,
-      intervalMs: this.options.intervalMs,
+      limits,
+      pending: Boolean(this.frame && messageKey(this.frame) !== this.sentMessageKey),
       nextAttemptAt: nextEligibleAt && nextEligibleAt.getTime() > now ? nextEligibleAt : undefined,
       lastAttemptAt: this.lastAttemptAt ? new Date(this.lastAttemptAt) : undefined,
       lastSuccessfulAt: this.lastSuccessfulAt ? new Date(this.lastSuccessfulAt) : undefined,
@@ -289,10 +287,8 @@ export class DeliveryController {
     }
   }
 
-  private nextEligibleAt(): Date | undefined {
-    const normal = this.lastNormalAttemptAt
-      ? this.lastNormalAttemptAt.getTime() + this.options.intervalMs
-      : undefined;
+  private nextEligibleAt(now = this.now().getTime(), limits = this.limits.status(now)): Date | undefined {
+    const normal = limits.reduce<number | undefined>((latest, rule) => rule.blocked ? Math.max(latest ?? 0, rule.nextSlotAt!) : latest, undefined);
     const startup = this.startupHoldUntil?.getTime();
     const candidates = [normal, startup].filter((value): value is number => value !== undefined);
     if (candidates.length === 0) return undefined;
@@ -310,17 +306,11 @@ export class DeliveryController {
         resolve();
       };
       this.schedulerWake = done;
-      if (delayMs !== undefined) this.schedulerTimer = setTimeout(done, delayMs);
+      if (delayMs !== undefined) this.schedulerTimer = setTimeout(done, Math.min(delayMs, 2_147_483_647));
     });
   }
 }
 
 function messageKey(message: VestaboardMessage): string {
   return JSON.stringify(message.characters ?? message.text);
-}
-
-function validateInterval(intervalMs: number, label: string): void {
-  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-    throw new Error(`${label} interval must be a positive number.`);
-  }
 }

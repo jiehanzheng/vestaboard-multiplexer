@@ -356,3 +356,23 @@ a { color: inherit; }
 .settings-group { margin-bottom: 24px; }
 
 .row-label small.placement-summary { white-space: normal; overflow: visible; line-height: 1.4; }
+
+.automatic-limits { margin-block: 1.5rem; }
+.limit-rules, .limit-capacity-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.limit-rule { min-width: 0; border: 1px solid var(--border, #d9dedb); border-radius: 12px; padding: 1rem; margin: 0; }
+.limit-rule legend { padding-inline: .35rem; font-weight: 600; }
+.limit-rule p { font-size: .85rem; line-height: 1.5; }
+.limit-numbers { display: grid; grid-template-columns: minmax(60px, 1fr) auto minmax(60px, 1fr) auto; align-items: end; gap: .5rem; margin-top: .75rem; }
+.limit-numbers > span { padding-bottom: .75rem; font-size: .8rem; }
+.limit-numbers input { width: 100%; min-width: 0; }
+.limit-capacity { padding: 1rem; border-radius: 12px; background: #eef4ef; display: grid; gap: .6rem; }
+.limit-capacity.exhausted { background: #fff3df; }
+.limit-capacity-heading { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.limit-capacity-heading span, .limit-capacity small, .board-capacity small { font-size: .8rem; line-height: 1.5; }
+.limit-capacity progress { width: 100%; height: 8px; accent-color: #52745b; }
+.saved-limit-capacity { margin-top: 1.5rem; }
+.board-capacity { margin: 1rem 0; border: 1px solid var(--border, #d9dedb); border-radius: 12px; padding: .9rem 1rem; display: grid; gap: .6rem; }
+.capacity-chips { display: flex; flex-wrap: wrap; gap: .5rem; }
+.capacity-chip { background: #eef4ef; padding: .3rem .6rem; border-radius: 6px; font-size: .8rem; }
+.capacity-chip.exhausted { background: #fff3df; }
+@media (max-width: 480px) { .limit-numbers { grid-template-columns: minmax(55px, 1fr) auto minmax(55px, 1fr); } .limit-numbers > span:last-child { grid-column: 3; padding: 0; } }

@@ -91,7 +91,7 @@ test("priority and HA bindings discard atomically without losing unrelated setti
   const { DEFAULT_APP_CONFIG } = await import("../src/config.js");
   const { updateHABlockDraft, replaceSection, configPatchForSection } = await import("../web/src/draftState.js");
   const block = { ...DEFAULT_HA_BLOCK_CONFIG, id: "music", name: "Music", entityId: "sensor.music", enabled: true };
-  const saved = { ...structuredClone(DEFAULT_APP_CONFIG), updateIntervalMinutes: 3, haBlocks: [block],
+  const saved = { ...structuredClone(DEFAULT_APP_CONFIG), updateLimits: [{ id: "legacy-interval", mode: "rolling" as const, maxUpdates: 1, windowMinutes: 3 }], haBlocks: [block],
     layout: [{ elementId: "ha-block.music", startRow: 2, startColumn: 12, width: 3 }] };
   const resized = updateHABlockDraft(saved, { ...block, width: 15, activityAttribute: "active", textAttribute: "media_title", textEntityId: "media_player.music" });
   const draft = { ...resized, layout: [{ ...resized.layout![0]!, startColumn: 0, priority: 100 },
@@ -99,5 +99,5 @@ test("priority and HA bindings discard atomically without losing unrelated setti
   assert.deepEqual(configPatchForSection("layout", draft), { haBlocks: draft.haBlocks, layout: draft.layout });
   const restored = replaceSection(draft, saved, "layout");
   assert.deepEqual(restored.haBlocks, saved.haBlocks); assert.deepEqual(restored.layout, saved.layout);
-  assert.equal(restored.updateIntervalMinutes, 3);
+  assert.equal(restored.updateLimits[0]!.windowMinutes, 3);
 });
