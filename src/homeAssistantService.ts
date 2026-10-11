@@ -2,9 +2,10 @@ import type { HAEntitiesRequest, HAEntitiesResponse, HAStatus } from "./contract
 import {
   createHomeAssistantClient,
   type HomeAssistantClient,
+  type HAClientChange,
+  type ReadonlyHAEntity,
   type HomeAssistantClientOptions
 } from "./homeAssistant.js";
-import type { HAEntity } from "./contracts/homeAssistant.js";
 
 export interface HomeAssistantConnectionConfig {
   url: string;
@@ -12,10 +13,10 @@ export interface HomeAssistantConnectionConfig {
 }
 
 export interface HomeAssistantSnapshot {
-  source: string;
-  entities: readonly HAEntity[];
-  connected: boolean;
-  error?: string;
+  readonly source: string;
+  readonly entities: readonly ReadonlyHAEntity[];
+  readonly connected: boolean;
+  readonly error?: string;
 }
 
 export interface HomeAssistantServiceOptions {
@@ -29,8 +30,9 @@ export type HomeAssistantSnapshotListener = (snapshot: HomeAssistantSnapshot) =>
 
 export interface HomeAssistantServiceLike {
   configure(config: HomeAssistantConnectionConfig): void;
-  snapshot(): HomeAssistantSnapshot;
-  subscribe(callback: HomeAssistantSnapshotListener): () => void;
+  snapshot(ids: readonly string[]): HomeAssistantSnapshot;
+  status(): Omit<HomeAssistantSnapshot, "entities">;
+  subscribe(ids: readonly string[], callback: HomeAssistantSnapshotListener): () => void;
   start(): void;
   collectInitial(timeoutMs?: number): Promise<void>;
   inspect(action: "test" | "entities", input?: HAEntitiesRequest): Promise<HomeAssistantInspection>;
@@ -47,7 +49,7 @@ export class HomeAssistantService implements HomeAssistantServiceLike {
   private readonly createClient: (options: HomeAssistantClientOptions) => HomeAssistantClient;
   private readonly changed?: () => void;
   private readonly logger: Pick<Console, "info" | "warn">;
-  private readonly listeners = new Set<HomeAssistantSnapshotListener>();
+  private readonly listeners = new Set<{ ids: ReadonlySet<string>; callback: HomeAssistantSnapshotListener }>();
   private readonly tasks = new Set<Promise<unknown>>();
   private readonly temporaryClients = new Set<HomeAssistantClient>();
   private config: HomeAssistantConnectionConfig = { url: "" };
@@ -77,27 +79,29 @@ export class HomeAssistantService implements HomeAssistantServiceLike {
     this.notify();
   }
 
-  snapshot(): HomeAssistantSnapshot {
+  status(): Omit<HomeAssistantSnapshot, "entities"> {
     const status = this.active?.client.status();
-    return {
-      source: this.config.url,
-      entities: this.active ? this.active.client.states().map(cloneEntity) : [],
-      connected: status?.connected ?? false,
-      ...(status?.error ? { error: status.error } : {})
-    };
+    return { source: this.config.url, connected: status?.connected ?? false, ...(status?.error ? { error: status.error } : {}) };
   }
 
-  subscribe(callback: HomeAssistantSnapshotListener): () => void {
-    this.listeners.add(callback);
-    return () => this.listeners.delete(callback);
+  snapshot(ids: readonly string[]): HomeAssistantSnapshot {
+    return Object.freeze({ ...this.status(), entities: this.active?.client.readEntities([...new Set(ids)]) ?? Object.freeze([]) });
+  }
+
+  subscribe(ids: readonly string[], callback: HomeAssistantSnapshotListener): () => void {
+    const subscription = { ids: new Set(ids), callback };
+    this.listeners.add(subscription);
+    return () => this.listeners.delete(subscription);
   }
 
   start(): void {
     if (this.stopped) return;
+    const wasStarted = this.started;
+    const previous = this.active;
     this.started = true;
     const active = this.ensureActive();
     active?.client.start();
-    this.notify();
+    if (!wasStarted || active !== previous) this.notify();
   }
 
   async collectInitial(timeoutMs = 10_000): Promise<void> {
@@ -132,7 +136,7 @@ export class HomeAssistantService implements HomeAssistantServiceLike {
         if (!client) throw new Error("Home Assistant URL is not configured.");
         return action === "test"
           ? client.status()
-          : { entities: client.states().map(cloneEntity) };
+          : { entities: client.states() };
       } catch (error) {
         const safe = safeError(error, requested.url, requested.token);
         if (action === "test") return { connected: false, error: safe };
@@ -166,7 +170,7 @@ export class HomeAssistantService implements HomeAssistantServiceLike {
     const client = this.createClient({
       url: config.url,
       token: config.token ?? "",
-      changed: () => this.notify()
+      changed: (change) => this.notify(change)
     });
     this.active = { key, client };
     return this.active;
@@ -181,7 +185,7 @@ export class HomeAssistantService implements HomeAssistantServiceLike {
       await this.track(client.waitUntilReady());
       return action === "test"
         ? client.status()
-        : { entities: client.states().map(cloneEntity) };
+        : { entities: client.states() };
     } catch (error) {
       const safe = safeError(error, url, token);
       if (action === "test") return { connected: false, error: safe };
@@ -204,29 +208,29 @@ export class HomeAssistantService implements HomeAssistantServiceLike {
     return tracked;
   }
 
-  private notify(): void {
-    try { this.changed?.(); } catch { /* status subscribers cannot break HA ownership */ }
-    const snapshot = this.snapshot();
+  private notify(change: HAClientChange = { kind: "connection" }): void {
+    const status = this.status();
     const previous = this.previousConnection;
-    const changedError = previous?.error !== snapshot.error;
-    if (snapshot.error && (!previous || changedError || previous.connected)) {
-      this.logger.warn(`Home Assistant connection failed: ${snapshot.error}`);
-    } else if (snapshot.connected && previous && (!previous.connected || previous.error !== undefined)) {
+    if (status.error && (!previous || previous.error !== status.error || previous.connected)) {
+      this.logger.warn(`Home Assistant connection failed: ${status.error}`);
+    } else if (status.connected && previous && (!previous.connected || previous.error !== undefined)) {
       this.logger.info("Home Assistant connection recovered.");
     }
-    this.previousConnection = { connected: snapshot.connected, ...(snapshot.error ? { error: snapshot.error } : {}) };
-    for (const listener of this.listeners) {
-      try { listener(snapshot); } catch { /* one consumer cannot break another */ }
+    this.previousConnection = { connected: status.connected, ...(status.error ? { error: status.error } : {}) };
+    // UI connection changes do not require inspecting or copying entity data.
+    if (!previous || previous.connected !== status.connected || previous.error !== status.error) {
+      try { this.changed?.(); } catch { /* status subscribers cannot break HA ownership */ }
+    }
+    for (const subscription of this.listeners) {
+      if (change.kind === "entity" && !subscription.ids.has(change.entityId)) continue;
+      try { subscription.callback(this.snapshot([...subscription.ids])); } catch { /* one consumer cannot break another */ }
     }
   }
+
 }
 
 function connectionKey(config: HomeAssistantConnectionConfig): string {
   return JSON.stringify([config.url, config.token ?? ""]);
-}
-
-function cloneEntity(entity: HAEntity): HAEntity {
-  return { ...entity, attributes: { ...entity.attributes } };
 }
 
 function safeError(error: unknown, url: string, token: string): string {

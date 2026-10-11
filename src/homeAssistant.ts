@@ -11,11 +11,15 @@ export interface HomeAssistantSocket {
   onclose: (() => void) | null;
 }
 
+export type ReadonlyHAEntity = Readonly<Omit<HAEntity, "attributes">> & { readonly attributes: Readonly<Record<string, unknown>> };
+
+export type HAClientChange = { kind: "initial" | "connection" } | { kind: "entity"; entityId: string };
+
 export interface HomeAssistantClientOptions {
   url: string;
   token: string;
   socketFactory?: (url: string) => HomeAssistantSocket;
-  changed?: () => void;
+  changed?: (change: HAClientChange) => void;
   timers?: HomeAssistantTimers;
 }
 
@@ -42,8 +46,8 @@ export class HomeAssistantClient {
   private readonly url: string;
   private readonly token: string;
   private readonly socketFactory: (url: string) => HomeAssistantSocket;
-  private readonly changed?: () => void;
-  private readonly listeners = new Set<() => void>();
+  private readonly changed?: (change: HAClientChange) => void;
+  private readonly listeners = new Set<(change: HAClientChange) => void>();
   private readonly timers: HomeAssistantTimers;
   private socket: HomeAssistantSocket | undefined;
   private entities = new Map<string, HAEntity>();
@@ -93,7 +97,12 @@ export class HomeAssistantClient {
   }
 
   states(): HAEntity[] {
-    return [...this.entities.values()].map(cloneEntity);
+    return [...this.entities.values()].map((entity) => structuredClone(entity));
+  }
+
+  /** Published records are immutable; selecting dependencies never copies the complete HA cache. */
+  readEntities(ids: readonly string[]): readonly ReadonlyHAEntity[] {
+    return Object.freeze(ids.flatMap((id) => { const entity = this.entities.get(id); return entity ? [entity] : []; }));
   }
 
   status(): HAStatus {
@@ -103,7 +112,7 @@ export class HomeAssistantClient {
     };
   }
 
-  onChange(listener: () => void): () => void {
+  onChange(listener: (change: HAClientChange) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -227,7 +236,7 @@ export class HomeAssistantClient {
     this.error = undefined;
     this.reconnectAttempt = 0;
     this.resolveReadyWaiters();
-    this.notifyChanged();
+    this.notifyChanged({ kind: "initial" });
   }
 
   private handleStateChanged(event: Record<string, unknown>): void {
@@ -247,7 +256,7 @@ export class HomeAssistantClient {
       return;
     }
     this.entities.set(entity.entity_id, entity);
-    this.notifyChanged();
+    this.notifyChanged({ kind: "entity", entityId: entity.entity_id });
   }
 
   private send(message: Record<string, unknown>): void {
@@ -341,7 +350,7 @@ export class HomeAssistantClient {
     this.connected = false;
     this.ready = false;
     this.rejectReadyWaiters(new Error(message));
-    if (changed) this.notifyChanged();
+    if (changed) this.notifyChanged({ kind: "connection" });
   }
 
   private rejectReadyWaiters(error: Error): void {
@@ -351,10 +360,10 @@ export class HomeAssistantClient {
     }
   }
 
-  private notifyChanged(): void {
-    try { this.changed?.(); } catch { /* a subscriber must not break the socket */ }
+  private notifyChanged(change: HAClientChange): void {
+    try { this.changed?.(change); } catch { /* a subscriber must not break the socket */ }
     for (const listener of this.listeners) {
-      try { listener(); } catch { /* a subscriber must not break the socket */ }
+      try { listener(change); } catch { /* a subscriber must not break the socket */ }
     }
   }
 }
@@ -380,16 +389,21 @@ function normalizeEntity(value: unknown): HAEntity {
   const attributes = entity.attributes && typeof entity.attributes === "object" && !Array.isArray(entity.attributes)
     ? entity.attributes as Record<string, unknown>
     : {};
-  return {
+  return immutableEntity({
     entity_id: typeof entity.entity_id === "string" ? entity.entity_id : "",
     state: typeof entity.state === "string" && entity.state.length > 0 ? entity.state : "unknown",
-    attributes: { ...attributes },
+    attributes: structuredClone(attributes),
     ...(typeof entity.last_updated === "string" ? { last_updated: entity.last_updated } : {})
-  };
+  });
 }
 
-function cloneEntity(entity: HAEntity): HAEntity {
-  return { ...entity, attributes: { ...entity.attributes } };
+/** Freeze once on ingestion so captured snapshots cannot change beneath async consumers. */
+function immutableEntity<T>(value: T): T {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) immutableEntity(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 function isNewer(candidate: HAEntity, current: HAEntity): boolean {

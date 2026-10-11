@@ -33,7 +33,7 @@ test("HTTP actions validate JSON/origin and SSE reconnect receives current snaps
       requests.push({ action, value: request });
       return action === "test" ? { connected: true } : { entities: [] };
     }
-  }, { port: Number(process.env.VBMUX_TEST_PORT ?? 0), host: "127.0.0.1" });
+  }, { port: Number(process.env.VBMUX_TEST_PORT ?? process.env.VBMUX_PORT ?? 0), host: "127.0.0.1" });
   const url = `http://127.0.0.1:${server.port}`;
   try {
     assert.equal((await fetch(`${url}/api/config`, { method: "POST", headers: { "content-type": "application/json", origin: "http://elsewhere" }, body: "{}" })).status, 403);
@@ -95,7 +95,7 @@ test("serves bounded logs and emits named log snapshots without runtime events",
     elements: () => ({ elements: [], defaultLayout: [] }), save: async () => ({} as never), preview: () => ({ text: "", characters: [] }), pause: async () => status(), login: async () => ({ pending: false }),
     logs: () => ({ entries }),
     subscribeLogs: (listener) => { listeners.add(listener); return () => listeners.delete(listener); }
-  }, { port: 0, host: "127.0.0.1" });
+  }, { port: Number(process.env.VBMUX_PORT ?? 0), host: "127.0.0.1" });
   const url = `http://127.0.0.1:${server.port}`;
   try {
     assert.deepEqual(await (await fetch(`${url}/api/logs`)).json(), { entries });
@@ -112,4 +112,26 @@ test("serves bounded logs and emits named log snapshots without runtime events",
     assert.match(update, /second/);
     await reader.cancel();
   } finally { await server.close(); }
+});
+
+test("one runtime broadcast builds status once for multiple SSE observers", async () => {
+  let builds = 0; let version = 1;
+  const status = () => { builds++; return { board: "note" as const, nextAttemptAt: version, manualPause: false, haPause: false, paused: false, codex: {}, login: { pending: false } }; };
+  const server = await startWebServer({ status,
+    config: () => ({ config: DEFAULT_APP_CONFIG, legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false } }),
+    elements: () => ({ elements: [] }), save: async () => ({} as never), preview: () => ({ text: "", characters: [] }),
+    pause: async () => status(), login: async () => ({ pending: false })
+  }, { port: Number(process.env.VBMUX_PORT ?? 0), host: "127.0.0.1" });
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  try {
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/events`);
+      const reader = response.body!.getReader(); readers.push(reader);
+      let initial = "";
+      while (!initial.includes("event: logs")) initial += new TextDecoder().decode((await reader.read()).value);
+    }
+    builds = 0; version = 2; server.broadcast();
+    for (const reader of readers) assert.match(new TextDecoder().decode((await reader.read()).value), /"nextAttemptAt":2/);
+    assert.equal(builds, 1);
+  } finally { await Promise.all(readers.map((reader) => reader.cancel())); await server.close(); }
 });

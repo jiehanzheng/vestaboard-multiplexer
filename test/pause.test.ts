@@ -15,8 +15,9 @@ class FakeHomeAssistantService implements HomeAssistantServiceLike {
   async collectInitial(): Promise<void> {}
   async inspect(): Promise<{ connected: boolean }> { return { connected: this.current.connected }; }
   async stop(): Promise<void> {}
-  snapshot(): HomeAssistantSnapshot { return this.current; }
-  subscribe(listener: HomeAssistantSnapshotListener): () => void {
+  status() { const { entities: _entities, ...status } = this.current; return status; }
+  snapshot(_ids: readonly string[]): HomeAssistantSnapshot { return this.current; }
+  subscribe(_ids: readonly string[], listener: HomeAssistantSnapshotListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -25,6 +26,25 @@ class FakeHomeAssistantService implements HomeAssistantServiceLike {
     for (const listener of this.listeners) listener(snapshot);
   }
 }
+
+test("unchanged HA pause values do not persist or emit repeated composition requests", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-quiet-pause-"));
+  const service = new FakeHomeAssistantService();
+  let changes = 0;
+  const controller = await PauseController.open(directory, service, () => { changes++; });
+  const snapshot = { source: "http://ha.test", connected: true,
+    entities: [{ entity_id: "input_boolean.pause", state: "off", attributes: {} }] };
+  try {
+    await controller.configure({ url: snapshot.source, pause: { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "off" } });
+    service.publish(snapshot); await controller.flush(); changes = 0;
+    service.publish(snapshot); service.publish(snapshot); await controller.flush();
+    assert.equal(changes, 0);
+    assert.equal(controller.status().paused, false);
+    service.publish({ ...snapshot, entities: [{ ...snapshot.entities[0]!, state: "on" }] });
+    assert.equal(controller.status().paused, true, "pause latches before asynchronous persistence completes");
+    await controller.flush();
+  } finally { await controller.stop(); await rm(directory, { recursive: true, force: true }); }
+});
 
 test("HA pause belongs to its binding across restart and combines with manual pause", async () => {
   const dir = await mkdtemp(join(tmpdir(), "vbmux-pause-"));

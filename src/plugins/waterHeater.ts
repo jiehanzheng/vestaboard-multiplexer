@@ -1,3 +1,4 @@
+import type { HomeAssistantSnapshot } from "../homeAssistantService.js";
 import type { Element } from "../elements.js";
 import { BLANK, RED, encode } from "../vestaboardCharacters.js";
 import type { HAEntity } from "../contracts/homeAssistant.js";
@@ -294,7 +295,7 @@ export class WaterHeater {
 export function createWaterHeaterIntegration(config: WaterHeaterConfig, source: Pick<HomeAssistantService, "snapshot" | "subscribe">, changed: () => void, logger: Pick<Console, "info" | "warn"> = console, now: () => Date = () => new Date()) {
   let current = config;
   const heater = new WaterHeater(config, now);
-  let identity = source.snapshot().source;
+  let identity = source.snapshot(waterEntityIds(config)).source;
   const lastInputDiagnostics = new Map<string, string>();
   let lastElementDiagnostic: string | undefined;
   const observe = (): void => {
@@ -312,26 +313,29 @@ export function createWaterHeaterIntegration(config: WaterHeaterConfig, source: 
     if (!elementDiagnostic && lastElementDiagnostic) logger.info("Water element diagnostics recovered.");
     lastElementDiagnostic = elementDiagnostic;
   };
-  const update = () => {
-    const snapshot = source.snapshot();
+  let visible: string | undefined;
+  const update = (snapshot: HomeAssistantSnapshot) => {
     if (identity !== snapshot.source) {
       identity = snapshot.source;
       heater.resetSource(current);
     }
     heater.update(current, snapshot.entities, snapshot.connected);
     observe();
-    changed();
+    const next = JSON.stringify(heater.status());
+    if (next !== visible) { visible = next; changed(); }
   };
-  const unsubscribe = source.subscribe(update);
-  const initialSnapshot = source.snapshot();
-  heater.update(current, initialSnapshot.entities, initialSnapshot.connected);
-  observe();
+  let unsubscribe = source.subscribe(waterEntityIds(current), update);
+  update(source.snapshot(waterEntityIds(current)));
   return {
     id: "water-heater", slug: "water",
     get enabled() { return current.enabled; },
-    configure(value: WaterHeaterConfig) { current = value; update(); },
-    elements(draft = current) {
-      const snapshot = source.snapshot();
+    configure(value: WaterHeaterConfig) {
+      unsubscribe(); current = value;
+      unsubscribe = source.subscribe(waterEntityIds(current), update);
+      update(source.snapshot(waterEntityIds(current)));
+      changed();
+    },
+    elements(draft = current, snapshot = source.snapshot(waterEntityIds(draft))) {
       return heater.previewElements(draft, snapshot.entities, snapshot.connected);
     },
     status: () => heater.status(),
@@ -451,4 +455,10 @@ function displayGallons(value: number, width: number, labelLength: number): stri
   const maxDigits = Math.max(1, width - labelLength - 2);
   const maxGallons = maxDigits >= 16 ? Number.MAX_SAFE_INTEGER : (10 ** maxDigits) - 1;
   return `${Math.min(Math.round(Math.max(0, value)), maxGallons)}G`;
+}
+
+/** Constants and disabled inputs need no entity-event subscription. */
+export function waterEntityIds(config: WaterHeaterConfig): string[] {
+  return config.enabled ? [...new Set(Object.values(config).flatMap((input) =>
+    input && typeof input === "object" && "entityId" in input && typeof input.entityId === "string" ? [input.entityId] : []))] : [];
 }
