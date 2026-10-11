@@ -7,6 +7,11 @@ import { PauseStore } from "../src/pause.js";
 import { startWebServer } from "../src/webServer.js";
 import { DEFAULT_APP_CONFIG } from "../src/config.js";
 
+// Tests reuse the checkout's reserved port; do not reuse a socket from a closed server lifecycle.
+const fetch = (input: string, init?: RequestInit) => globalThis.fetch(input, {
+  ...init, headers: { ...Object.fromEntries(new Headers(init?.headers).entries()), connection: "close" }
+});
+
 test("pause persists manual and HA values independently and fails paused on corruption", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-pause-"));
   try {

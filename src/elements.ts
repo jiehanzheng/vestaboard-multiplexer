@@ -1,3 +1,4 @@
+import { selectLayout, type ElementState, type LayoutDecision } from "./contracts/layout.js";
 import type { VestaboardMessage } from "./vestaboard.js";
 import type { LayoutEntry } from "./contracts/config.js";
 export type { LayoutEntry } from "./contracts/config.js";
@@ -9,6 +10,7 @@ export interface Element {
   label: string;
   height: number;
   minWidth?: number;
+  state?: ElementState;
   render(width: number): number[][];
 }
 
@@ -32,7 +34,8 @@ export function composeElements(
   elements: readonly Element[],
   layout: readonly LayoutEntry[],
   dimensions: ComposeDimensions,
-  boardKind: VestaboardBoardKind = dimensions.width === 22 ? "flagship" : "note"
+  boardKind: VestaboardBoardKind = dimensions.width === 22 ? "flagship" : "note",
+  onSelection?: (decisions: LayoutDecision[]) => void
 ): ComposedElements {
   validateDimension(dimensions.width, "width");
   validateDimension(dimensions.height, "height");
@@ -57,44 +60,15 @@ export function composeElements(
     elementsById.set(element.id, element);
   }
 
-  const occupied = new Set<string>();
+  const decisions = selectLayout(elements, layout, dimensions);
+  onSelection?.(decisions);
   const board = Array.from({ length: dimensions.height }, () => Array(dimensions.width).fill(0));
-  for (const entry of layout) {
-    const element = elementsById.get(entry.elementId);
-    if (!element) {
-      throw new Error(`Layout references unknown element '${entry.elementId}'.`);
-    }
-    if (!Number.isInteger(entry.startRow) || entry.startRow < 0) {
-      throw new Error(`Layout start row for '${entry.elementId}' must be a non-negative integer.`);
-    }
+  for (const decision of decisions) {
+    if (decision.reason !== "shown") continue;
+    const entry = layout[decision.index]!;
+    const element = elementsById.get(entry.elementId)!;
     const startColumn = entry.startColumn ?? 0;
-    if (!Number.isInteger(startColumn) || startColumn < 0) {
-      throw new Error(`Layout start column for '${entry.elementId}' must be a non-negative integer.`);
-    }
     const width = entry.width ?? dimensions.width - startColumn;
-    if (!Number.isInteger(width) || width <= 0) {
-      throw new Error(`Layout width for '${entry.elementId}' must be a positive integer.`);
-    }
-    if (element.minWidth !== undefined && width < element.minWidth) {
-      throw new Error(`Element '${entry.elementId}' requires at least ${element.minWidth} columns.`);
-    }
-    if (entry.startRow + element.height > dimensions.height) {
-      throw new Error(`Element '${entry.elementId}' is out of bounds at row ${entry.startRow}.`);
-    }
-    if (startColumn + width > dimensions.width) {
-      throw new Error(`Element '${entry.elementId}' is out of bounds at column ${startColumn}.`);
-    }
-
-    for (let row = entry.startRow; row < entry.startRow + element.height; row += 1) {
-      for (let column = startColumn; column < startColumn + width; column += 1) {
-        const cell = `${row}:${column}`;
-        if (occupied.has(cell)) {
-          throw new Error(`Element '${entry.elementId}' overlaps another element at row ${row}, column ${column}.`);
-        }
-        occupied.add(cell);
-      }
-    }
-
     const rendered = element.render(width);
     validateRenderedElement(element, rendered, width);
     for (const [rowOffset, row] of rendered.entries()) {

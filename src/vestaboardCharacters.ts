@@ -107,3 +107,12 @@ export function charCode(char: string): number {
 
   throw new Error(`Unsupported Vestaboard character: ${char}`);
 }
+
+/** Display text is deliberately lossy; native numeric payloads remain strictly validated. */
+export function encodeDisplayText(text: string): number[] {
+  const normalized = text.normalize("NFKD").replace(/\p{M}/gu, "")
+    .replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—−]/g, "-").toUpperCase();
+  const codes = [...normalized].map((char) => { try { return charCode(char); } catch { return BLANK; } });
+  return codes.filter((code, index) => code !== BLANK || (index > 0 && codes[index - 1] !== BLANK))
+    .filter((code, index, values) => code !== BLANK || (index > 0 && index < values.length - 1));
+}

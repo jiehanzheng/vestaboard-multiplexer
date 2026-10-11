@@ -354,3 +354,5 @@ a { color: inherit; }
 .settings-group > .config-toggle, .settings-group > .config-field { margin-bottom: 20px; }
 
 .settings-group { margin-bottom: 24px; }
+
+.row-label small.placement-summary { white-space: normal; overflow: visible; line-height: 1.4; }
