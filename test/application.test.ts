@@ -812,8 +812,13 @@ test("priority drafts and saved output distinguish inactive, paused and unavaila
     assert.match(app.actions.status().desired!.text, /DRAFT TIT/);
     client.setConnected(false); await client.emit([]);
     assert.equal(app.actions.status().layoutSelection![1]!.state, "unavailable");
-    assert.equal(app.actions.status().layoutSelection![1]!.reason, "shown");
-    assert.deepEqual(app.actions.status().desired!.characters![2], Array(15).fill(0));
+    assert.equal(app.actions.status().layoutSelection![1]!.reason, "suppressed");
+    assert.equal(app.actions.status().layoutSelection![1]!.blockedBy, 0);
+    assert.match(app.actions.status().desired!.text, /120\/140F/);
+    assert.match(app.actions.preview({ layout: before.layout!, board: "note" }).text, /120\/140F/);
+    client.setConnected(true); await emit(true, 69, "Recovered");
+    assert.match(app.actions.status().desired!.text, /DRAFT TIT/);
+    assert.deepEqual(app.actions.status().layoutSelection!.map((entry) => entry.reason), ["suppressed", "shown"]);
     assert.equal(clients, 1); assert.equal(store.get().updateLimits[0]!.windowMinutes, 3);
   } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
 });

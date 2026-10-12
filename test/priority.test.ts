@@ -43,6 +43,21 @@ test("suppressed alternatives reserve no cells, while inactive geometry is still
   assert.throws(() => composeElements(elements, [{ ...layout[0]!, startRow: 3 }], dimensions), /out of bounds/);
 });
 
+test("unavailable fallbacks yield to active content but keep priority in unused space", () => {
+  const elements = [element("fallback", 2, "unavailable"), element("active", 1), element("other-fallback", 3, "unavailable")];
+  const layout = [
+    { elementId: "fallback", startRow: 2, width: 15, priority: 100 },
+    { elementId: "active", startRow: 2, width: 8, priority: -100 },
+    { elementId: "other-fallback", startRow: 2, width: 15, priority: 50 }
+  ];
+  assert.deepEqual(selectLayout(elements, layout, dimensions).map((d) => d.reason), ["suppressed", "shown", "suppressed"]);
+  assert.deepEqual(composeElements(elements, layout, dimensions).characters[2], [...Array(8).fill(1), ...Array(7).fill(0)]);
+  elements[1]!.state = "inactive";
+  assert.deepEqual(selectLayout(elements, layout, dimensions).map((d) => d.reason), ["shown", "inactive", "suppressed"]);
+  assert.deepEqual(composeElements(elements, layout, dimensions).characters[2], Array(15).fill(2));
+  assert.throws(() => composeElements(elements, [{ ...layout[0]!, startRow: 3 }], dimensions), /out of bounds/);
+});
+
 test("display text normalizes supported glyphs without weakening native code validation", () => {
   assert.deepEqual(encodeDisplayText('  Beyoncé — “1989” 🎵  song  '), encode('BEYONCE - "1989" SONG'));
   assert.deepEqual(encodeDisplayText("🎵"), []);
@@ -81,7 +96,7 @@ test("HA activity distinguishes inactive from unavailable; text can bind an inde
     emit(false, "Title"); assert.equal(composeElements([water, ...plugin.elements()], layout, dimensions).characters[2]![0], 1);
     snapshot = { ...snapshot, connected: false }; callback(snapshot);
     assert.equal(plugin.elements()[0]!.state, "unavailable");
-    assert.deepEqual(composeElements([water, ...plugin.elements()], layout, dimensions).characters[2], Array(15).fill(0), "fallback reserves the high-priority rectangle");
+    assert.deepEqual(composeElements([water, ...plugin.elements()], layout, dimensions).characters[2], [...Array(8).fill(1), ...Array(7).fill(0)], "unavailable music yields to water");
     plugin.configure([{ ...block, textEntityId: "media_player.other" }]);
     assert.deepEqual(ids, ["sensor.music", "media_player.other"]);
   } finally { plugin.stop(); }
