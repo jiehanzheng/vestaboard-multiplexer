@@ -49,6 +49,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   },
   water: { ...DEFAULT_WATER_HEATER_CONFIG },
   haBlocks: [],
+  barRows: [],
   transport: {
     cloudUrl: "https://cloud.vestaboard.com/",
     localUrl: "http://vestaboard.local:7000/local-api/message",

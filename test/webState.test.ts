@@ -256,3 +256,28 @@ test("delivery holds show their real reason rather than a manual or HA pause", a
   assert.equal(pauseReason({ manualPause: false, haPause: true }), "Paused by Home Assistant");
   assert.equal(pauseReason({ manualPause: false, haPause: false }), "Delivery blocked");
 });
+
+test("bar rows and both HA display collections save with layout while unrelated drafts survive", () => {
+  const saved = cloneConfigForTest();
+  const draft = cloneConfigForTest();
+  draft.barRows = [{ id: "hot-water", name: "Hot water", enabled: true,
+    source: { kind: "entity", entityId: "sensor.hot_water_display", attributes: { displayName: "display_name", current: "current", max: "max", displayText: "display_text" } },
+    labelWidth: 2, textWidth: 3, barCharacter: 67, unavailableDisplay: "na", staleAfterMinutes: 15 }];
+  draft.layout = [{ elementId: "bar-row.hot-water", startRow: 1, width: 15 }];
+  draft.water.remainingLabel = "XX";
+  const patch = configPatchForSection("barRows", draft);
+  assert.deepEqual(patch, { barRows: draft.barRows, haBlocks: draft.haBlocks, layout: draft.layout });
+  assert.equal(sectionIsDirty("layout", draft, saved), true);
+  const submittedDraft = structuredClone(draft);
+  const acknowledgement = { config: { ...saved, ...patch }, legacyEnvironmentVariables: [],
+    hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "unchanged" as const };
+  const result = reconcileSectionSave({ section: "barRows", acknowledgement: acknowledgement as Parameters<typeof reconcileSectionSave>[0]["acknowledgement"], submittedDraft, currentDraft: draft });
+  assert.equal(result.newerEdits, false);
+  assert.equal(result.draftConfig.water.remainingLabel, "XX");
+  assert.deepEqual(result.draftConfig.barRows, draft.barRows);
+  const newer = structuredClone(draft);
+  newer.barRows[0]!.textWidth = 4;
+  const pending = reconcileSectionSave({ section: "layout", acknowledgement: acknowledgement as Parameters<typeof reconcileSectionSave>[0]["acknowledgement"], submittedDraft, currentDraft: newer });
+  assert.equal(pending.newerEdits, true);
+  assert.equal(pending.draftConfig.barRows[0]!.textWidth, 4);
+});

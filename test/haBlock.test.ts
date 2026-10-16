@@ -123,7 +123,7 @@ test("geometry and placement save/discard atomically and newer edits survive ack
   const draft = updateHABlockDraft(saved, { ...saved.haBlocks[0]!, width: 4, height: 2 });
   assert.deepEqual(draft.layout, [{ elementId: HA_BLOCK_ELEMENT_ID, startRow: 0, startColumn: 4, width: 4 }]);
   for (const section of ["layout", "haBlock"] as const) {
-    assert.deepEqual(configPatchForSection(section, draft), { layout: draft.layout, haBlocks: draft.haBlocks });
+    assert.deepEqual(configPatchForSection(section, draft), { layout: draft.layout, haBlocks: draft.haBlocks, barRows: draft.barRows });
     assert.equal(sectionIsDirty(section, draft, saved), true);
     assert.deepEqual(replaceSection(draft, saved, section), saved);
     const newer = updateHABlockDraft(draft, { ...draft.haBlocks[0]!, height: 3 });

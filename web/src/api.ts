@@ -65,10 +65,10 @@ export function getLogs(): Promise<LogsResponse> {
   return request("/api/logs", LogsResponseSchema);
 }
 
-export function requestPreview(layout: LayoutEntry[], board: AppConfig["board"], water?: WaterHeaterConfig, codex?: AppConfig["codex"], haBlocks?: AppConfig["haBlocks"]): Promise<PreviewResponse> {
+export function requestPreview(layout: LayoutEntry[], board: AppConfig["board"], water?: WaterHeaterConfig, codex?: AppConfig["codex"], haBlocks?: AppConfig["haBlocks"], barRows?: AppConfig["barRows"]): Promise<PreviewResponse> {
   return request("/api/preview", PreviewResponseSchema, {
     method: "POST",
-    body: JSON.stringify({ layout, board, ...(water !== undefined ? { water } : {}), ...(codex !== undefined ? { codex } : {}), ...(haBlocks !== undefined ? { haBlocks } : {}) })
+    body: JSON.stringify({ layout, board, ...(water !== undefined ? { water } : {}), ...(codex !== undefined ? { codex } : {}), ...(haBlocks !== undefined ? { haBlocks } : {}), ...(barRows !== undefined ? { barRows } : {}) })
   });
 }
 

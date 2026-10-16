@@ -1,3 +1,5 @@
+import { BarRowConfigSchema } from "../src/plugins/barRows/config.js";
+import { encode } from "../src/vestaboardCharacters.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, stat } from "node:fs/promises";
@@ -295,7 +297,7 @@ test("server and one-shot share frames, and status/preview cannot collect or del
     const layout = server.actions.elements().defaultLayout!;
     for (let i = 0; i < 3; i++) {
       server.actions.status(); server.actions.elements();
-      const { selection, ...previewFrame } = server.actions.preview({ layout, board: "note" });
+      const { selection, barRows: _barRows, ...previewFrame } = server.actions.preview({ layout, board: "note" });
       assert.deepEqual(previewFrame, desired);
       assert.ok(selection?.every((entry) => entry.reason === "shown"));
     }
@@ -815,5 +817,55 @@ test("priority drafts and saved output distinguish inactive, paused and unavaila
     assert.equal(app.actions.status().layoutSelection![1]!.reason, "shown");
     assert.deepEqual(app.actions.status().desired!.characters![2], Array(15).fill(0));
     assert.equal(clients, 1); assert.equal(store.get().updateLimits[0]!.windowMinutes, 3);
+  } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("bar row draft preview, atomic save and removal preserve temperature/music priority", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-bar-row-application-"));
+  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture" });
+  const row = BarRowConfigSchema.parse({ id: "hot-water", name: "Hot water", enabled: true,
+    source: { kind: "entity", entityId: "sensor.hot_water_display" } });
+  const music = { id: "music", name: "Music", enabled: true, entityId: "sensor.music", attribute: "characters", width: 15, height: 1,
+    activityAttribute: "active", unavailableDisplay: "blank" as const, staleAfterMinutes: 15 };
+  const oldLayout = [{ elementId: "water.remaining", startRow: 1, width: 15 },
+    { elementId: "water.temperature-text", startRow: 2, width: 8, priority: 0 },
+    { elementId: "ha-block.music", startRow: 2, width: 15, priority: 100 }];
+  await store.save({ board: "note", ha: { url: "http://ha.test" }, codex: { enabled: false },
+    water: { enabled: true, remaining: { constant: 61.5 }, capacity: { constant: 100 }, temperature: { constant: 120 }, target: { constant: 140 } },
+    haBlocks: [music], layout: oldLayout });
+  let client!: FakeHomeAssistantClient; let sends = 0;
+  const app = await createApplication(store, directory, true, {
+    createVestaboardClient: () => ({ send: async () => { sends++; } }),
+    createHomeAssistantClient: (options) => { client = new FakeHomeAssistantClient(options); return asHomeAssistantClient(client); }
+  });
+  const emit = (active: boolean, display_text = "3S") => client.emit([
+    { entity_id: "sensor.hot_water_display", state: "ready", attributes: { display_name: "HW", current: 61.5, max: 100, display_text } },
+    { entity_id: "sensor.music", state: "ready", attributes: { active, characters: [10, 26, 69] } }
+  ]);
+  try {
+    await app.start(); await emit(true);
+    const before = store.get(); const statusBefore = app.actions.status().barRows; const sendsBefore = sends;
+    const layout = [{ ...oldLayout[0]!, elementId: "bar-row.hot-water" }, ...oldLayout.slice(1)];
+    const preview = app.actions.preview({ board: "note", layout, barRows: [row] });
+    assert.deepEqual(preview.characters[1], [...encode("HW"), ...Array(7).fill(67), ...Array(3).fill(0), ...encode("3S ")]);
+    assert.equal(preview.barRows!['hot-water']!.state, "active");
+    assert.deepEqual(preview.selection!.map((entry) => entry.reason), ["shown", "suppressed", "shown"]);
+    assert.deepEqual(store.get(), before); assert.deepEqual(app.actions.status().barRows, statusBefore); assert.equal(sends, sendsBefore);
+    const invalidPreview = app.actions.preview({ layout, barRows: [{ ...row, textWidth: 1 }] });
+    assert.match(invalidPreview.barRows!['hot-water']!.inputs.displayText.error!, /reserved 1 cells/);
+    await assert.rejects(app.actions.save({ barRows: [row], layout: [{ ...layout[0]!, width: 5 }] }), /at least 6/);
+    assert.deepEqual(store.get(), before);
+    await app.actions.save({ barRows: [row], layout });
+    assert.deepEqual(app.actions.status().desired!.characters![1], preview.characters[1]);
+    assert.equal(app.actions.status().barRows!['hot-water']!.state, "active");
+    assert.deepEqual(store.get().water, before.water); assert.deepEqual(store.get().haBlocks, before.haBlocks);
+    await emit(false); assert.match(app.actions.status().desired!.text, /120\/140F/);
+    await emit(false, "100S"); assert.equal(app.actions.status().barRows!['hot-water']!.state, "unavailable");
+    assert.deepEqual(app.actions.status().desired!.characters![1]!.slice(0, 3), encode("N/A"));
+    await assert.rejects(app.actions.save({ barRows: [] }), /unknown element/);
+    await app.actions.save({ barRows: [], layout: oldLayout });
+    assert.deepEqual(app.actions.status().barRows, {});
+    assert.equal(app.actions.elements().elements.some((element) => element.id === "bar-row.hot-water"), false);
+    assert.match(app.actions.status().desired!.text, /62G/);
   } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
 });

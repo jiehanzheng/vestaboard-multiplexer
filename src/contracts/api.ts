@@ -1,3 +1,5 @@
+import { BarRowsSchema } from "../plugins/barRows/config.js";
+import { BarRowsStatusSchema } from "../plugins/barRows/status.js";
 import { UpdateLimitStatusSchema } from "./updateLimits.js";
 import { ELEMENT_STATES } from "./layout.js";
 import { HABlockConfigSchema, HABlocksSchema } from "../plugins/haBlock/config.js";
@@ -52,11 +54,13 @@ export const PreviewRequestSchema = z.object({
   water: WaterHeaterConfigSchema.optional(),
   haBlock: HABlockConfigSchema.optional(),
   haBlocks: HABlocksSchema.optional(),
+  barRows: BarRowsSchema.optional(),
   codex: CodexConfigSchema.optional()
 }).strict();
 
 export type PreviewRequest = z.infer<typeof PreviewRequestSchema>;
 export const PreviewResponseSchema = z.object({
+  barRows: BarRowsStatusSchema.optional(),
   selection: z.array(LayoutDecisionSchema).optional(),
   text: z.string(),
   characters: z.array(z.array(cell))
@@ -98,6 +102,7 @@ export const RuntimeStatusSchema = z.object({
   homeAssistant: HAStatusSchema.optional(),
   water: WaterHeaterStatusSchema.optional(),
   haBlocks: z.record(z.string(), HABlockStatusSchema).optional(),
+  barRows: BarRowsStatusSchema.optional(),
   login: LoginStatusSchema
 }).strict();
 

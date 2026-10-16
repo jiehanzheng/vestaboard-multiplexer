@@ -1,3 +1,4 @@
+import { BarRowsSchema, barRowElementId, barRowGeometry } from "../../src/plugins/barRows/config.js";
 import { AutomaticUpdateCapacity } from "./AutomaticUpdateLimits";
 import { ConfigToggle } from "./ConfigControls";
 import type { LayoutDecision } from "../../src/contracts/layout.js";
@@ -73,6 +74,7 @@ function routeFromHash(hash: string): RouteState {
   const [path, query] = value.split("?", 2);
   const source = new URLSearchParams(query ?? "").get("source") ?? undefined;
   if (path === "plugins/codex") return { view: "plugins", plugin: "codex", settingsSubview: "main" };
+  if (path === "plugins/barRows") return { view: "plugins", plugin: "barRows", settingsSubview: "main" };
   if (path === "plugins/haBlock") return { view: "plugins", plugin: "haBlock", settingsSubview: "main" };
   if (path === "plugins/water") return { view: "plugins", plugin: "water", settingsSubview: "main" };
   if (path === "plugins") return { view: "plugins", settingsSubview: "main" };
@@ -233,14 +235,17 @@ export default function App(): ReactNode {
     const saved = elementsResponse?.elements ?? [];
     if (!draftConfig) return saved;
     const byId = new Map(saved.map((element) => [element.id, element]));
-    return [...saved.filter((element) => !element.id.startsWith("ha-block.")), ...draftConfig.haBlocks.map((block) => ({
+    return [...saved.filter((element) => !element.id.startsWith("ha-block.") && !element.id.startsWith("bar-row.")), ...draftConfig.haBlocks.map((block) => ({
       id: haBlockElementId(block.id), label: block.name, ...haBlockGeometry(block), state: !block.enabled ? "inactive" as const : status?.haBlocks?.[block.id]?.state ?? byId.get(haBlockElementId(block.id))?.state, preview: byId.get(haBlockElementId(block.id))?.preview ?? []
+    })), ...draftConfig.barRows.map((row) => ({
+      id: barRowElementId(row.id), label: row.name, ...barRowGeometry(row), state: !row.enabled ? "inactive" as const : status?.barRows?.[row.id]?.state ?? byId.get(barRowElementId(row.id))?.state, preview: byId.get(barRowElementId(row.id))?.preview ?? []
     }))];
-  }, [elementsResponse, draftConfig, status?.haBlocks]);
+  }, [elementsResponse, draftConfig, status?.haBlocks, status?.barRows]);
   const defaultLayout = elementsResponse?.defaultLayouts?.[board] ?? elementsResponse?.defaultLayout ?? [];
   const draftLayout = draftConfig?.layout ?? defaultLayout;
   const blockValidation = draftConfig ? HABlocksSchema.safeParse(draftConfig.haBlocks) : undefined;
-  const layoutError = blockValidation && !blockValidation.success ? blockValidation.error.issues.map((issue) => issue.message).join(" ") : validateLayout(draftLayout, elements, board);
+  const rowValidation = draftConfig ? BarRowsSchema.safeParse(draftConfig.barRows) : undefined;
+  const layoutError = rowValidation && !rowValidation.success ? rowValidation.error.issues.map((issue) => issue.message).join(" ") : blockValidation && !blockValidation.success ? blockValidation.error.issues.map((issue) => issue.message).join(" ") : validateLayout(draftLayout, elements, board);
   useEffect(() => {
     if (draftLayout.length === 0) {
       if (selectedEntryIndex !== undefined) setSelectedEntryIndex(undefined);
@@ -282,7 +287,8 @@ export default function App(): ReactNode {
       board: boardPreference,
       water: draftConfig?.water,
       codex: draftConfig?.codex,
-      haBlocks: draftConfig?.haBlocks
+      haBlocks: draftConfig?.haBlocks,
+      barRows: draftConfig?.barRows
     };
     const payloadKey = JSON.stringify(payload);
     const payloadChanged = previewPayloadKeyRef.current !== payloadKey;
@@ -295,7 +301,7 @@ export default function App(): ReactNode {
     // Keep status live for unsaved bindings, but background refreshes do not reopen the busy state.
     if (payloadChanged) setPreviewPending(true);
     previewQueueRef.current?.schedule({
-      task: () => requestPreview(payload.layout, payload.board, payload.water, payload.codex, payload.haBlocks),
+      task: () => requestPreview(payload.layout, payload.board, payload.water, payload.codex, payload.haBlocks, payload.barRows),
       onSuccess: (nextPreview) => {
         if (previewPayloadRevisionRef.current !== payloadRevision) return;
         setDraftPreview(nextPreview);
@@ -343,7 +349,7 @@ export default function App(): ReactNode {
     const submittedDraft = draftConfigRef.current;
     const run = async (): Promise<void> => {
       if (!submittedDraft || !configResponse) return;
-      if ((section === "layout" || section === "haBlock") && layoutError) {
+      if ((section === "layout" || section === "haBlock" || section === "barRows") && layoutError) {
         setNotice({ tone: "error", section, message: layoutError });
         return;
       }
@@ -360,7 +366,7 @@ export default function App(): ReactNode {
         setDraftConfig(reconciled.draftConfig);
         let elementsRefreshed = true;
         try { setElementsResponse(await getElements()); } catch { elementsRefreshed = false; }
-        const savedLabel = section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "layout and HA character blocks" : section === "ha" ? "Home Assistant" : section === "pause" ? "pause settings" : section === "water" ? "water heater" : section === "board" ? "board settings" : "Codex";
+        const savedLabel = section === "barRows" ? "bar and text rows and layout" : section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "layout and HA displays" : section === "ha" ? "Home Assistant" : section === "pause" ? "pause settings" : section === "water" ? "water heater" : section === "board" ? "board settings" : "Codex";
         const delivery = saveDeliveryFeedback(response.delivery, status?.dryRun, savedLabel);
         const refreshSuffix = elementsRefreshed ? "" : " Board elements could not be refreshed yet.";
         const newerSuffix = reconciled.newerEdits ? " Newer edits remain unsaved." : "";
@@ -380,7 +386,7 @@ export default function App(): ReactNode {
     const nextDraft = replaceSection(draftConfig, configResponse.config, section);
     draftConfigRef.current = nextDraft;
     setDraftConfig(nextDraft);
-    setNotice({ tone: "info", section, message: `${section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "Layout and HA character blocks" : section === "ha" ? "Home Assistant" : section === "pause" ? "Pause settings" : section === "water" ? "Water heater" : section === "board" ? "Board settings" : "Codex"} draft discarded.` });
+    setNotice({ tone: "info", section, message: `${section === "barRows" ? "bar and text rows and layout" : section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "Layout and HA displays" : section === "ha" ? "Home Assistant" : section === "pause" ? "Pause settings" : section === "water" ? "Water heater" : section === "board" ? "Board settings" : "Codex"} draft discarded.` });
   }, [configResponse, draftConfig]);
 
   const handlePause = useCallback(async () => {
@@ -446,7 +452,7 @@ export default function App(): ReactNode {
             savingAny={Boolean(savingSection)}
             dirty={sectionDirty("layout")}
             selection={isDirty ? draftPreview?.selection : status?.layoutSelection}
-            blockSettingsDirty={Boolean(draftConfig && configResponse && JSON.stringify(draftConfig.haBlocks) !== JSON.stringify(configResponse.config.haBlocks))}
+            blockSettingsDirty={Boolean(draftConfig && configResponse && JSON.stringify([draftConfig.haBlocks, draftConfig.barRows]) !== JSON.stringify([configResponse.config.haBlocks, configResponse.config.barRows]))}
             layoutError={layoutError}
             notice={notice?.section === "layout" || notice?.section === "runtime" ? notice : undefined}
             waterStatus={waterStatus}
@@ -458,7 +464,7 @@ export default function App(): ReactNode {
             login={login}
             plugin={pluginView}
             onPluginChange={openPlugin}
-            status={status}
+            status={status && draftPreview?.barRows ? { ...status, barRows: draftPreview.barRows } : status}
             config={draftConfig}
             configResponse={configResponse}
             dirty={sectionDirty}

@@ -96,7 +96,7 @@ test("priority and HA bindings discard atomically without losing unrelated setti
   const resized = updateHABlockDraft(saved, { ...block, width: 15, activityAttribute: "active", textAttribute: "media_title", textEntityId: "media_player.music" });
   const draft = { ...resized, layout: [{ ...resized.layout![0]!, startColumn: 0, priority: 100 },
     { elementId: "water.temperature-text", startRow: 2, width: 8, priority: 0 }] };
-  assert.deepEqual(configPatchForSection("layout", draft), { haBlocks: draft.haBlocks, layout: draft.layout });
+  assert.deepEqual(configPatchForSection("layout", draft), { haBlocks: draft.haBlocks, layout: draft.layout, barRows: draft.barRows });
   const restored = replaceSection(draft, saved, "layout");
   assert.deepEqual(restored.haBlocks, saved.haBlocks); assert.deepEqual(restored.layout, saved.layout);
   assert.equal(restored.updateLimits[0]!.windowMinutes, 3);

@@ -1,4 +1,5 @@
 import { AutomaticUpdateLimitsSettings, limitsError } from "./AutomaticUpdateLimits";
+import { BarRowsSettings } from "./plugins/barRows/BarRowsSettings";
 import { HABlocksSettings } from "./plugins/haBlock/HABlocksSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import type { ReactNode } from "react";
@@ -19,7 +20,7 @@ import type { ConfigSection } from "./draftState";
 import type { ConfigResponse, LoginStatus, RuntimeStatus } from "./types";
 import type { Notice } from "./notice";
 
-export type PluginView = "codex" | "water" | "haBlock";
+export type PluginView = "codex" | "water" | "haBlock" | "barRows";
 
 interface SharedProps {
   layoutError?: string;
@@ -49,6 +50,7 @@ export function PluginsScreen({ login, plugin, onPluginChange, ...props }: Share
       <PluginRow title="Codex" purpose="Quota account, pacing, polling, and auto-start behavior." status={props.status?.codex.error || login.error ? "Needs attention" : login.account ? `Connected · ${login.account}` : login.pending ? "Sign-in pending" : "Account not checked"} dirty={props.dirty("codex")} onOpen={() => onPluginChange("codex")} />
       <PluginRow title="Water heater" purpose="Readings, units, entity selection, and display settings." status={props.status?.water?.error ? "Needs attention" : props.config.water.enabled ? "Enabled" : "Disabled"} dirty={props.dirty("water")} onOpen={() => onPluginChange("water")} />
       <PluginRow title="HA character blocks" purpose="Independent Home Assistant sources, sizes, and displays." status={Object.values(props.status?.haBlocks ?? {}).some((block) => block.error) ? "Needs attention" : `${props.config.haBlocks.length} blocks`} dirty={props.dirty("haBlock")} onOpen={() => onPluginChange("haBlock")} />
+      <PluginRow title="Bar and text rows" purpose="Home Assistant values with a fixed bar and text area." status={Object.values(props.status?.barRows ?? {}).some((row) => row.error) ? "Needs attention" : `${props.config.barRows.length} rows`} dirty={props.dirty("barRows")} onOpen={() => onPluginChange("barRows")} />
     </section>
   </>;
   const saving = props.saving === plugin;
@@ -61,6 +63,12 @@ export function PluginsScreen({ login, plugin, onPluginChange, ...props }: Share
     <button className="text-link" type="button" onClick={() => props.onOpenLogs("codex")}>View Codex logs</button>
   </PluginDetail>;
   const savedHaUrl = props.configResponse?.config.ha.url.trim() ?? "";
+  if (plugin === "barRows") return <PluginDetail title="Bar and text rows and layout" onBack={() => onPluginChange(undefined)} dirty={props.dirty("barRows")} saving={saving} saveDisabled={(savingAny && !saving) || Boolean(props.layoutError)} onSave={() => props.onSave("barRows")} onDiscard={() => props.onDiscard("barRows")} notice={paneNotice}>
+    <section className="connection-section" aria-label="Bar and text row settings">
+      <BarRowsSettings layoutError={props.layoutError} config={props.config} status={props.status?.barRows} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onChange={props.onConfigChange} />
+      <WaterCatalogMessage savedHaUrl={savedHaUrl} haDirty={props.dirty("ha")} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onRefresh={props.onRefreshEntities} onOpenSettings={props.onOpenSettings} />
+    </section>
+  </PluginDetail>;
   if (plugin === "haBlock") return <PluginDetail title="HA character blocks and layout" onBack={() => onPluginChange(undefined)} dirty={props.dirty("haBlock")} saving={saving} saveDisabled={(savingAny && !saving) || Boolean(props.layoutError)} onSave={() => props.onSave("haBlock")} onDiscard={() => props.onDiscard("haBlock")} notice={paneNotice}>
     <section className="connection-section" aria-label="HA character block settings">
       <HABlocksSettings layoutError={props.layoutError} config={props.config} status={props.dirty("haBlock") ? undefined : props.status?.haBlocks} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onChange={props.onConfigChange} />

@@ -1,3 +1,4 @@
+import { BarRowsSchema } from "../plugins/barRows/config.js";
 import { UpdateLimitsSchema } from "./updateLimits.js";
 import { HABlocksSchema, HABlockConfigPatchSchema } from "../plugins/haBlock/config.js";
 import { z } from "zod";
@@ -44,6 +45,7 @@ const appConfigShape = {
   ha: HAConfigSchema,
   water: WaterHeaterConfigSchema,
   haBlocks: HABlocksSchema.default([]),
+  barRows: BarRowsSchema.default([]),
   transport: TransportSchema,
   updateLimits: UpdateLimitsSchema,
   codex: CodexConfigSchema,
@@ -71,6 +73,7 @@ export const ConfigPatchSchema = z.object({
   ha: HAConfigSchema.partial().nullable().optional(),
   water: WaterHeaterConfigPatchSchema.nullable().optional(),
   haBlocks: HABlocksSchema.optional(),
+  barRows: BarRowsSchema.optional(),
   haBlock: HABlockConfigPatchSchema.optional(),
   transport: TransportSchema.partial().extend({
     localMessageTransition: LocalMessageTransitionSchema.partial().optional(),

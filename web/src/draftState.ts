@@ -1,7 +1,7 @@
 import { DEFAULT_HA_BLOCK_CONFIG, haBlockElementId, type HABlockInstance } from "../../src/plugins/haBlock/config.js";
 import type { AppConfig, ConfigPatch, ConfigSaveResponse, PublicAppConfig } from "../../src/contracts/config.js";
 
-export type ConfigSection = "codex" | "water" | "haBlock" | "ha" | "pause" | "board" | "layout";
+export type ConfigSection = "codex" | "water" | "haBlock" | "barRows" | "ha" | "pause" | "board" | "layout";
 
 export interface SaveReconciliation<TConfig> { draftConfig: TConfig; newerEdits: boolean }
 
@@ -23,8 +23,9 @@ export function configPatchForSection(section: ConfigSection, config: AppConfig)
       })(),
       updateLimits: structuredClone(config.updateLimits)
     };
+    case "barRows":
     case "haBlock":
-    case "layout": return { layout: config.layout === null ? null : structuredClone(config.layout), haBlocks: structuredClone(config.haBlocks) };
+    case "layout": return { layout: config.layout === null ? null : structuredClone(config.layout), haBlocks: structuredClone(config.haBlocks), barRows: structuredClone(config.barRows) };
   }
 }
 
@@ -38,8 +39,9 @@ function sectionValue(section: ConfigSection, config: AppConfig | PublicAppConfi
       const { pauseMessageTransition: _pauseMessageTransition, ...transport } = config.transport;
       return { board: config.board, transport, updateLimits: structuredClone(config.updateLimits) };
     }
+    case "barRows":
     case "haBlock":
-    case "layout": return { layout: config.layout, haBlocks: config.haBlocks };
+    case "layout": return { layout: config.layout, haBlocks: config.haBlocks, barRows: config.barRows };
   }
 }
 
@@ -66,10 +68,12 @@ export function replaceSection(draft: AppConfig, saved: PublicAppConfig, section
       } as AppConfig["transport"];
       next.updateLimits = structuredClone(saved.updateLimits);
       break;
+    case "barRows":
     case "haBlock":
     case "layout":
       next.layout = saved.layout === null ? null : structuredClone(saved.layout);
       next.haBlocks = structuredClone(saved.haBlocks);
+      next.barRows = structuredClone(saved.barRows);
       break;
   }
   return next;
