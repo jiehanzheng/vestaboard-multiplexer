@@ -2,7 +2,7 @@
 
 vbmux is a small service and web interface for arranging Home Assistant and Codex content on a [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT) (referral link). It supports Note (3 × 15) and Flagship (6 × 22), with a live board preview and configurable update limits.
 
-<img src="docs/images/board-hero.png" alt="Codex quota, a Home Assistant bar row, and custom temperature characters on Vestaboard Note" width="640">
+<img src="docs/images/board-hero.png" alt="Codex quota, a Home Assistant hot-water bar, and right-aligned water temperature on Vestaboard Note" width="640">
 
 ## Features
 
