@@ -1,6 +1,6 @@
 # [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT) Multiplexer
 
-vbmux is a small service and web interface for arranging Home Assistant and Codex content on a [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT). It supports Note (3 × 15) and Flagship (6 × 22), with a live board preview and configurable update limits.
+vbmux is a small service and web interface for arranging Home Assistant and Codex content on a [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT) (referral link). It supports Note (3 × 15) and Flagship (6 × 22), with a live board preview and configurable update limits.
 
 ![Codex quota, a Home Assistant bar row, and custom temperature characters on Vestaboard Note](docs/images/board-hero.png)
 
@@ -26,28 +26,7 @@ Open `http://<server-host>:3000`, replacing `<server-host>` with the hostname or
 
 Compose keeps application settings in the `vbmux-data` volume. It mounts `${HOME}/.codex` for Codex credentials; set `CODEX_HOST_DIR` in `.env` if they live elsewhere.
 
-The included `docker-compose.yml`:
-
-```yaml
-services:
-  vestaboard-orchestrator:
-    build: .
-    restart: unless-stopped
-    env_file:
-      - path: .env
-        required: false
-    ports:
-      - "${VBMUX_PORT:-3000}:3000"
-    environment:
-      VBMUX_PORT: 3000
-      VBMUX_DATA_DIR: /app/data
-    volumes:
-      - vbmux-data:/app/data
-      - ${CODEX_HOST_DIR:-${HOME}/.codex}:/home/node/.codex
-
-volumes:
-  vbmux-data:
-```
+See [docker-compose.yml](docker-compose.yml) for the Compose configuration.
 
 ## Connect your Vestaboard
 

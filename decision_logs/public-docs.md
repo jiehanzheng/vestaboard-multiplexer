@@ -5,4 +5,5 @@
 - Preserve the prominent Vestaboard referral link in the README title and intro unless the user explicitly asks to remove it.
 - User clarification (2026-09-07): public setup instructions should use simple Docker and Docker Compose commands. Keep personal development tooling and resource-management details out of README and public PR descriptions; agent execution guidance belongs in AGENTS.md.
 
-- User clarification (2026-10-16): installation documentation should focus on vbmux setup and provide a Compose file example, without teaching Docker operation (shutdown, volume deletion, logs, or project relocation).
+- User clarification (2026-10-16): installation documentation should focus on vbmux setup and link to the repository Compose file rather than duplicate it, without teaching Docker operation (shutdown, volume deletion, logs, or project relocation).
+- User clarification (2026-10-16): retain the explicit referral-link disclosure alongside the README referral link.
