@@ -13,7 +13,7 @@ vbmux is a small service and web interface for arranging Home Assistant and Code
 
 ## Install (Docker recommended)
 
-Install Git and Docker with the Docker Compose plugin on the computer that will run vbmux. Docker includes the application runtime and Codex CLI; you do not need to install Node.js separately.
+Install Git and Docker with the Docker Compose plugin on the computer that will run vbmux. Docker includes the application runtime and Codex CLI.
 
 ```sh
 git clone https://github.com/jiehanzheng/vestaboard-multiplexer.git
