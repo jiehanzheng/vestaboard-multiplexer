@@ -784,7 +784,7 @@ test("bar row draft preview, atomic save and removal preserve generic rows/music
     createHomeAssistantClient: (options) => { client = new FakeHomeAssistantClient(options); return asHomeAssistantClient(client); }
   });
   const emit = (active: boolean, display_text = "3S") => client.emit([
-    { entity_id: "sensor.hot_water_display", state: "ready", attributes: { display_name: "HW", current: 61.5, max: 100, display_text } },
+    { entity_id: "sensor.hot_water_display", state: "ready", attributes: { display_name: "HW", current: 61.5, max: 100, display_text, bar_marker: [62, 66] } },
     { entity_id: "sensor.music", state: "ready", attributes: { active, characters: [10, 26, 69] } }
   ]);
   try {
@@ -796,6 +796,11 @@ test("bar row draft preview, atomic save and removal preserve generic rows/music
     assert.equal(preview.barRows!['hot-water']!.state, "active");
     assert.deepEqual(preview.selection!.map((entry) => entry.reason), ["shown", "shown"]);
     assert.deepEqual(store.get(), before); assert.deepEqual(app.actions.status().barRows, statusBefore); assert.equal(sends, sendsBefore);
+    const markedRow = BarRowConfigSchema.parse({ ...row, source: { ...row.source, attributes: { marker: "bar_marker" } } });
+    const markerPreview = app.actions.preview({ layout, barRows: [markedRow] });
+    assert.deepEqual(markerPreview.characters[1], [...encode("HW"), ...Array(7).fill(67), 62, 66, 0, ...encode(" 3S")]);
+    assert.deepEqual(markerPreview.barRows!['hot-water']!.inputs.marker!.value, [62, 66]);
+    assert.deepEqual(store.get(), before); assert.deepEqual(app.actions.status().barRows, statusBefore);
     const invalidPreview = app.actions.preview({ layout, barRows: [{ ...row, textWidth: 1 }] });
     assert.match(invalidPreview.barRows!['hot-water']!.inputs.displayText.error!, /reserved 1 cells/);
     await assert.rejects(app.actions.save({ barRows: [row], layout: [{ ...layout[0]!, width: 5 }] }), /at least 6/);
@@ -804,6 +809,8 @@ test("bar row draft preview, atomic save and removal preserve generic rows/music
     assert.deepEqual(app.actions.status().desired!.characters![1], preview.characters[1]);
     assert.equal(app.actions.status().barRows!['hot-water']!.state, "active");
     assert.deepEqual(store.get().haBlocks, before.haBlocks);
+    await app.actions.save({ barRows: [markedRow] });
+    assert.deepEqual(app.actions.status().desired!.characters![1], markerPreview.characters[1]);
     await emit(false); assert.equal(app.actions.status().layoutSelection!.at(-1)!.reason, "inactive");
     await emit(false, "100S"); assert.equal(app.actions.status().barRows!['hot-water']!.state, "unavailable");
     assert.deepEqual(app.actions.status().desired!.characters![1]!.slice(0, 3), encode("N/A"));
