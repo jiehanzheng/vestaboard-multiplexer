@@ -30,7 +30,7 @@ test("HTTP actions validate JSON/origin and SSE reconnect receives current snaps
   let saveCalls = 0;
   const requests: Array<{ action: "test" | "entities"; value: unknown }> = [];
   const status = () => ({ board: "note" as const, nextAttemptAt: value, manualPause: false, haPause: false, paused: false, codex: {}, login: { pending: false } });
-  const config = () => ({ config: { ...DEFAULT_APP_CONFIG, transport: { ...DEFAULT_APP_CONFIG.transport, token: "server-only" }, ha: { ...DEFAULT_APP_CONFIG.ha, token: "ha-server-only" } }, legacyEnvironmentVariables: [], hasSecrets: { token: true, localApiKey: false, haToken: true } });
+  const config = () => ({ config: { ...DEFAULT_APP_CONFIG, transport: { ...DEFAULT_APP_CONFIG.transport, token: "server-only" }, ha: { ...DEFAULT_APP_CONFIG.ha, token: "ha-server-only" } }, legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: true, localApiKey: false, haToken: true } });
   const server = await startWebServer({
     status, config, elements: () => ({ elements: [], defaultLayout: [] }),
     save: async () => { saveCalls++; return { ...config(), delivery: "unchanged" as const }; }, preview: () => ({ text: "", characters: [] }), pause: async () => status(), login: async () => ({ pending: false }),
@@ -96,7 +96,7 @@ test("serves bounded logs and emits named log snapshots without runtime events",
   const listeners = new Set<() => void>();
   const status = () => ({ board: "note" as const, nextAttemptAt: 1, manualPause: false, haPause: false, paused: false, codex: {}, login: { pending: false } });
   const server = await startWebServer({
-    status, config: () => ({ config: DEFAULT_APP_CONFIG, legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false } }),
+    status, config: () => ({ config: DEFAULT_APP_CONFIG, legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false } }),
     elements: () => ({ elements: [], defaultLayout: [] }), save: async () => ({} as never), preview: () => ({ text: "", characters: [] }), pause: async () => status(), login: async () => ({ pending: false }),
     logs: () => ({ entries }),
     subscribeLogs: (listener) => { listeners.add(listener); return () => listeners.delete(listener); }
@@ -123,7 +123,7 @@ test("one runtime broadcast builds status once for multiple SSE observers", asyn
   let builds = 0; let version = 1;
   const status = () => { builds++; return { board: "note" as const, nextAttemptAt: version, manualPause: false, haPause: false, paused: false, codex: {}, login: { pending: false } }; };
   const server = await startWebServer({ status,
-    config: () => ({ config: DEFAULT_APP_CONFIG, legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false } }),
+    config: () => ({ config: DEFAULT_APP_CONFIG, legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false } }),
     elements: () => ({ elements: [] }), save: async () => ({} as never), preview: () => ({ text: "", characters: [] }),
     pause: async () => status(), login: async () => ({ pending: false })
   }, { port: Number(process.env.VBMUX_PORT ?? 0), host: "127.0.0.1" });

@@ -6,7 +6,6 @@ import { LayoutEntrySchema } from "../src/contracts/config.js";
 import { ConfigSaveResponseSchema, DeliveryOutcomeSchema } from "../src/contracts/config.js";
 import { HAConfigSchema } from "../src/contracts/homeAssistant.js";
 import { BoardElementSchema, PreviewResponseSchema } from "../src/contracts/api.js";
-import { WaterHeaterConfigSchema } from "../src/plugins/waterHeater/config.js";
 
 test("board endpoints reject invalid protocols and embedded credentials", () => {
   for (const url of ["not-a-url", "file:///tmp/board", "https://user:secret@board.local/"]) {
@@ -27,22 +26,7 @@ test("browser-safe settings schemas reject malformed domain values", () => {
     url: "",
     pause: { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "on" }
   }).success, false);
-  assert.equal(WaterHeaterConfigSchema.safeParse({
-    remaining: null,
-    capacity: { constant: 0 },
-    temperature: null,
-    target: null,
-    unit: "F",
-    enabled: true
-  }).success, false);
-  assert.equal(WaterHeaterConfigSchema.safeParse({
-    remaining: null,
-    capacity: null,
-    temperature: null,
-    target: null,
-    unit: "F",
-    enabled: "false"
-  }).success, false);
+
 });
 
 test("public configuration schema requires secrets to be omitted", () => {
@@ -58,6 +42,7 @@ test("public configuration schema requires secrets to be omitted", () => {
   const response = {
     config: publicConfig,
     legacyEnvironmentVariables: [],
+    ignoredPlugins: [],
     hasSecrets: { token: true, localApiKey: false, haToken: true }
   };
   assert.equal(PublicConfigSchema.safeParse(response).success, true);
@@ -72,6 +57,7 @@ test("config save responses add a delivery outcome without changing public confi
   const response = {
     config: structuredClone(DEFAULT_APP_CONFIG),
     legacyEnvironmentVariables: [],
+    ignoredPlugins: [],
     hasSecrets: { token: false, localApiKey: false, haToken: false },
     delivery: "failed"
   };
@@ -93,10 +79,10 @@ test("preview responses require a complete character matrix", () => {
 });
 
 test("partial layout fields and element minimum widths are validated", () => {
-  assert.equal(LayoutEntrySchema.safeParse({ elementId: "water.remaining", startRow: 0 }).success, true);
-  assert.equal(LayoutEntrySchema.safeParse({ elementId: "water.remaining", startRow: 0, startColumn: 2, width: 6 }).success, true);
-  assert.equal(LayoutEntrySchema.safeParse({ elementId: "water.remaining", startRow: 0, width: 0 }).success, false);
-  assert.equal(BoardElementSchema.safeParse({ id: "water.remaining", label: "Water", height: 1, minWidth: 6, preview: [[0, 0, 0, 0, 0, 0]] }).success, true);
-  assert.equal(BoardElementSchema.safeParse({ id: "water.remaining", label: "Water", height: 1, preview: [[0]] }).success, true);
-  assert.equal(BoardElementSchema.safeParse({ id: "water.remaining", label: "Water", height: 1, minWidth: 0, preview: [[0]] }).success, false);
+  assert.equal(LayoutEntrySchema.safeParse({ elementId: "bar-row.level", startRow: 0 }).success, true);
+  assert.equal(LayoutEntrySchema.safeParse({ elementId: "bar-row.level", startRow: 0, startColumn: 2, width: 6 }).success, true);
+  assert.equal(LayoutEntrySchema.safeParse({ elementId: "bar-row.level", startRow: 0, width: 0 }).success, false);
+  assert.equal(BoardElementSchema.safeParse({ id: "bar-row.level", label: "Level", height: 1, minWidth: 6, preview: [[0, 0, 0, 0, 0, 0]] }).success, true);
+  assert.equal(BoardElementSchema.safeParse({ id: "bar-row.level", label: "Level", height: 1, preview: [[0]] }).success, true);
+  assert.equal(BoardElementSchema.safeParse({ id: "bar-row.level", label: "Level", height: 1, minWidth: 0, preview: [[0]] }).success, false);
 });

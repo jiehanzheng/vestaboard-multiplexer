@@ -1,9 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
+import { z } from "zod";
+import { RETIRED_PLUGINS } from "./contracts/unsupportedPlugins.js";
 import { intervalLimit } from "./contracts/updateLimits.js";
 import { mergeHABlocks, normalizeLegacyHABlocks } from "./plugins/haBlock/config.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { AppConfigSchema, type AppConfig, type ConfigPatch, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, type WaterHeaterConfig, PublicConfigSchema } from "./contracts/config.js";
-import { DEFAULT_WATER_HEATER_CONFIG, normalizeLegacyWaterHeaterConfig } from "./plugins/waterHeater/config.js";
+import { AppConfigSchema, type AppConfig, type ConfigPatch, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, PublicConfigSchema } from "./contracts/config.js";
 import { applyCodexEnvironment, DEFAULT_CODEX_CONFIG } from "./plugins/codexQuota/config.js";
 import { DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS } from "./vestaboard.js";
 import { defaultPauseOverlay } from "./pauseOverlay.js";
@@ -47,7 +49,6 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     url: "",
     pause: null
   },
-  water: { ...DEFAULT_WATER_HEATER_CONFIG },
   haBlocks: [],
   barRows: [],
   transport: {
@@ -66,7 +67,8 @@ export class ConfigStore {
     private readonly filePath: string,
     private readonly legacyEnvironmentVariables: string[],
     private saved: AppConfig | undefined,
-    private savedError: string | undefined
+    private savedError: string | undefined,
+    private retired: RetiredConfig = emptyRetired()
   ) {}
 
   static async open(
@@ -78,10 +80,13 @@ export class ConfigStore {
     let saved: AppConfig | undefined;
     let savedError: string | undefined;
     let missing = false;
+    let retired = emptyRetired();
     try {
       const raw = await readFile(filePath, "utf8");
       try {
-        saved = validateConfig(mergeConfig(DEFAULT_APP_CONFIG, parseSavedConfig(raw)));
+        const parsed = parseSavedConfig(raw);
+        retired = parsed.retired;
+        saved = validateConfig(mergeConfig(DEFAULT_APP_CONFIG, parsed.config));
       } catch (error) {
         savedError = errorMessage(error);
       }
@@ -104,7 +109,8 @@ export class ConfigStore {
       }
     }
 
-    return new ConfigStore(filePath, legacyEnvironmentVariables, saved, savedError);
+    if (hasRetired(retired)) console.warn("Ignored retired water plugin settings or placements. Remove unsupported plugins in Settings to clean the saved configuration.");
+    return new ConfigStore(filePath, legacyEnvironmentVariables, saved, savedError, retired);
   }
 
   /** Returns the persisted configuration, or defaults while an invalid file is repaired. */
@@ -126,6 +132,7 @@ export class ConfigStore {
     return {
       config,
       legacyEnvironmentVariables: [...this.legacyEnvironmentVariables],
+      ignoredPlugins: hasRetired(this.retired) ? [{ id: "water", settingsPresent: this.retired.some((record) => record.settingsPresent), elementIds: [...new Set(this.retired.flatMap((record) => record.placements.map(({ value }) => (value as { elementId: string }).elementId))) ] }] : [],
       hasSecrets,
       ...(this.savedError ? { error: this.savedError } : {})
     };
@@ -144,7 +151,10 @@ export class ConfigStore {
     const savedBase = this.saved ?? DEFAULT_APP_CONFIG;
     const candidate = mergeConfig(savedBase, input);
     const validated = validateConfig(candidate);
-    await persistConfig(this.filePath, validated);
+    const retired = input.removeUnsupportedPlugins ? emptyRetired() : this.retired;
+    const persisted = restoreRetired(validated, retired);
+    await persistConfig(this.filePath, persisted);
+    this.retired = captureRetired(persisted).retired;
     this.saved = validated;
     this.savedError = undefined;
     return this.get();
@@ -156,7 +166,7 @@ export class ConfigStore {
 
 }
 
-function parseSavedConfig(raw: string): Partial<AppConfig> {
+function parseSavedConfig(raw: string): { config: Partial<AppConfig>; retired: RetiredConfig } {
   let value: unknown;
   try { value = JSON.parse(raw); }
   catch {
@@ -170,12 +180,13 @@ function parseSavedConfig(raw: string): Partial<AppConfig> {
   if (record.version !== 1) {
     throw new Error("Config version must be 1.");
   }
-  const { version: _version, ...config } = record;
+  const { version: _version, ...savedConfig } = record;
+  const { config, retired } = captureRetired(savedConfig);
   if (config.codex && typeof config.codex === "object" && !Array.isArray(config.codex)) {
     const { demoPauseMinutes: _demoPauseMinutes, ...codex } = config.codex as Record<string, unknown>;
-    return normalizeLegacyHABlocks(normalizeLegacyWaterHeaterConfig({ ...config, codex })) as Partial<AppConfig>;
+    return { config: normalizeLegacyHABlocks({ ...config, codex }) as Partial<AppConfig>, retired };
   }
-  return normalizeLegacyHABlocks(normalizeLegacyWaterHeaterConfig(config)) as Partial<AppConfig>;
+  return { config: normalizeLegacyHABlocks(config) as Partial<AppConfig>, retired };
 }
 
 function legacyConfig(env: ConfigEnvironment): AppConfig {
@@ -199,7 +210,7 @@ function positiveNumber(raw: string, name: string): number {
   return value;
 }
 
-async function persistConfig(filePath: string, config: AppConfig): Promise<void> {
+async function persistConfig(filePath: string, config: object): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify({ version: 1, ...config }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -218,7 +229,7 @@ function warnObsoleteEnvironmentVariables(env: ConfigEnvironment): void {
 
 function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
   const baseConfig = cloneConfig(base);
-  const { haBlock: legacyBlock, updateIntervalMinutes: legacyInterval, ...canonicalPatch } = patch;
+  const { haBlock: legacyBlock, updateIntervalMinutes: legacyInterval, removeUnsupportedPlugins: _cleanup, ...canonicalPatch } = patch;
   const haPatch = patch.ha;
   const transport = patch.transport ?? {};
   const codex: Partial<AppConfig["codex"]> = patch.codex ?? {};
@@ -231,17 +242,11 @@ function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
           ...haPatch,
           ...(haPatch.token === undefined && baseConfig.ha.token !== undefined ? { token: baseConfig.ha.token } : {})
         };
-  const water = patch.water === undefined
-    ? baseConfig.water
-    : patch.water === null
-      ? null as unknown as WaterHeaterConfig
-      : { ...baseConfig.water, ...patch.water };
   return {
     ...baseConfig,
     ...canonicalPatch,
     updateLimits: patch.updateLimits === undefined ? (legacyInterval === undefined ? baseConfig.updateLimits : intervalLimit(legacyInterval)) : patch.updateLimits,
     ha,
-    water,
     haBlocks: mergeHABlocks(baseConfig.haBlocks, patch.haBlocks, legacyBlock),
     transport: {
       ...baseConfig.transport,
@@ -297,4 +302,44 @@ function errorMessage(error: unknown): string {
 
 function isMissingFile(error: unknown): boolean {
   return !!error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT";
+}
+
+interface RetiredRecord {
+  id: "water";
+  settingsPresent: boolean;
+  settings?: unknown;
+  placements: { index: number; value: { elementId: string; [key: string]: unknown } }[];
+}
+type RetiredConfig = RetiredRecord[];
+const RetiredArchiveSchema = z.object({
+  version: z.literal(1),
+  records: z.array(z.object({
+    id: z.literal("water"), settingsPresent: z.boolean(), settings: z.unknown().optional(),
+    placements: z.array(z.object({ index: z.number().int().nonnegative(),
+      value: z.object({ elementId: z.string().startsWith("water.") }).catchall(z.unknown()) }).strict())
+  }).strict())
+}).strict();
+function emptyRetired(): RetiredConfig { return []; }
+function hasRetired(value: RetiredConfig): boolean { return value.some((record) => record.settingsPresent || record.placements.length > 0); }
+function captureRetired(record: Record<string, unknown>): { config: Record<string, unknown>; retired: RetiredConfig } {
+  const definition = RETIRED_PLUGINS[0];
+  const { [definition.settingsKey]: settings, retiredPlugins, ...config } = record;
+  const archived = retiredPlugins === undefined ? [] : RetiredArchiveSchema.parse(retiredPlugins).records;
+  const legacy: RetiredRecord = { id: "water", settingsPresent: Object.hasOwn(record, definition.settingsKey), ...(Object.hasOwn(record, definition.settingsKey) ? { settings: structuredClone(settings) } : {}), placements: [] };
+  if (Array.isArray(config.layout)) config.layout = config.layout.filter((value, index) => {
+    if (value && typeof value === "object" && typeof value.elementId === "string" && value.elementId.startsWith(definition.elementPrefix)) {
+      legacy.placements.push({ index, value: structuredClone(value) }); return false;
+    }
+    return true;
+  });
+  // Exact duplicate archival records can arise when hand-edited files contain both forms.
+  const candidates = [...archived, ...(hasRetired([legacy]) ? [legacy] : [])];
+  const retired = candidates.filter((candidate, index) => !candidates.slice(0, index).some((previous) => isDeepStrictEqual(previous, candidate)));
+  return { config, retired };
+}
+function restoreRetired(config: AppConfig, retired: RetiredConfig): Record<string, unknown> {
+  const result: Record<string, unknown> = structuredClone(config);
+  // The private archive preserves obsolete payloads without changing supported layout:null semantics.
+  if (hasRetired(retired)) result.retiredPlugins = { version: 1, records: structuredClone(retired) };
+  return result;
 }

@@ -4,16 +4,15 @@ import test from "node:test";
 import { DEFAULT_APP_CONFIG, type AppConfig } from "../src/config.js";
 import { configPatchForSection, reconcileSectionSave, sectionIsDirty } from "../web/src/draftState.js";
 import { createLogDownloadLifecycle, filterLogEntries } from "../web/src/logUtils.js";
-import { WaterHeaterStatusSchema, waterElementIssue } from "../src/plugins/waterHeater/status.js";
 import { sortLayoutIndexes } from "../web/src/layoutUtils.js";
 import { createLatestPreviewQueue, createLatestPreviewScheduler } from "../web/src/previewScheduler.js";
 import { homeAssistantRequestKey } from "../web/src/haRequestIdentity.js";
 
 test("row editor order follows board rows while preserving stored ties", () => {
   const layout = [
-    { elementId: "water.remaining", startRow: 1 },
+    { elementId: "bar-row.primary", startRow: 1 },
     { elementId: "codex.status", startRow: 0 },
-    { elementId: "water.temperature-text", startRow: 1 }
+    { elementId: "bar-row.secondary", startRow: 1 }
   ];
   assert.deepEqual(sortLayoutIndexes(layout), [1, 0, 2]);
 });
@@ -50,7 +49,7 @@ test("board save acknowledgement preserves a newer pause animation draft", () =>
   submittedDraft.transport.localMessageTransition = { strategy: "column", stepIntervalMs: 900, stepSize: 2 };
   const currentDraft = structuredClone(submittedDraft);
   currentDraft.transport.pauseMessageTransition = { strategy: "diagonal", stepIntervalMs: 700, stepSize: 2 };
-  const acknowledgement = { config: structuredClone(saved), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
+  const acknowledgement = { config: structuredClone(saved), legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
   const result = reconcileSectionSave({ section: "board", acknowledgement, submittedDraft, currentDraft });
   assert.equal(result.newerEdits, false);
   assert.deepEqual(result.draftConfig.transport.pauseMessageTransition, currentDraft.transport.pauseMessageTransition);
@@ -82,10 +81,10 @@ test("section reconciliation preserves later edits and unrelated drafts", () => 
   submittedDraft.codex.enabled = true;
   const currentDraft = structuredClone(submittedDraft);
   currentDraft.codex.autoStartWindowWk = true;
-  currentDraft.water.enabled = true;
+  currentDraft.ha.url = "http://draft.example";
   const acknowledgement = {
     config: structuredClone(DEFAULT_APP_CONFIG),
-    legacyEnvironmentVariables: [],
+    legacyEnvironmentVariables: [], ignoredPlugins: [],
     hasSecrets: { token: false, localApiKey: false, haToken: false },
     delivery: "sent" as const
   };
@@ -93,8 +92,8 @@ test("section reconciliation preserves later edits and unrelated drafts", () => 
   const result = reconcileSectionSave({ section: "codex", acknowledgement, submittedDraft, currentDraft });
   assert.equal(result.newerEdits, true);
   assert.equal(result.draftConfig.codex.autoStartWindowWk, true);
-  assert.equal(result.draftConfig.water.enabled, true);
-  assert.equal(sectionIsDirty("water", result.draftConfig, acknowledgement.config), true);
+  assert.equal(result.draftConfig.ha.url, "http://draft.example");
+  assert.equal(sectionIsDirty("ha", result.draftConfig, acknowledgement.config), true);
 });
 
 test("a section acknowledgement accepts server normalization when untouched", () => {
@@ -102,7 +101,7 @@ test("a section acknowledgement accepts server normalization when untouched", ()
   submittedDraft.codex.enabled = true;
   const acknowledgement = {
     config: structuredClone(DEFAULT_APP_CONFIG),
-    legacyEnvironmentVariables: [],
+    legacyEnvironmentVariables: [], ignoredPlugins: [],
     hasSecrets: { token: false, localApiKey: false, haToken: false },
     delivery: "sent" as const
   };
@@ -117,7 +116,7 @@ test("HA save keeps a concurrent pause edit", () => {
   submittedDraft.ha.url = "http://saved.example";
   const currentDraft = structuredClone(submittedDraft);
   currentDraft.ha.pause = { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "off" };
-  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
+  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
   const result = reconcileSectionSave({ section: "ha", acknowledgement, submittedDraft, currentDraft });
   assert.deepEqual(result.draftConfig.ha.pause, currentDraft.ha.pause);
 });
@@ -128,7 +127,7 @@ test("pause save keeps concurrent Home Assistant URL and token edits", () => {
   const currentDraft = structuredClone(submittedDraft);
   currentDraft.ha.url = "http://new.example";
   currentDraft.ha.token = "new-token";
-  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
+  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
   const result = reconcileSectionSave({ section: "pause", acknowledgement, submittedDraft, currentDraft });
   assert.equal(result.draftConfig.ha.url, "http://new.example");
   assert.equal(result.draftConfig.ha.token, "new-token");
@@ -234,21 +233,6 @@ test("log download lifecycle retains the current URL until replacement or cleanu
   assert.deepEqual(revoked, ["blob:1", "blob:2"]);
 });
 
-test("water diagnostics distinguish disabled, missing, errors, and retained readings", () => {
-  const status = WaterHeaterStatusSchema.parse({ enabled: true, inputs: {
-    remaining: { configured: true, value: 40, retained: true },
-    capacity: { configured: true, value: 80 },
-    temperature: { configured: true, error: "Entity unavailable", retained: true },
-    target: { configured: true, value: 135 },
-    emvPosition: { configured: true, value: 41 },
-    heating: { configured: true, value: true }
-  } });
-  assert.equal(waterElementIssue("water.remaining", status), undefined);
-  assert.equal(waterElementIssue("water.temperature-text", status), undefined);
-  assert.equal(waterElementIssue("water.temperature-bar", status), undefined);
-  assert.match(waterElementIssue("water.emv-position", { ...status, enabled: false }) ?? "", /disabled/);
-  assert.match(waterElementIssue("water.remaining", { ...status, inputs: { ...status.inputs, remaining: { configured: false } } }) ?? "", /not configured/);
-});
 
 test("delivery holds show their real reason rather than a manual or HA pause", async () => {
   const { pauseReason } = await import("../web/src/utils.js");
@@ -264,16 +248,16 @@ test("bar rows and both HA display collections save with layout while unrelated 
     source: { kind: "entity", entityId: "sensor.hot_water_display", attributes: { displayName: "display_name", current: "current", max: "max", displayText: "display_text" } },
     labelWidth: 2, textWidth: 3, barCharacter: 67, unavailableDisplay: "na", staleAfterMinutes: 15 }];
   draft.layout = [{ elementId: "bar-row.hot-water", startRow: 1, width: 15 }];
-  draft.water.remainingLabel = "XX";
+  draft.ha.url = "http://draft.example";
   const patch = configPatchForSection("barRows", draft);
   assert.deepEqual(patch, { barRows: draft.barRows, haBlocks: draft.haBlocks, layout: draft.layout });
   assert.equal(sectionIsDirty("layout", draft, saved), true);
   const submittedDraft = structuredClone(draft);
-  const acknowledgement = { config: { ...saved, ...patch }, legacyEnvironmentVariables: [],
+  const acknowledgement = { config: { ...saved, ...patch }, legacyEnvironmentVariables: [], ignoredPlugins: [],
     hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "unchanged" as const };
   const result = reconcileSectionSave({ section: "barRows", acknowledgement: acknowledgement as Parameters<typeof reconcileSectionSave>[0]["acknowledgement"], submittedDraft, currentDraft: draft });
   assert.equal(result.newerEdits, false);
-  assert.equal(result.draftConfig.water.remainingLabel, "XX");
+  assert.equal(result.draftConfig.ha.url, "http://draft.example");
   assert.deepEqual(result.draftConfig.barRows, draft.barRows);
   const newer = structuredClone(draft);
   newer.barRows[0]!.textWidth = 4;

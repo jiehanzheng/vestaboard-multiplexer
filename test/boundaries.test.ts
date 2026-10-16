@@ -40,7 +40,7 @@ test("shared browser contracts do not reach server implementations", async () =>
       assert.ok(!specifier.startsWith("node:"), `${file} imports ${specifier}`);
       if (!specifier.startsWith(".")) continue;
       const target = resolve(dirname(file), specifier.replace(/\.js$/, ".ts"));
-      assert.match(target, /\/(contracts\/|plugins\/(?:codexQuota\/config|(?:waterHeater|haBlock|barRows)\/(?:config|status))\.ts$|[^/]+\/config\.ts$|vestaboardCharacters\.ts$)/, `Contract imports server implementation: ${target}`);
+      assert.match(target, /\/(contracts\/|plugins\/(?:codexQuota\/config|(?:haBlock|barRows)\/(?:config|status))\.ts$|[^/]+\/config\.ts$|vestaboardCharacters\.ts$)/, `Contract imports server implementation: ${target}`);
       await visit(target);
     }
   }
@@ -57,7 +57,7 @@ test("browser code imports only browser-safe backend contracts", async () => {
       if (!relative(root, target).startsWith("..")) continue;
       const normalizedTarget = target.endsWith(".js") ? `${target.slice(0, -3)}.ts` : target;
       const browserSafe = normalizedTarget.startsWith(`${resolve("src/contracts")}/`)
-        || ["src/plugins/barRows/config.ts", "src/plugins/barRows/status.ts", "src/plugins/codexQuota/config.ts", "src/plugins/waterHeater/config.ts", "src/plugins/waterHeater/status.ts", "src/plugins/haBlock/config.ts", "src/plugins/haBlock/status.ts", "src/vestaboardCharacters.ts"].some((path) => normalizedTarget === resolve(path));
+        || ["src/plugins/barRows/config.ts", "src/plugins/barRows/status.ts", "src/plugins/codexQuota/config.ts", "src/plugins/haBlock/config.ts", "src/plugins/haBlock/status.ts", "src/vestaboardCharacters.ts"].some((path) => normalizedTarget === resolve(path));
       assert.ok(browserSafe, `Browser imports server implementation: ${target}`);
     }
   }

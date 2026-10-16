@@ -11,7 +11,7 @@ import {
   type RuntimeStatus
 } from "../../src/contracts/api";
 import { HAConnectionTestResponseSchema, HAEntitiesResponseSchema, type HAConnectionTestRequest, type HAConnectionTestResponse, type HAEntitiesRequest, type HAEntitiesResponse } from "../../src/contracts/homeAssistant";
-import { ConfigSaveResponseSchema, type AppConfig, type ConfigPatch, type ConfigSaveResponse, type LayoutEntry, type PublicConfig, type WaterHeaterConfig } from "../../src/contracts/config";
+import { ConfigSaveResponseSchema, type AppConfig, type ConfigPatch, type ConfigSaveResponse, type LayoutEntry, type PublicConfig } from "../../src/contracts/config";
 import { LogsResponseSchema, type LogsResponse } from "../../src/contracts/logs.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -65,10 +65,10 @@ export function getLogs(): Promise<LogsResponse> {
   return request("/api/logs", LogsResponseSchema);
 }
 
-export function requestPreview(layout: LayoutEntry[], board: AppConfig["board"], water?: WaterHeaterConfig, codex?: AppConfig["codex"], haBlocks?: AppConfig["haBlocks"], barRows?: AppConfig["barRows"]): Promise<PreviewResponse> {
+export function requestPreview(layout: LayoutEntry[], board: AppConfig["board"], codex?: AppConfig["codex"], haBlocks?: AppConfig["haBlocks"], barRows?: AppConfig["barRows"]): Promise<PreviewResponse> {
   return request("/api/preview", PreviewResponseSchema, {
     method: "POST",
-    body: JSON.stringify({ layout, board, ...(water !== undefined ? { water } : {}), ...(codex !== undefined ? { codex } : {}), ...(haBlocks !== undefined ? { haBlocks } : {}), ...(barRows !== undefined ? { barRows } : {}) })
+    body: JSON.stringify({ layout, board, ...(codex !== undefined ? { codex } : {}), ...(haBlocks !== undefined ? { haBlocks } : {}), ...(barRows !== undefined ? { barRows } : {}) })
   });
 }
 

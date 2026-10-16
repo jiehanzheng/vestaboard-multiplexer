@@ -128,7 +128,7 @@ test("geometry and placement save/discard atomically and newer edits survive ack
     assert.deepEqual(replaceSection(draft, saved, section), saved);
     const newer = updateHABlockDraft(draft, { ...draft.haBlocks[0]!, height: 3 });
     const reconciled = reconcileSectionSave({ section, submittedDraft: draft, currentDraft: newer,
-      acknowledgement: { config: draft, legacyEnvironmentVariables: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "unchanged" } });
+      acknowledgement: { config: draft, legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "unchanged" } });
     assert.equal(reconciled.newerEdits, true); assert.deepEqual(reconciled.draftConfig, newer);
   }
 });
@@ -208,7 +208,7 @@ test("adding, resizing and removing an instance affects only that instance's pla
   const base = structuredClone(DEFAULT_APP_CONFIG);
   let draft = addHABlockDraft(addHABlockDraft(base, "music"), "weather");
   assert.deepEqual(draft.haBlocks.map((block) => block.name), ["HA block 1", "HA block 2"]);
-  draft.layout = [{ elementId: "ha-block.music", startRow: 0, width: 3 }, { elementId: "ha-block.weather", startRow: 1, width: 3 }, { elementId: "water.remaining", startRow: 2 }];
+  draft.layout = [{ elementId: "ha-block.music", startRow: 0, width: 3 }, { elementId: "ha-block.weather", startRow: 1, width: 3 }, { elementId: "codex.status", startRow: 2 }];
   const saved = structuredClone(draft);
   draft = updateHABlockDraft(draft, { ...draft.haBlocks[0]!, width: 4, name: "Music" });
   assert.equal(draft.layout![0]!.width, 4);

@@ -1,14 +1,13 @@
 import { DEFAULT_HA_BLOCK_CONFIG, haBlockElementId, type HABlockInstance } from "../../src/plugins/haBlock/config.js";
 import type { AppConfig, ConfigPatch, ConfigSaveResponse, PublicAppConfig } from "../../src/contracts/config.js";
 
-export type ConfigSection = "codex" | "water" | "haBlock" | "barRows" | "ha" | "pause" | "board" | "layout";
+export type ConfigSection = "codex" | "haBlock" | "barRows" | "ha" | "pause" | "board" | "layout";
 
 export interface SaveReconciliation<TConfig> { draftConfig: TConfig; newerEdits: boolean }
 
 export function configPatchForSection(section: ConfigSection, config: AppConfig): ConfigPatch {
   switch (section) {
     case "codex": return { codex: structuredClone(config.codex) };
-    case "water": return { water: structuredClone(config.water) };
     case "ha": return { ha: { url: config.ha.url, ...(config.ha.token !== undefined ? { token: config.ha.token } : {}) } };
     case "pause": return {
       ha: { pause: config.ha.pause },
@@ -32,7 +31,6 @@ export function configPatchForSection(section: ConfigSection, config: AppConfig)
 function sectionValue(section: ConfigSection, config: AppConfig | PublicAppConfig): unknown {
   switch (section) {
     case "codex": return config.codex;
-    case "water": return config.water;
     case "ha": return { url: config.ha.url, token: "token" in config.ha ? config.ha.token : undefined };
     case "pause": return { pause: config.ha.pause, pauseOverlay: config.pauseOverlay, pauseMessageTransition: config.transport.pauseMessageTransition };
     case "board": {
@@ -53,7 +51,6 @@ export function replaceSection(draft: AppConfig, saved: PublicAppConfig, section
   const next = structuredClone(draft);
   switch (section) {
     case "codex": next.codex = structuredClone(saved.codex); break;
-    case "water": next.water = structuredClone(saved.water); break;
     case "ha": next.ha = { url: saved.ha.url, pause: next.ha.pause }; break;
     case "pause":
       next.ha.pause = structuredClone(saved.ha.pause);

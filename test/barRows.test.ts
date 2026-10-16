@@ -75,7 +75,7 @@ test("additive config and preview contracts preserve legacy defaults and stable 
   const { barRows: _rows, ...legacy } = DEFAULT_APP_CONFIG;
   assert.deepEqual(validateConfig(legacy).barRows, []);
   const next = validateConfig({ ...legacy, barRows: [config], layout: [{ elementId: "bar-row.hot-water", startRow: 1, width: 15 }] });
-  assert.deepEqual(next.water, DEFAULT_APP_CONFIG.water);
+  assert.deepEqual(next.haBlocks, DEFAULT_APP_CONFIG.haBlocks);
   assert.equal(ConfigPatchSchema.safeParse({ barRows: [] }).success, true);
   assert.equal(PreviewRequestSchema.safeParse({ layout: next.layout, barRows: [config] }).success, true);
   const f = fixture(); f.payload();

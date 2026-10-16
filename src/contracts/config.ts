@@ -1,3 +1,4 @@
+import { IgnoredPluginSchema } from "./unsupportedPlugins.js";
 import { BarRowsSchema } from "../plugins/barRows/config.js";
 import { UpdateLimitsSchema } from "./updateLimits.js";
 import { HABlocksSchema, HABlockConfigPatchSchema } from "../plugins/haBlock/config.js";
@@ -5,7 +6,6 @@ import { z } from "zod";
 import { HttpUrlSchema } from "./url.js";
 import { HAConfigSchema, type HAConfig } from "./homeAssistant.js";
 import { CodexConfigPatchSchema, CodexConfigSchema, type CodexConfig } from "../plugins/codexQuota/config.js";
-import { WaterHeaterConfigPatchSchema, WaterHeaterConfigSchema, type WaterHeaterConfig } from "../plugins/waterHeater/config.js";
 import { PauseOverlayCanvasSchema, PauseOverlaySchema, type PauseOverlay, type PauseOverlayCanvas, type PauseOverlayCell } from "./pauseOverlay.js";
 export { PauseOverlayCanvasSchema, PauseOverlaySchema } from "./pauseOverlay.js";
 
@@ -43,7 +43,6 @@ export const TransportSchema = z.object({
 const appConfigShape = {
   board: z.enum(["auto", "note", "flagship"]),
   ha: HAConfigSchema,
-  water: WaterHeaterConfigSchema,
   haBlocks: HABlocksSchema.default([]),
   barRows: BarRowsSchema.default([]),
   transport: TransportSchema,
@@ -69,9 +68,9 @@ export const PublicAppConfigSchema = z.object({
 export type PublicAppConfig = z.infer<typeof PublicAppConfigSchema>;
 
 export const ConfigPatchSchema = z.object({
+  removeUnsupportedPlugins: z.boolean().optional(),
   board: z.enum(["auto", "note", "flagship"]).optional(),
   ha: HAConfigSchema.partial().nullable().optional(),
-  water: WaterHeaterConfigPatchSchema.nullable().optional(),
   haBlocks: HABlocksSchema.optional(),
   barRows: BarRowsSchema.optional(),
   haBlock: HABlockConfigPatchSchema.optional(),
@@ -91,6 +90,7 @@ export type ConfigPatch = z.infer<typeof ConfigPatchSchema>;
 export const PublicConfigSchema = z.object({
   config: PublicAppConfigSchema,
   legacyEnvironmentVariables: z.array(z.string()),
+  ignoredPlugins: z.array(IgnoredPluginSchema),
   hasSecrets: z.object({
     token: z.boolean(),
     localApiKey: z.boolean(),
@@ -109,7 +109,5 @@ export const ConfigSaveResponseSchema = PublicConfigSchema.extend({
 });
 
 export type ConfigSaveResponse = z.infer<typeof ConfigSaveResponseSchema>;
-export type { HAConfig, WaterHeaterConfig };
-export type { CodexConfig };
-
-export { CodexConfigPatchSchema, CodexConfigSchema, WaterHeaterConfigSchema };
+export type { HAConfig, CodexConfig };
+export { CodexConfigPatchSchema, CodexConfigSchema };
