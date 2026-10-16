@@ -68,7 +68,7 @@ function RowEditor({ value, status, entities, loading, error, layoutError, onCha
       {fields.map((field) => status?.inputs[field].error ? <p key={field} className="inline-message error" role="status">{labels[field]}: {status.inputs[field].error}</p> : null)}
       <p className="screen-footnote">Unknown, unavailable, restored, disconnected, or invalid inputs use the fallback immediately. All required fields must be valid together; no previous values are retained.</p>
     </SettingsGroup>
-    <SettingsGroup title="Fixed text areas" description="Label and display text align left. The remaining placement columns form the bar; changing text never changes its width.">
+    <SettingsGroup title="Fixed text areas" description="The label aligns left and display text aligns right. The remaining placement columns form the bar; changing text never changes its width.">
       <div className="settings-grid">{(["labelWidth", "textWidth"] as const).map((field) => <label key={field} className="config-field"><span>{field === "labelWidth" ? "Label width (cells)" : "Display text width (cells)"}</span><input type="number" min={0} max={21} step={1} value={value[field]} onChange={(event) => onChange({ ...value, [field]: Number(event.target.value) })} /></label>)}
         <label className="config-field"><span>Bar character</span><select value={value.barCharacter} onChange={(event) => onChange({ ...value, barCharacter: Number(event.target.value) })}>{VESTABOARD_CHARACTER_CATALOG.map((character) => <option key={character.code} value={character.code}>{character.code} · {character.name}</option>)}</select></label>
       </div>

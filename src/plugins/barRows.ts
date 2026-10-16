@@ -58,7 +58,11 @@ function evaluate(config: BarRowConfig, entities: readonly HAEntity[], connected
   return { status: { enabled: config.enabled, state: !config.enabled ? "inactive" : error ? "unavailable" : "active", inputs, stale: false, ...(error ? { error } : {}) },
     ...(config.enabled && !error ? { values: values as Values } : {}) };
 }
-function padded(text: string, width: number): number[] { const cells = encodeDisplayText(text); return [...cells, ...Array(Math.max(0, width - cells.length)).fill(BLANK)]; }
+function padded(text: string, width: number, alignment: "left" | "right" = "left"): number[] {
+  const cells = encodeDisplayText(text);
+  const padding = Array(Math.max(0, width - cells.length)).fill(BLANK);
+  return alignment === "right" ? [...padding, ...cells] : [...cells, ...padding];
+}
 function makeElement(config: BarRowConfig, result: ReturnType<typeof evaluate>): Element {
   return { id: barRowElementId(config.id), label: config.name, ...barRowGeometry(config), state: result.status.state,
     render(width) {
@@ -67,7 +71,7 @@ function makeElement(config: BarRowConfig, result: ReturnType<typeof evaluate>):
       if (!result.values || barWidth < 1) return [config.unavailableDisplay === "na" && width >= 3 ? padded("N/A", width) : Array(width).fill(BLANK)];
       const { displayName, current, max, displayText } = result.values;
       const fill = Math.ceil(Math.max(0, Math.min(1, current / max)) * barWidth);
-      return [[...padded(displayName, config.labelWidth), ...Array(fill).fill(config.barCharacter), ...Array(barWidth - fill).fill(BLANK), ...padded(displayText, config.textWidth)]];
+      return [[...padded(displayName, config.labelWidth), ...Array(fill).fill(config.barCharacter), ...Array(barWidth - fill).fill(BLANK), ...padded(displayText, config.textWidth, "right")]];
     } };
 }
 export function barRowEntityIds(configs: readonly BarRowConfig[]): string[] {

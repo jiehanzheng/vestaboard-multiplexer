@@ -787,7 +787,7 @@ test("bar row draft preview, atomic save and removal preserve generic rows/music
     const before = store.get(); const statusBefore = app.actions.status().barRows; const sendsBefore = sends;
     const layout = [{ ...oldLayout[0]!, elementId: "bar-row.hot-water" }, ...oldLayout.slice(1)];
     const preview = app.actions.preview({ board: "note", layout, barRows: [row] });
-    assert.deepEqual(preview.characters[1], [...encode("HW"), ...Array(7).fill(67), ...Array(3).fill(0), ...encode("3S ")]);
+    assert.deepEqual(preview.characters[1], [...encode("HW"), ...Array(7).fill(67), ...Array(3).fill(0), ...encode(" 3S")]);
     assert.equal(preview.barRows!['hot-water']!.state, "active");
     assert.deepEqual(preview.selection!.map((entry) => entry.reason), ["shown", "shown"]);
     assert.deepEqual(store.get(), before); assert.deepEqual(app.actions.status().barRows, statusBefore); assert.equal(sends, sendsBefore);
