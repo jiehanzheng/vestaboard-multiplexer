@@ -1,6 +1,8 @@
+import { BarRowConfigSchema } from "../src/plugins/barRows/config.js";
+import { encode } from "../src/vestaboardCharacters.js";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigStore, type PublicConfig } from "../src/config.js";
@@ -44,10 +46,11 @@ test("HA event storms cache all entities but compose only relevant changes once"
   const initial = [music([68, 10, 26]), other,
     ...Array.from({ length: 3_000 }, (_, i) => ({ entity_id: `sensor.noise_${i}`, state: "0", attributes: {} }))];
   await store.save({ board: "note", updateIntervalMinutes: 3, codex: { enabled: false }, ha: { url: "http://ha.test" },
-    water: { enabled: true, remaining: { constant: 40 }, capacity: { constant: 80 },
-      temperature: { entityId: "sensor.music", attribute: "temperature" }, target: { constant: 140 } },
+    barRows: [BarRowConfigSchema.parse({ id: "level", name: "Level", enabled: true, source: { kind: "fields",
+      displayName: { kind: "constant", value: "LV" }, current: { kind: "entity", entityId: "sensor.music", attribute: "temperature" },
+      max: { kind: "constant", value: 140 }, displayText: { kind: "constant", value: "OK" } } })],
     haBlocks: [binding("music", "sensor.music"), binding("other", "sensor.other")],
-    layout: [{ elementId: "water.temperature-text", startRow: 0, width: 8 },
+    layout: [{ elementId: "bar-row.level", startRow: 0, width: 8 },
       { elementId: "ha-block.other", startRow: 1, startColumn: 12, width: 3 },
       { elementId: "ha-block.music", startRow: 2, startColumn: 12, width: 3 }] });
   let client!: HomeAssistantClient;
@@ -89,10 +92,10 @@ test("HA event storms cache all entities but compose only relevant changes once"
     assert.equal(compositions, 0); assert.equal(broadcasts, 0); assert.equal(reads, 0); assert.equal(exports, 0);
     const sentBeforePause = sent.length;
     event("sensor.music", music([69, 10, 26], 121)); await Promise.resolve();
-    assert.equal(compositions, 1, "water and two block instances share one composition");
+    assert.equal(compositions, 1, "bar row and two block instances share one composition");
     assert.equal(broadcasts, 1);
-    assert.equal(reads, 3, "water callback, block callback and coherent composition only");
-    assert.equal(references, 5, "one water source plus two block and two composition references");
+    assert.equal(reads, 3, "bar row callback, block callback and coherent composition only");
+    assert.equal(references, 5, "one bar row source plus two block and two composition references");
     assert.deepEqual(app.actions.status().desired!.characters![2]!.slice(12), [69, 10, 26]);
     assert.equal(sent.length, sentBeforePause, "physical delivery remains interval-limited");
     const inspection = await app.actions.homeAssistant!("entities", {}) as { entities: HAEntity[] };
@@ -104,7 +107,7 @@ test("HA event storms cache all entities but compose only relevant changes once"
     await app.actions.save({ haBlocks: [binding("music", "sensor.new"), binding("other", "sensor.other")] });
     compositions = 0; broadcasts = 0;
     event("sensor.music", music([68, 10, 26], 121)); await Promise.resolve();
-    assert.equal(compositions, 0, "old block binding is removed; unchanged water data also stays quiet");
+    assert.equal(compositions, 0, "old block binding is removed; unchanged bar row data also stays quiet");
     event("sensor.new", { entity_id: "sensor.new", state: "ready", attributes: { characters: [68, 25, 13] } }); await Promise.resolve();
     assert.deepEqual(app.actions.status().desired!.characters![2]!.slice(12), [68, 25, 13]);
     assert.deepEqual(app.actions.status().desired!.characters![1]!.slice(12), [1, 2, 3]);
@@ -295,7 +298,7 @@ test("server and one-shot share frames, and status/preview cannot collect or del
     const layout = server.actions.elements().defaultLayout!;
     for (let i = 0; i < 3; i++) {
       server.actions.status(); server.actions.elements();
-      const { selection, ...previewFrame } = server.actions.preview({ layout, board: "note" });
+      const { selection, barRows: _barRows, ...previewFrame } = server.actions.preview({ layout, board: "note" });
       assert.deepEqual(previewFrame, desired);
       assert.ok(selection?.every((entry) => entry.reason === "shown"));
     }
@@ -547,65 +550,6 @@ test("web application can configure an unconnected board and preview without sen
   }
 });
 
-test("application exposes constants-only water elements without a Home Assistant connection", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "vbmux-water-"));
-  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", VESTABOARD_BOARD: "note" });
-  const app = await createApplication(store, directory, true);
-  try {
-    await app.start();
-    const before = store.get();
-    await app.actions.save({
-      ...before,
-      water: {
-        ...before.water,
-        enabled: true,
-        remaining: { constant: 40 },
-        capacity: { constant: 80 },
-        temperature: { constant: 120 },
-        target: { constant: 140 }
-      }
-    });
-    const savedWater = store.get().water;
-
-    const elementIds = (app.actions.elements() as { elements: Array<{ id: string }> }).elements.map((element) => element.id);
-    assert.deepEqual(elementIds.filter((id) => id.startsWith("water.")), [
-      "water.remaining",
-      "water.temperature-text",
-      "water.emv-position"
-    ]);
-    const elementMetadata = (app.actions.elements() as { elements: Array<{ id: string; minWidth?: number }> }).elements;
-    assert.equal(elementMetadata.find((element) => element.id === "codex.window-1")?.minWidth, 6);
-    assert.equal(elementMetadata.find((element) => element.id === "water.remaining")?.minWidth, 6);
-    assert.equal(elementMetadata.find((element) => element.id === "water.temperature-text")?.minWidth, 8);
-    assert.equal(elementMetadata.find((element) => element.id === "water.emv-position")?.minWidth, 6);
-    const waterStatus = (app.actions.status() as { water: { enabled: boolean; inputs: Record<string, { value?: number }> } }).water;
-    assert.equal(waterStatus.enabled, true);
-    assert.equal(waterStatus.inputs.temperature?.value, 120);
-
-    const draftWater = {
-      ...before.water,
-      enabled: true,
-      remaining: { constant: 40 },
-      capacity: { constant: 80 },
-      temperature: { constant: 125 },
-      target: { constant: 135 }
-    };
-    const preview = (app.actions.preview({
-      layout: [
-        { elementId: "water.remaining", startRow: 0 },
-        { elementId: "water.temperature-text", startRow: 1 }
-      ],
-      board: "note",
-      water: draftWater
-    }) as { characters: number[][] }).characters;
-    assert.ok(preview.some((row) => row.some((value) => value !== 0)));
-    assert.deepEqual(store.get().water, savedWater);
-  } finally {
-    await app.stop();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test("same Home Assistant connection applies a newly selected cached pause entity", { timeout: 5_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-ha-binding-"));
   const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", VESTABOARD_BOARD: "note" });
@@ -689,9 +633,8 @@ test("HA block shares the live connection and validates size plus placement atom
   const directory = await mkdtemp(join(tmpdir(), "vbmux-ha-block-"));
   const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture", VESTABOARD_BOARD: "note" });
   const initialLayout = [
-    { elementId: "water.remaining", startRow: 1 },
+    { elementId: "codex.window-2", startRow: 2, width: 8 },
     { elementId: "codex.window-1", startRow: 0 },
-    { elementId: "water.temperature-text", startRow: 2, startColumn: 0, width: 8 },
     { elementId: "ha-block.characters", startRow: 2, startColumn: 12, width: 3 }
   ];
   await store.save({ ha: { url: "http://ha.local" }, layout: initialLayout,
@@ -779,8 +722,8 @@ test("priority drafts and saved output distinguish inactive, paused and unavaila
   const music = { id: "music", name: "Music", enabled: true, entityId: "sensor.music", attribute: "characters", width: 15, height: 1,
     activityAttribute: "active", textAttribute: "media_title", textEntityId: "media_player.music", unavailableDisplay: "blank" as const, staleAfterMinutes: 15 };
   await store.save({ board: "note", updateIntervalMinutes: 3, ha: { url: "http://ha.test" },
-    water: { enabled: true, remaining: { constant: 40 }, capacity: { constant: 80 }, temperature: { constant: 120 }, target: { constant: 140 } },
-    haBlocks: [music], layout: [{ elementId: "water.temperature-text", startRow: 2, width: 8, priority: 0 },
+    barRows: [BarRowConfigSchema.parse({ id: "level", name: "Level", enabled: true, source: { kind: "fields", displayName: { kind: "constant", value: "LV" }, current: { kind: "constant", value: 40 }, max: { kind: "constant", value: 80 }, displayText: { kind: "constant", value: "OK" } } })],
+    haBlocks: [music], layout: [{ elementId: "bar-row.level", startRow: 2, width: 8, priority: 0 },
       { elementId: "ha-block.music", startRow: 2, width: 15, priority: 100 }] });
   let client!: FakeHomeAssistantClient; let clients = 0;
   const app = await createApplication(store, directory, true, { createHomeAssistantClient: (options) => { clients++; client = new FakeHomeAssistantClient(options); return asHomeAssistantClient(client); } });
@@ -797,7 +740,7 @@ test("priority drafts and saved output distinguish inactive, paused and unavaila
     assert.equal(app.actions.status().desired!.characters![2]![2], 69);
     assert.match(app.actions.status().desired!.text, /JZ BEYONCE/);
     await emit(false, 0, "TV");
-    assert.match(app.actions.status().desired!.text, /120\/140F/);
+    assert.match(app.actions.status().desired!.text, /LV/);
     assert.deepEqual(app.actions.status().layoutSelection!.map((entry) => entry.reason), ["shown", "inactive"]);
     const before = store.get();
     const draft = { ...music, textEntityId: "media_player.draft", activityAttribute: undefined };
@@ -814,11 +757,113 @@ test("priority drafts and saved output distinguish inactive, paused and unavaila
     assert.equal(app.actions.status().layoutSelection![1]!.state, "unavailable");
     assert.equal(app.actions.status().layoutSelection![1]!.reason, "suppressed");
     assert.equal(app.actions.status().layoutSelection![1]!.blockedBy, 0);
-    assert.match(app.actions.status().desired!.text, /120\/140F/);
-    assert.match(app.actions.preview({ layout: before.layout!, board: "note" }).text, /120\/140F/);
+    assert.match(app.actions.status().desired!.text, /LV.*OK/);
+    assert.match(app.actions.preview({ layout: before.layout!, board: "note" }).text, /LV.*OK/);
     client.setConnected(true); await emit(true, 69, "Recovered");
     assert.match(app.actions.status().desired!.text, /DRAFT TIT/);
     assert.deepEqual(app.actions.status().layoutSelection!.map((entry) => entry.reason), ["suppressed", "shown"]);
     assert.equal(clients, 1); assert.equal(store.get().updateLimits[0]!.windowMinutes, 3);
   } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("bar row draft preview, atomic save and removal preserve generic rows/music priority", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-bar-row-application-"));
+  const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture" });
+  const row = BarRowConfigSchema.parse({ id: "hot-water", name: "Hot water", enabled: true,
+    source: { kind: "entity", entityId: "sensor.hot_water_display" } });
+  const music = { id: "music", name: "Music", enabled: true, entityId: "sensor.music", attribute: "characters", width: 15, height: 1,
+    activityAttribute: "active", unavailableDisplay: "blank" as const, staleAfterMinutes: 15 };
+  const oldLayout = [{ elementId: "bar-row.level", startRow: 1, width: 15 },
+    { elementId: "ha-block.music", startRow: 2, width: 15, priority: 100 }];
+  await store.save({ board: "note", ha: { url: "http://ha.test" }, codex: { enabled: false },
+    barRows: [BarRowConfigSchema.parse({ id: "level", name: "Level", enabled: true, source: { kind: "fields", displayName: { kind: "constant", value: "LV" }, current: { kind: "constant", value: 40 }, max: { kind: "constant", value: 80 }, displayText: { kind: "constant", value: "OK" } } })],
+    haBlocks: [music], layout: oldLayout });
+  let client!: FakeHomeAssistantClient; let sends = 0;
+  const app = await createApplication(store, directory, true, {
+    createVestaboardClient: () => ({ send: async () => { sends++; } }),
+    createHomeAssistantClient: (options) => { client = new FakeHomeAssistantClient(options); return asHomeAssistantClient(client); }
+  });
+  const emit = (active: boolean, display_text = "3S") => client.emit([
+    { entity_id: "sensor.hot_water_display", state: "ready", attributes: { display_name: "HW", current: 61.5, max: 100, display_text } },
+    { entity_id: "sensor.music", state: "ready", attributes: { active, characters: [10, 26, 69] } }
+  ]);
+  try {
+    await app.start(); await emit(true);
+    const before = store.get(); const statusBefore = app.actions.status().barRows; const sendsBefore = sends;
+    const layout = [{ ...oldLayout[0]!, elementId: "bar-row.hot-water" }, ...oldLayout.slice(1)];
+    const preview = app.actions.preview({ board: "note", layout, barRows: [row] });
+    assert.deepEqual(preview.characters[1], [...encode("HW"), ...Array(7).fill(67), ...Array(3).fill(0), ...encode(" 3S")]);
+    assert.equal(preview.barRows!['hot-water']!.state, "active");
+    assert.deepEqual(preview.selection!.map((entry) => entry.reason), ["shown", "shown"]);
+    assert.deepEqual(store.get(), before); assert.deepEqual(app.actions.status().barRows, statusBefore); assert.equal(sends, sendsBefore);
+    const invalidPreview = app.actions.preview({ layout, barRows: [{ ...row, textWidth: 1 }] });
+    assert.match(invalidPreview.barRows!['hot-water']!.inputs.displayText.error!, /reserved 1 cells/);
+    await assert.rejects(app.actions.save({ barRows: [row], layout: [{ ...layout[0]!, width: 5 }] }), /at least 6/);
+    assert.deepEqual(store.get(), before);
+    await app.actions.save({ barRows: [row], layout });
+    assert.deepEqual(app.actions.status().desired!.characters![1], preview.characters[1]);
+    assert.equal(app.actions.status().barRows!['hot-water']!.state, "active");
+    assert.deepEqual(store.get().haBlocks, before.haBlocks);
+    await emit(false); assert.equal(app.actions.status().layoutSelection!.at(-1)!.reason, "inactive");
+    await emit(false, "100S"); assert.equal(app.actions.status().barRows!['hot-water']!.state, "unavailable");
+    assert.deepEqual(app.actions.status().desired!.characters![1]!.slice(0, 3), encode("N/A"));
+    await assert.rejects(app.actions.save({ barRows: [] }), /unknown element/);
+    await app.actions.save({ barRows: [], layout: oldLayout.slice(1) });
+    assert.deepEqual(app.actions.status().barRows, {});
+    assert.equal(app.actions.elements().elements.some((element) => element.id === "bar-row.hot-water"), false);
+    assert.deepEqual(store.get().layout, oldLayout.slice(1));
+  } finally { await app.stop(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test("saved unsupported settings and orphan placements cannot block startup or supported composition", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-startup-"));
+  try {
+    const initial = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture" });
+    const row = BarRowConfigSchema.parse({ id: "level", name: "Level", enabled: true, source: { kind: "fields",
+      displayName: { kind: "constant", value: "LV" }, current: { kind: "constant", value: 1 },
+      max: { kind: "constant", value: 2 }, displayText: { kind: "constant", value: "OK" } } });
+    const music = { id: "music", name: "Music", enabled: true, entityId: "sensor.music", attribute: "characters",
+      width: 3, height: 1, unavailableDisplay: "blank", staleAfterMinutes: 15 };
+    const path = join(directory, "config.json");
+    const raw = { version: 1, ...initial.get(), board: "note", ha: { url: "http://ha.test" }, barRows: [row], haBlocks: [music],
+      water: { enabled: true, temperature: { constant: 120 } }, futurePlugin: { token: "private" }, layout: [
+        { elementId: "codex.window-1", startRow: 0 },
+        { elementId: "water.remaining", startRow: 1 },
+        { elementId: "bar-row.level", startRow: 1 },
+        { elementId: "water.temperature-bar", startRow: 2 },
+        { elementId: "future-panel.status", startRow: 2 },
+        { elementId: "ha-block.missing", startRow: 2 },
+        { elementId: "ha-block.music", startRow: 2, width: 3 }] };
+    await writeFile(path, JSON.stringify(raw));
+    const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture" });
+    assert.equal(store.getPublic().error, undefined);
+    assert.equal(await readFile(path, "utf8"), JSON.stringify(raw), "loading must never rewrite retired records");
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: ["water", "futurePlugin"], elementIds: ["water.remaining", "water.temperature-bar", "future-panel.status", "ha-block.missing"] });
+    assert.equal(JSON.stringify(store.getPublic()).includes("private"), false, "warnings expose names, never ignored payloads");
+    let client!: FakeHomeAssistantClient;
+    const app = await createApplication(store, directory, true, {
+      createHomeAssistantClient: (options) => { client = new FakeHomeAssistantClient(options); return asHomeAssistantClient(client); }
+    });
+    try {
+      await app.start();
+      await client.emit([{ entity_id: "sensor.music", state: "ready", attributes: { characters: [68, 25, 13] } }]);
+      assert.ok(app.actions.elements().elements.some((element) => element.id === "codex.window-1"));
+      assert.equal(app.actions.elements().elements.some((element) => element.id.startsWith("water.")), false);
+      assert.deepEqual(app.actions.status().desired!.characters![2]!.slice(0, 3), [68, 25, 13]);
+      assert.deepEqual(app.actions.status().desired!.characters![1]!.slice(0, 2), encode("LV"));
+      await app.actions.save({ codex: { enabled: false } });
+      assert.deepEqual((app.actions.config() as PublicConfig).ignoredConfiguration.keys, ["water", "futurePlugin"]);
+      await assert.rejects(app.actions.save({ layout: [{ elementId: "ha-block.missing", startRow: 0 }] }), /unknown element/);
+      await app.actions.save({ removeUnsupportedPlugins: true });
+      assert.deepEqual((app.actions.config() as PublicConfig).ignoredConfiguration, { keys: [], elementIds: [] });
+      const restarted = await ConfigStore.open(directory, {});
+      assert.deepEqual(restarted.getPublic().ignoredConfiguration, { keys: [], elementIds: [] });
+      assert.equal(restarted.get().layout!.some((entry) => entry.elementId.startsWith("water.")), false);
+      const persisted = JSON.parse(await readFile(path, "utf8"));
+      assert.equal("water" in persisted, false);
+      assert.equal("futurePlugin" in persisted, false);
+      assert.deepEqual(restarted.get().layout!.map((entry) => entry.elementId), ["codex.window-1", "bar-row.level", "ha-block.music"]);
+    } finally { await app.stop(); }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -1,4 +1,4 @@
-import type { AppConfig, LayoutEntry, PublicConfig, HAConfig, WaterHeaterConfig } from "../../src/contracts/config.js";
+import type { AppConfig, LayoutEntry, PublicConfig, HAConfig } from "../../src/contracts/config.js";
 import type {
   BoardMessage,
   ElementsResponse,
@@ -21,8 +21,7 @@ export type {
   LayoutEntry,
   LoginStatus,
   PreviewResponse,
-  RuntimeStatus,
-  WaterHeaterConfig
+  RuntimeStatus
 };
 
 export type ConfigResponse = PublicConfig;

@@ -1,9 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
+import { z } from "zod";
+import { supportedElementIds } from "./elementCatalog.js";
 import { intervalLimit } from "./contracts/updateLimits.js";
 import { mergeHABlocks, normalizeLegacyHABlocks } from "./plugins/haBlock/config.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { AppConfigSchema, type AppConfig, type ConfigPatch, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, type WaterHeaterConfig, PublicConfigSchema } from "./contracts/config.js";
-import { DEFAULT_WATER_HEATER_CONFIG, normalizeLegacyWaterHeaterConfig } from "./plugins/waterHeater/config.js";
+import { AppConfigSchema, ConfigPatchSchema, type AppConfig, type ConfigPatch, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, PublicConfigSchema } from "./contracts/config.js";
 import { applyCodexEnvironment, DEFAULT_CODEX_CONFIG } from "./plugins/codexQuota/config.js";
 import { DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS } from "./vestaboard.js";
 import { defaultPauseOverlay } from "./pauseOverlay.js";
@@ -47,8 +49,8 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     url: "",
     pause: null
   },
-  water: { ...DEFAULT_WATER_HEATER_CONFIG },
   haBlocks: [],
+  barRows: [],
   transport: {
     cloudUrl: "https://cloud.vestaboard.com/",
     localUrl: "http://vestaboard.local:7000/local-api/message",
@@ -65,7 +67,8 @@ export class ConfigStore {
     private readonly filePath: string,
     private readonly legacyEnvironmentVariables: string[],
     private saved: AppConfig | undefined,
-    private savedError: string | undefined
+    private savedError: string | undefined,
+    private retired: RetiredConfig = emptyRetired()
   ) {}
 
   static async open(
@@ -77,10 +80,13 @@ export class ConfigStore {
     let saved: AppConfig | undefined;
     let savedError: string | undefined;
     let missing = false;
+    let retired = emptyRetired();
     try {
       const raw = await readFile(filePath, "utf8");
       try {
-        saved = validateConfig(mergeConfig(DEFAULT_APP_CONFIG, parseSavedConfig(raw)));
+        const parsed = parseSavedConfig(raw);
+        retired = parsed.retired;
+        saved = validateConfig(mergeConfig(DEFAULT_APP_CONFIG, parsed.config));
       } catch (error) {
         savedError = errorMessage(error);
       }
@@ -103,7 +109,8 @@ export class ConfigStore {
       }
     }
 
-    return new ConfigStore(filePath, legacyEnvironmentVariables, saved, savedError);
+    if (hasRetired(retired)) console.warn("Ignored unsupported saved configuration keys or layout elements. Remove ignored configuration in Settings to clean the saved file.");
+    return new ConfigStore(filePath, legacyEnvironmentVariables, saved, savedError, retired);
   }
 
   /** Returns the persisted configuration, or defaults while an invalid file is repaired. */
@@ -125,6 +132,7 @@ export class ConfigStore {
     return {
       config,
       legacyEnvironmentVariables: [...this.legacyEnvironmentVariables],
+      ignoredConfiguration: { keys: [...new Set(this.retired.flatMap((record) => Object.keys(record.keys)))], elementIds: [...new Set(this.retired.flatMap((record) => record.placements.map(({ value }) => value.elementId)))] },
       hasSecrets,
       ...(this.savedError ? { error: this.savedError } : {})
     };
@@ -143,7 +151,10 @@ export class ConfigStore {
     const savedBase = this.saved ?? DEFAULT_APP_CONFIG;
     const candidate = mergeConfig(savedBase, input);
     const validated = validateConfig(candidate);
-    await persistConfig(this.filePath, validated);
+    const retired = input.removeUnsupportedPlugins ? emptyRetired() : this.retired;
+    const persisted = restoreRetired(validated, retired);
+    await persistConfig(this.filePath, persisted);
+    this.retired = captureRetired(persisted).retired;
     this.saved = validated;
     this.savedError = undefined;
     return this.get();
@@ -155,7 +166,7 @@ export class ConfigStore {
 
 }
 
-function parseSavedConfig(raw: string): Partial<AppConfig> {
+function parseSavedConfig(raw: string): { config: Partial<AppConfig>; retired: RetiredConfig } {
   let value: unknown;
   try { value = JSON.parse(raw); }
   catch {
@@ -169,12 +180,19 @@ function parseSavedConfig(raw: string): Partial<AppConfig> {
   if (record.version !== 1) {
     throw new Error("Config version must be 1.");
   }
-  const { version: _version, ...config } = record;
-  if (config.codex && typeof config.codex === "object" && !Array.isArray(config.codex)) {
-    const { demoPauseMinutes: _demoPauseMinutes, ...codex } = config.codex as Record<string, unknown>;
-    return normalizeLegacyHABlocks(normalizeLegacyWaterHeaterConfig({ ...config, codex })) as Partial<AppConfig>;
+  const { version: _version, ...savedConfig } = record;
+  const normalized = normalizeLegacyHABlocks(savedConfig) as Record<string, unknown>;
+  if (normalized.codex && typeof normalized.codex === "object" && !Array.isArray(normalized.codex)) {
+    const { demoPauseMinutes: _demoPauseMinutes, ...codex } = normalized.codex as Record<string, unknown>;
+    normalized.codex = codex;
   }
-  return normalizeLegacyHABlocks(normalizeLegacyWaterHeaterConfig(config)) as Partial<AppConfig>;
+  if (normalized.updateIntervalMinutes !== undefined) {
+    const legacy = ConfigPatchSchema.pick({ updateIntervalMinutes: true }).parse({ updateIntervalMinutes: normalized.updateIntervalMinutes });
+    if (normalized.updateLimits === undefined) normalized.updateLimits = intervalLimit(legacy.updateIntervalMinutes!);
+  }
+  delete normalized.updateIntervalMinutes;
+  const { config, retired } = captureRetired(normalized);
+  return { config: config as Partial<AppConfig>, retired };
 }
 
 function legacyConfig(env: ConfigEnvironment): AppConfig {
@@ -198,7 +216,7 @@ function positiveNumber(raw: string, name: string): number {
   return value;
 }
 
-async function persistConfig(filePath: string, config: AppConfig): Promise<void> {
+async function persistConfig(filePath: string, config: object): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify({ version: 1, ...config }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -217,7 +235,7 @@ function warnObsoleteEnvironmentVariables(env: ConfigEnvironment): void {
 
 function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
   const baseConfig = cloneConfig(base);
-  const { haBlock: legacyBlock, updateIntervalMinutes: legacyInterval, ...canonicalPatch } = patch;
+  const { haBlock: legacyBlock, updateIntervalMinutes: legacyInterval, removeUnsupportedPlugins: _cleanup, ...canonicalPatch } = patch;
   const haPatch = patch.ha;
   const transport = patch.transport ?? {};
   const codex: Partial<AppConfig["codex"]> = patch.codex ?? {};
@@ -230,17 +248,11 @@ function mergeConfig(base: AppConfig, patch: ConfigPatch): AppConfig {
           ...haPatch,
           ...(haPatch.token === undefined && baseConfig.ha.token !== undefined ? { token: baseConfig.ha.token } : {})
         };
-  const water = patch.water === undefined
-    ? baseConfig.water
-    : patch.water === null
-      ? null as unknown as WaterHeaterConfig
-      : { ...baseConfig.water, ...patch.water };
   return {
     ...baseConfig,
     ...canonicalPatch,
     updateLimits: patch.updateLimits === undefined ? (legacyInterval === undefined ? baseConfig.updateLimits : intervalLimit(legacyInterval)) : patch.updateLimits,
     ha,
-    water,
     haBlocks: mergeHABlocks(baseConfig.haBlocks, patch.haBlocks, legacyBlock),
     transport: {
       ...baseConfig.transport,
@@ -296,4 +308,48 @@ function errorMessage(error: unknown): string {
 
 function isMissingFile(error: unknown): boolean {
   return !!error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT";
+}
+
+interface RetiredRecord {
+  keys: Record<string, unknown>;
+  placements: { index: number; value: { elementId: string; [key: string]: unknown } }[];
+}
+type RetiredConfig = RetiredRecord[];
+const rawObjectSchema = z.custom<Record<string, unknown>>((value) => value !== null && typeof value === "object" && !Array.isArray(value), "Expected an object.");
+// Keep ignored JSON verbatim, including own keys that object schema parsers may discard.
+const rawPlacementSchema = z.custom<{ elementId: string; [key: string]: unknown }>((value) => rawObjectSchema.safeParse(value).success && Object.hasOwn(value as object, "elementId") && typeof (value as { elementId: unknown }).elementId === "string", "Expected a placement object with an elementId string.");
+const placementSchema = z.object({ index: z.number().int().nonnegative(), value: rawPlacementSchema }).strict();
+const LegacyArchiveSchema = z.object({ version: z.literal(1), records: z.array(z.object({ id: z.literal("water"), settingsPresent: z.boolean(), settings: z.unknown().optional(), placements: z.array(placementSchema) }).strict()) }).strict();
+const ArchiveSchema = z.object({ version: z.literal(2), records: z.array(z.object({ keys: rawObjectSchema, placements: z.array(placementSchema) }).strict()) }).strict();
+function emptyRetired(): RetiredConfig { return []; }
+function hasRetired(value: RetiredConfig): boolean { return value.some((record) => Object.keys(record.keys).length > 0 || record.placements.length > 0); }
+function captureRetired(record: Record<string, unknown>): { config: Record<string, unknown>; retired: RetiredConfig } {
+  const { retiredPlugins, ...raw } = record;
+  let archived: RetiredConfig = [];
+  if (retiredPlugins !== undefined) {
+    const version = retiredPlugins && typeof retiredPlugins === "object" && "version" in retiredPlugins ? retiredPlugins.version : undefined;
+    archived = version === 1 ? LegacyArchiveSchema.parse(retiredPlugins).records.map((entry) => ({ keys: entry.settingsPresent ? { water: entry.settings } : {}, placements: entry.placements })) : ArchiveSchema.parse(retiredPlugins).records;
+  }
+  const knownKeys = new Set(Object.keys(AppConfigSchema.shape));
+  const config = Object.fromEntries(Object.entries(raw).filter(([key]) => knownKeys.has(key)));
+  const unknownKeys = Object.fromEntries(Object.entries(raw).filter(([key]) => !knownKeys.has(key)));
+  // Validate supported instances before deciding whether a saved placement references one.
+  const supported = validateConfig(mergeConfig(DEFAULT_APP_CONFIG, { ...config, layout: null } as ConfigPatch));
+  const elementIds = supportedElementIds(supported);
+  const legacy: RetiredRecord = { keys: structuredClone(unknownKeys), placements: [] };
+  if (Array.isArray(config.layout)) config.layout = config.layout.filter((value, index) => {
+    if (value && typeof value === "object" && typeof value.elementId === "string" && !elementIds.has(value.elementId)) {
+      legacy.placements.push({ index, value: structuredClone(value) }); return false;
+    }
+    return true;
+  });
+  const candidates = [...archived, ...(hasRetired([legacy]) ? [legacy] : [])];
+  const retired = candidates.filter((candidate, index) => !candidates.slice(0, index).some((previous) => isDeepStrictEqual(previous, candidate)));
+  return { config, retired };
+}
+function restoreRetired(config: AppConfig, retired: RetiredConfig): Record<string, unknown> {
+  const result: Record<string, unknown> = structuredClone(config);
+  // Archive ignored data separately so supported layout:null keeps its default-layout meaning.
+  if (hasRetired(retired)) result.retiredPlugins = { version: 2, records: structuredClone(retired) };
+  return result;
 }

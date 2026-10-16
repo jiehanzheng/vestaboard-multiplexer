@@ -1,14 +1,13 @@
 import { DEFAULT_HA_BLOCK_CONFIG, haBlockElementId, type HABlockInstance } from "../../src/plugins/haBlock/config.js";
 import type { AppConfig, ConfigPatch, ConfigSaveResponse, PublicAppConfig } from "../../src/contracts/config.js";
 
-export type ConfigSection = "codex" | "water" | "haBlock" | "ha" | "pause" | "board" | "layout";
+export type ConfigSection = "codex" | "haBlock" | "barRows" | "ha" | "pause" | "board" | "layout";
 
 export interface SaveReconciliation<TConfig> { draftConfig: TConfig; newerEdits: boolean }
 
 export function configPatchForSection(section: ConfigSection, config: AppConfig): ConfigPatch {
   switch (section) {
     case "codex": return { codex: structuredClone(config.codex) };
-    case "water": return { water: structuredClone(config.water) };
     case "ha": return { ha: { url: config.ha.url, ...(config.ha.token !== undefined ? { token: config.ha.token } : {}) } };
     case "pause": return {
       ha: { pause: config.ha.pause },
@@ -23,23 +22,24 @@ export function configPatchForSection(section: ConfigSection, config: AppConfig)
       })(),
       updateLimits: structuredClone(config.updateLimits)
     };
+    case "barRows":
     case "haBlock":
-    case "layout": return { layout: config.layout === null ? null : structuredClone(config.layout), haBlocks: structuredClone(config.haBlocks) };
+    case "layout": return { layout: config.layout === null ? null : structuredClone(config.layout), haBlocks: structuredClone(config.haBlocks), barRows: structuredClone(config.barRows) };
   }
 }
 
 function sectionValue(section: ConfigSection, config: AppConfig | PublicAppConfig): unknown {
   switch (section) {
     case "codex": return config.codex;
-    case "water": return config.water;
     case "ha": return { url: config.ha.url, token: "token" in config.ha ? config.ha.token : undefined };
     case "pause": return { pause: config.ha.pause, pauseOverlay: config.pauseOverlay, pauseMessageTransition: config.transport.pauseMessageTransition };
     case "board": {
       const { pauseMessageTransition: _pauseMessageTransition, ...transport } = config.transport;
       return { board: config.board, transport, updateLimits: structuredClone(config.updateLimits) };
     }
+    case "barRows":
     case "haBlock":
-    case "layout": return { layout: config.layout, haBlocks: config.haBlocks };
+    case "layout": return { layout: config.layout, haBlocks: config.haBlocks, barRows: config.barRows };
   }
 }
 
@@ -51,7 +51,6 @@ export function replaceSection(draft: AppConfig, saved: PublicAppConfig, section
   const next = structuredClone(draft);
   switch (section) {
     case "codex": next.codex = structuredClone(saved.codex); break;
-    case "water": next.water = structuredClone(saved.water); break;
     case "ha": next.ha = { url: saved.ha.url, pause: next.ha.pause }; break;
     case "pause":
       next.ha.pause = structuredClone(saved.ha.pause);
@@ -66,10 +65,12 @@ export function replaceSection(draft: AppConfig, saved: PublicAppConfig, section
       } as AppConfig["transport"];
       next.updateLimits = structuredClone(saved.updateLimits);
       break;
+    case "barRows":
     case "haBlock":
     case "layout":
       next.layout = saved.layout === null ? null : structuredClone(saved.layout);
       next.haBlocks = structuredClone(saved.haBlocks);
+      next.barRows = structuredClone(saved.barRows);
       break;
   }
   return next;

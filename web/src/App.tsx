@@ -1,3 +1,4 @@
+import { BarRowsSchema, barRowElementId, barRowGeometry } from "../../src/plugins/barRows/config.js";
 import { AutomaticUpdateCapacity } from "./AutomaticUpdateLimits";
 import { ConfigToggle } from "./ConfigControls";
 import type { LayoutDecision } from "../../src/contracts/layout.js";
@@ -17,6 +18,7 @@ import {
 } from "./api";
 import { PluginsScreen, SettingsScreen, type PluginView } from "./ConnectionsScreen";
 import { LogsScreen } from "./LogsScreen";
+import { UnsupportedConfigurationWarning } from "./UnsupportedConfigurationWarning";
 import { LegacyEnvironmentWarning } from "./LegacyEnvironmentWarning";
 import { configPatchForSection, replaceSection, reconcileSectionSave, sectionIsDirty, type ConfigSection } from "./draftState";
 import type {
@@ -33,7 +35,6 @@ import type {
 } from "./types";
 import type { EntityCatalogState } from "./types";
 import type { LogsResponse } from "../../src/contracts/logs.js";
-import { waterElementIssue, type WaterHeaterStatus } from "../../src/plugins/waterHeater/status.js";
 import {
   cloneConfig,
   formatDate,
@@ -73,8 +74,8 @@ function routeFromHash(hash: string): RouteState {
   const [path, query] = value.split("?", 2);
   const source = new URLSearchParams(query ?? "").get("source") ?? undefined;
   if (path === "plugins/codex") return { view: "plugins", plugin: "codex", settingsSubview: "main" };
+  if (path === "plugins/barRows") return { view: "plugins", plugin: "barRows", settingsSubview: "main" };
   if (path === "plugins/haBlock") return { view: "plugins", plugin: "haBlock", settingsSubview: "main" };
-  if (path === "plugins/water") return { view: "plugins", plugin: "water", settingsSubview: "main" };
   if (path === "plugins") return { view: "plugins", settingsSubview: "main" };
   if (path === "settings/logs") return { view: "settings", settingsSubview: "logs", logsSource: source };
   if (path === "settings") return { view: "settings", settingsSubview: "main" };
@@ -120,6 +121,8 @@ export default function App(): ReactNode {
   const previewQueueRef = useRef<ReturnType<typeof createLatestPreviewQueue<PreviewResponse>> | undefined>(undefined);
   if (!previewQueueRef.current) previewQueueRef.current = createLatestPreviewQueue<PreviewResponse>();
   const [savingSection, setSavingSection] = useState<ConfigSection>();
+  const [cleanupSaving, setCleanupSaving] = useState(false);
+  const cleanupSavingRef = useRef(false);
   const savingSectionRef = useRef<ConfigSection | undefined>(undefined);
 
   useEffect(() => {
@@ -233,14 +236,17 @@ export default function App(): ReactNode {
     const saved = elementsResponse?.elements ?? [];
     if (!draftConfig) return saved;
     const byId = new Map(saved.map((element) => [element.id, element]));
-    return [...saved.filter((element) => !element.id.startsWith("ha-block.")), ...draftConfig.haBlocks.map((block) => ({
+    return [...saved.filter((element) => !element.id.startsWith("ha-block.") && !element.id.startsWith("bar-row.")), ...draftConfig.haBlocks.map((block) => ({
       id: haBlockElementId(block.id), label: block.name, ...haBlockGeometry(block), state: !block.enabled ? "inactive" as const : status?.haBlocks?.[block.id]?.state ?? byId.get(haBlockElementId(block.id))?.state, preview: byId.get(haBlockElementId(block.id))?.preview ?? []
+    })), ...draftConfig.barRows.map((row) => ({
+      id: barRowElementId(row.id), label: row.name, ...barRowGeometry(row), state: !row.enabled ? "inactive" as const : status?.barRows?.[row.id]?.state ?? byId.get(barRowElementId(row.id))?.state, preview: byId.get(barRowElementId(row.id))?.preview ?? []
     }))];
-  }, [elementsResponse, draftConfig, status?.haBlocks]);
+  }, [elementsResponse, draftConfig, status?.haBlocks, status?.barRows]);
   const defaultLayout = elementsResponse?.defaultLayouts?.[board] ?? elementsResponse?.defaultLayout ?? [];
   const draftLayout = draftConfig?.layout ?? defaultLayout;
   const blockValidation = draftConfig ? HABlocksSchema.safeParse(draftConfig.haBlocks) : undefined;
-  const layoutError = blockValidation && !blockValidation.success ? blockValidation.error.issues.map((issue) => issue.message).join(" ") : validateLayout(draftLayout, elements, board);
+  const rowValidation = draftConfig ? BarRowsSchema.safeParse(draftConfig.barRows) : undefined;
+  const layoutError = rowValidation && !rowValidation.success ? rowValidation.error.issues.map((issue) => issue.message).join(" ") : blockValidation && !blockValidation.success ? blockValidation.error.issues.map((issue) => issue.message).join(" ") : validateLayout(draftLayout, elements, board);
   useEffect(() => {
     if (draftLayout.length === 0) {
       if (selectedEntryIndex !== undefined) setSelectedEntryIndex(undefined);
@@ -255,7 +261,6 @@ export default function App(): ReactNode {
     return JSON.stringify(draftConfig) !== JSON.stringify(configResponse.config);
   }, [configResponse, draftConfig]);
   const layoutPreview = layoutError ? undefined : isDirty ? draftPreview : status?.desired;
-  const waterStatus = status?.water as WaterHeaterStatus | undefined;
 
   useEffect(() => {
     if (!isDirty) return;
@@ -280,9 +285,9 @@ export default function App(): ReactNode {
     const payload = {
       layout: draftLayout,
       board: boardPreference,
-      water: draftConfig?.water,
       codex: draftConfig?.codex,
-      haBlocks: draftConfig?.haBlocks
+      haBlocks: draftConfig?.haBlocks,
+      barRows: draftConfig?.barRows
     };
     const payloadKey = JSON.stringify(payload);
     const payloadChanged = previewPayloadKeyRef.current !== payloadKey;
@@ -295,7 +300,7 @@ export default function App(): ReactNode {
     // Keep status live for unsaved bindings, but background refreshes do not reopen the busy state.
     if (payloadChanged) setPreviewPending(true);
     previewQueueRef.current?.schedule({
-      task: () => requestPreview(payload.layout, payload.board, payload.water, payload.codex, payload.haBlocks),
+      task: () => requestPreview(payload.layout, payload.board, payload.codex, payload.haBlocks, payload.barRows),
       onSuccess: (nextPreview) => {
         if (previewPayloadRevisionRef.current !== payloadRevision) return;
         setDraftPreview(nextPreview);
@@ -339,11 +344,11 @@ export default function App(): ReactNode {
   }, [configResponse, draftConfig]);
 
   const saveSection = useCallback((section: ConfigSection): Promise<void> => {
-    if (savingSectionRef.current) return Promise.resolve();
+    if (savingSectionRef.current || cleanupSavingRef.current) return Promise.resolve();
     const submittedDraft = draftConfigRef.current;
     const run = async (): Promise<void> => {
       if (!submittedDraft || !configResponse) return;
-      if ((section === "layout" || section === "haBlock") && layoutError) {
+      if ((section === "layout" || section === "haBlock" || section === "barRows") && layoutError) {
         setNotice({ tone: "error", section, message: layoutError });
         return;
       }
@@ -360,7 +365,7 @@ export default function App(): ReactNode {
         setDraftConfig(reconciled.draftConfig);
         let elementsRefreshed = true;
         try { setElementsResponse(await getElements()); } catch { elementsRefreshed = false; }
-        const savedLabel = section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "layout and HA character blocks" : section === "ha" ? "Home Assistant" : section === "pause" ? "pause settings" : section === "water" ? "water heater" : section === "board" ? "board settings" : "Codex";
+        const savedLabel = section === "barRows" ? "bar and text rows and layout" : section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "layout and HA displays" : section === "ha" ? "Home Assistant" : section === "pause" ? "pause settings" : section === "board" ? "board settings" : "Codex";
         const delivery = saveDeliveryFeedback(response.delivery, status?.dryRun, savedLabel);
         const refreshSuffix = elementsRefreshed ? "" : " Board elements could not be refreshed yet.";
         const newerSuffix = reconciled.newerEdits ? " Newer edits remain unsaved." : "";
@@ -375,12 +380,30 @@ export default function App(): ReactNode {
     return run();
   }, [configResponse, layoutError, status]);
 
+  const removeUnsupportedPlugins = async (): Promise<void> => {
+    if (savingSectionRef.current || cleanupSavingRef.current) return;
+    cleanupSavingRef.current = true;
+    setCleanupSaving(true);
+    setNotice(undefined);
+    try {
+      const response = await saveConfig({ removeUnsupportedPlugins: true });
+      // Cleanup changes only ignored saved data; replacing drafts here would discard unrelated edits.
+      setConfigResponse(response);
+      setNotice({ tone: "success", message: "Removed ignored saved data and layout references. Unrelated drafts remain unsaved." });
+    } catch (error: unknown) {
+      setNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not remove ignored saved data." });
+    } finally {
+      cleanupSavingRef.current = false;
+      setCleanupSaving(false);
+    }
+  };
+
   const discardSection = useCallback((section: ConfigSection): void => {
     if (!configResponse || !draftConfig) return;
     const nextDraft = replaceSection(draftConfig, configResponse.config, section);
     draftConfigRef.current = nextDraft;
     setDraftConfig(nextDraft);
-    setNotice({ tone: "info", section, message: `${section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "Layout and HA character blocks" : section === "ha" ? "Home Assistant" : section === "pause" ? "Pause settings" : section === "water" ? "Water heater" : section === "board" ? "Board settings" : "Codex"} draft discarded.` });
+    setNotice({ tone: "info", section, message: `${section === "barRows" ? "bar and text rows and layout" : section === "haBlock" ? "HA character blocks and layout" : section === "layout" ? "Layout and HA displays" : section === "ha" ? "Home Assistant" : section === "pause" ? "Pause settings" : section === "board" ? "Board settings" : "Codex"} draft discarded.` });
   }, [configResponse, draftConfig]);
 
   const handlePause = useCallback(async () => {
@@ -423,6 +446,8 @@ export default function App(): ReactNode {
 
       <main className="page-shell">
         <LegacyEnvironmentWarning names={configResponse?.legacyEnvironmentVariables ?? []} />
+        <UnsupportedConfigurationWarning configuration={configResponse?.ignoredConfiguration ?? { keys: [], elementIds: [] }} saving={cleanupSaving} disabled={Boolean(savingSection) || cleanupSaving} onRemove={() => { void removeUnsupportedPlugins(); }} />
+        {notice && !notice.section ? <p className={`inline-message ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.message}</p> : null}
         {view === "board" ? (
           <BoardScreen
             board={board}
@@ -443,14 +468,12 @@ export default function App(): ReactNode {
             onApply={() => void saveSection("layout")}
             onDiscard={() => discardSection("layout")}
             saving={savingSection === "layout"}
-            savingAny={Boolean(savingSection)}
+            savingAny={Boolean(savingSection) || cleanupSaving}
             dirty={sectionDirty("layout")}
             selection={isDirty ? draftPreview?.selection : status?.layoutSelection}
-            blockSettingsDirty={Boolean(draftConfig && configResponse && JSON.stringify(draftConfig.haBlocks) !== JSON.stringify(configResponse.config.haBlocks))}
+            blockSettingsDirty={Boolean(draftConfig && configResponse && JSON.stringify([draftConfig.haBlocks, draftConfig.barRows]) !== JSON.stringify([configResponse.config.haBlocks, configResponse.config.barRows]))}
             layoutError={layoutError}
             notice={notice?.section === "layout" || notice?.section === "runtime" ? notice : undefined}
-            waterStatus={waterStatus}
-            onOpenWaterSettings={() => openPlugin("water")}
           />
         ) : view === "plugins" && draftConfig ? (
           <PluginsScreen
@@ -458,11 +481,12 @@ export default function App(): ReactNode {
             login={login}
             plugin={pluginView}
             onPluginChange={openPlugin}
-            status={status}
+            status={status && draftPreview?.barRows ? { ...status, barRows: draftPreview.barRows } : status}
             config={draftConfig}
             configResponse={configResponse}
             dirty={sectionDirty}
             saving={savingSection}
+            savingAny={Boolean(savingSection) || cleanupSaving}
             notice={notice}
             onSave={(section) => void saveSection(section)}
             onDiscard={discardSection}
@@ -487,6 +511,7 @@ export default function App(): ReactNode {
           configResponse={configResponse}
           dirty={sectionDirty}
             saving={savingSection}
+            savingAny={Boolean(savingSection) || cleanupSaving}
             notice={notice}
           onSave={(section) => void saveSection(section)}
           onDiscard={discardSection}
@@ -530,15 +555,13 @@ interface BoardScreenProps {
   selection?: LayoutDecision[];
   layoutError: string | undefined;
   notice: Notice;
-  waterStatus: WaterHeaterStatus | undefined;
-  onOpenWaterSettings: () => void;
 }
 
 function BoardScreen(props: BoardScreenProps): ReactNode {
   const {
     board, boardPreference, status, elements, draftLayout, selectedEntryIndex, setSelectedEntryIndex, setDraftLayout,
     previewMode, setPreviewMode, preview, layoutPreview, previewPending, previewError,
-    selection, onPause, onApply, onDiscard, saving, savingAny, dirty, blockSettingsDirty, layoutError, notice, waterStatus, onOpenWaterSettings
+    selection, onPause, onApply, onDiscard, saving, savingAny, dirty, blockSettingsDirty, layoutError, notice
   } = props;
   const selectedEntry = selectedEntryIndex !== undefined ? draftLayout[selectedEntryIndex] : undefined;
   const selectedElement = selectedEntry ? elementById(elements, selectedEntry.elementId) : undefined;
@@ -623,7 +646,6 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
               {selectedElement && selectedEntry ? <span className="height-label">{selectedElement.height} row{selectedElement.height === 1 ? "" : "s"}</span> : null}
             </div>
             <MiniPreview element={selectedElement} entry={selectedEntry} board={board} message={selection?.[selectedEntryIndex ?? -1]?.reason === "shown" ? layoutPreview : undefined} />
-            {selectedElement && selectedElement.id.startsWith("water.") ? <WaterLayoutNotice issue={waterStatus ? waterElementIssue(selectedElement.id, waterStatus) : "Water heater status is not available. Open Water Heater settings to check it."} onOpenSettings={onOpenWaterSettings} /> : null}
           </div>
           <div className="editor-actions">
             <button className="button secondary" onClick={onDiscard} disabled={!dirty || savingAny}>Discard layout</button>
@@ -644,10 +666,6 @@ function OutputStatusItem({ label, detail, warning = false }: { label: string; d
   return <div className={warning ? "output-status-item warning" : "output-status-item"}><strong>{label}</strong><span>{detail}</span></div>;
 }
 
-function WaterLayoutNotice({ issue, onOpenSettings }: { issue: string | undefined; onOpenSettings: () => void }): ReactNode {
-  if (!issue) return null;
-  return <p className="inline-message info">Saved Water Heater settings: {issue} <button className="text-link" type="button" onClick={onOpenSettings}>Open Water Heater settings</button></p>;
-}
 
 interface BoardPreviewProps {
   board: BoardKind;
@@ -851,7 +869,6 @@ function RuntimeMessages({ status }: { status: RuntimeStatus | undefined }): Rea
     status.persistenceError,
     status.codex.stale ? "Codex readings are stale." : status.codex.error,
     status.homeAssistant?.error ? `Home Assistant: ${status.homeAssistant.error}` : undefined,
-    status.water?.error ? `Water heater: ${status.water.error}` : undefined
   ].filter((value): value is string => Boolean(value));
   return messages.length > 0 ? (
     <div className="runtime-messages" role="alert">

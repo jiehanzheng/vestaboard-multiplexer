@@ -1,4 +1,5 @@
 import { AutomaticUpdateLimitsSettings, limitsError } from "./AutomaticUpdateLimits";
+import { BarRowsSettings } from "./plugins/barRows/BarRowsSettings";
 import { HABlocksSettings } from "./plugins/haBlock/HABlocksSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import type { ReactNode } from "react";
@@ -12,14 +13,12 @@ import { PluginRow } from "./PluginRow";
 import { SectionSaveActions } from "./SectionSaveActions";
 import { CodexLoginSettings } from "./plugins/codexQuota/CodexLoginSettings";
 import { CodexSettings } from "./plugins/codexQuota/CodexSettings";
-import { WaterHeaterSettings } from "./plugins/waterHeater/WaterHeaterSettings";
 import { AnimationSettings, PauseAnimationSettings } from "./AnimationSettings";
-import type { WaterHeaterStatus } from "../../src/plugins/waterHeater/status.js";
 import type { ConfigSection } from "./draftState";
 import type { ConfigResponse, LoginStatus, RuntimeStatus } from "./types";
 import type { Notice } from "./notice";
 
-export type PluginView = "codex" | "water" | "haBlock";
+export type PluginView = "codex" | "haBlock" | "barRows";
 
 interface SharedProps {
   layoutError?: string;
@@ -28,6 +27,7 @@ interface SharedProps {
   configResponse: ConfigResponse | undefined;
   dirty: (section: ConfigSection) => boolean;
   saving: ConfigSection | undefined;
+  savingAny: boolean;
   notice: Notice;
   onSave: (section: ConfigSection) => void;
   onDiscard: (section: ConfigSection) => void;
@@ -47,12 +47,12 @@ export function PluginsScreen({ login, plugin, onPluginChange, ...props }: Share
     <div className="page-heading"><div><h1>Plugins</h1><p>Choose a plugin to manage its behavior and display settings.</p></div></div>
     <section className="plugin-list" aria-label="Plugins">
       <PluginRow title="Codex" purpose="Quota account, pacing, polling, and auto-start behavior." status={props.status?.codex.error || login.error ? "Needs attention" : login.account ? `Connected · ${login.account}` : login.pending ? "Sign-in pending" : "Account not checked"} dirty={props.dirty("codex")} onOpen={() => onPluginChange("codex")} />
-      <PluginRow title="Water heater" purpose="Readings, units, entity selection, and display settings." status={props.status?.water?.error ? "Needs attention" : props.config.water.enabled ? "Enabled" : "Disabled"} dirty={props.dirty("water")} onOpen={() => onPluginChange("water")} />
       <PluginRow title="HA character blocks" purpose="Independent Home Assistant sources, sizes, and displays." status={Object.values(props.status?.haBlocks ?? {}).some((block) => block.error) ? "Needs attention" : `${props.config.haBlocks.length} blocks`} dirty={props.dirty("haBlock")} onOpen={() => onPluginChange("haBlock")} />
+      <PluginRow title="Bar and text rows" purpose="Home Assistant values with a fixed bar and text area." status={Object.values(props.status?.barRows ?? {}).some((row) => row.error) ? "Needs attention" : `${props.config.barRows.length} rows`} dirty={props.dirty("barRows")} onOpen={() => onPluginChange("barRows")} />
     </section>
   </>;
   const saving = props.saving === plugin;
-  const savingAny = Boolean(props.saving);
+  const savingAny = props.savingAny;
   const paneNotice = props.notice?.section === plugin ? props.notice : undefined;
   if (plugin === "codex") return <PluginDetail title="Codex" onBack={() => onPluginChange(undefined)} dirty={props.dirty("codex")} saving={saving} saveDisabled={savingAny && !saving} onSave={() => props.onSave("codex")} onDiscard={() => props.onDiscard("codex")} notice={paneNotice}>
     {props.status?.codex.stale ? <p className="inline-message error" role="status">Codex readings are stale. Quota elements display N/A until collection recovers.</p> : null}
@@ -61,21 +61,24 @@ export function PluginsScreen({ login, plugin, onPluginChange, ...props }: Share
     <button className="text-link" type="button" onClick={() => props.onOpenLogs("codex")}>View Codex logs</button>
   </PluginDetail>;
   const savedHaUrl = props.configResponse?.config.ha.url.trim() ?? "";
+  if (plugin === "barRows") return <PluginDetail title="Bar and text rows and layout" onBack={() => onPluginChange(undefined)} dirty={props.dirty("barRows")} saving={saving} saveDisabled={(savingAny && !saving) || Boolean(props.layoutError)} onSave={() => props.onSave("barRows")} onDiscard={() => props.onDiscard("barRows")} notice={paneNotice}>
+    <section className="connection-section" aria-label="Bar and text row settings">
+      <BarRowsSettings layoutError={props.layoutError} config={props.config} status={props.status?.barRows} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onChange={props.onConfigChange} />
+      <HACatalogMessage savedHaUrl={savedHaUrl} haDirty={props.dirty("ha")} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onRefresh={props.onRefreshEntities} onOpenSettings={props.onOpenSettings} />
+    </section>
+  </PluginDetail>;
   if (plugin === "haBlock") return <PluginDetail title="HA character blocks and layout" onBack={() => onPluginChange(undefined)} dirty={props.dirty("haBlock")} saving={saving} saveDisabled={(savingAny && !saving) || Boolean(props.layoutError)} onSave={() => props.onSave("haBlock")} onDiscard={() => props.onDiscard("haBlock")} notice={paneNotice}>
     <section className="connection-section" aria-label="HA character block settings">
       <HABlocksSettings layoutError={props.layoutError} config={props.config} status={props.dirty("haBlock") ? undefined : props.status?.haBlocks} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onChange={props.onConfigChange} />
-      <WaterCatalogMessage savedHaUrl={savedHaUrl} haDirty={props.dirty("ha")} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onRefresh={props.onRefreshEntities} onOpenSettings={props.onOpenSettings} />
+      <HACatalogMessage savedHaUrl={savedHaUrl} haDirty={props.dirty("ha")} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onRefresh={props.onRefreshEntities} onOpenSettings={props.onOpenSettings} />
     </section>
     <button className="text-link" type="button" onClick={() => props.onOpenLogs("ha-block")}>View HA character block logs</button>
   </PluginDetail>;
-  return <PluginDetail title="Water heater" onBack={() => onPluginChange(undefined)} dirty={props.dirty("water")} saving={saving} saveDisabled={savingAny && !saving} onSave={() => props.onSave("water")} onDiscard={() => props.onDiscard("water")} notice={paneNotice}>
-    <section className="connection-section" aria-label="Water heater settings"><WaterHeaterSettings board={props.status?.board ?? "note"} value={props.config.water} status={props.status?.water as WaterHeaterStatus | undefined} saved={!props.dirty("water")} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onChange={(water) => props.onConfigChange({ ...props.config, water })} /><WaterCatalogMessage savedHaUrl={savedHaUrl} haDirty={props.dirty("ha")} entities={props.entities} loading={props.entitiesLoading} error={props.entitiesError} onRefresh={props.onRefreshEntities} onOpenSettings={props.onOpenSettings} /></section>
-    <button className="text-link" type="button" onClick={() => props.onOpenLogs("water")}>View Water Heater logs</button>
-  </PluginDetail>;
+  return null;
 }
 
 export function SettingsScreen(props: SharedProps): ReactNode {
-  const savingAny = Boolean(props.saving);
+  const savingAny = props.savingAny;
   return (
     <>
       <div className="page-heading"><div><h1>Settings</h1><p>Manage board output and shared services. Each section saves independently.</p><button className="text-link" type="button" onClick={() => props.onOpenLogs()}>View live logs</button></div></div>
@@ -148,11 +151,11 @@ function EntityCatalog({ savedHaUrl, dirty, entities, loading, error, onRefresh 
           ? "Add and save a Home Assistant URL above to load entities."
           : entities.length === 0
             ? "No entities were returned. Check the saved connection and refresh."
-            : `${entities.length} saved entities available to Water Heater and Pause automation.`;
+            : `${entities.length} saved entities available to HA displays and Pause automation.`;
   return <section className="settings-panel entity-catalog-actions" aria-label="Entity catalog"><div><strong>Saved entity catalog</strong><p className="screen-footnote">{message}</p></div><button className="button secondary" type="button" onClick={onRefresh} disabled={dirty || !savedHaUrl || loading}>{loading ? "Loading…" : error ? "Retry entities" : "Refresh entities"}</button>{error ? <p className="inline-message error" role="alert">{error}</p> : null}</section>;
 }
 
-function WaterCatalogMessage({ savedHaUrl, haDirty, entities, loading, error, onRefresh, onOpenSettings }: { savedHaUrl: string; haDirty: boolean; entities: readonly HAEntity[]; loading: boolean; error?: string; onRefresh: () => void; onOpenSettings: () => void }): ReactNode {
+function HACatalogMessage({ savedHaUrl, haDirty, entities, loading, error, onRefresh, onOpenSettings }: { savedHaUrl: string; haDirty: boolean; entities: readonly HAEntity[]; loading: boolean; error?: string; onRefresh: () => void; onOpenSettings: () => void }): ReactNode {
   if (haDirty) return <p className="screen-footnote">Save Home Assistant in <button className="text-link" type="button" onClick={onOpenSettings}>Settings</button> before selecting entity readings. Constants remain available while the connection draft is unsaved.</p>;
   if (loading) return <p className="screen-footnote" role="status">Loading entities from the saved Home Assistant connection…</p>;
   if (error) return <p className="inline-message error" role="alert">Could not load saved entities: {error} <button className="text-link" type="button" onClick={onRefresh}>Retry</button></p>;

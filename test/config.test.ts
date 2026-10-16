@@ -7,24 +7,11 @@ import test from "node:test";
 import { ConfigStore, DEFAULT_APP_CONFIG, type AppConfig } from "../src/config.js";
 import { ConfigPatchSchema } from "../src/contracts/config.js";
 
-test("loads Home Assistant and disabled water defaults", async () => {
+test("loads Home Assistant without retired water defaults", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
   const store = await ConfigStore.open(dataDir, {});
   assert.deepEqual(store.get().ha, { url: "", pause: null });
-  assert.deepEqual(store.get().water, {
-    remaining: null,
-    capacity: null,
-    temperature: null,
-    target: null,
-    emvPosition: null,
-    heating: null,
-    heatingCharacter: 62,
-    barCharacter: 67,
-    remainingLabel: "HW",
-    emvLabel: "MV",
-    unit: "F",
-    enabled: false
-  });
+  assert.equal("water" in store.get(), false);
   assert.equal(store.getPublic().hasSecrets.haToken, false);
   assert.equal(store.get().transport.pauseMessageTransition, undefined);
 });
@@ -41,47 +28,12 @@ test("persists and clears the optional local pause animation", async () => {
   } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
-test("validates Home Assistant URL, pause mapping, and numeric water sources", async () => {
+test("validates Home Assistant URL, pause mapping", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
   const store = await ConfigStore.open(dataDir, {});
   await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: { ...DEFAULT_APP_CONFIG.ha, url: "https://user:pass@ha.local" } }), /embedded credentials/i);
   await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: { ...DEFAULT_APP_CONFIG.ha, pause: { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "on" } } }), /differ|distinct/i);
   await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, ha: null as never }), /ha is required|expected object/i);
-  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, water: { ...DEFAULT_APP_CONFIG.water, capacity: { constant: 0 } } }), /water\.capacity.*positive/i);
-  await assert.rejects(store.save({ ...DEFAULT_APP_CONFIG, water: { ...DEFAULT_APP_CONFIG.water, temperature: { entityId: "" } } }), /water\.temperature.*entity/i);
-});
-
-test("validates water character settings and defaults them when omitted", async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-characters-"));
-  try {
-    const store = await ConfigStore.open(dataDir, {});
-    const saved = await store.save({ ...DEFAULT_APP_CONFIG, water: { ...DEFAULT_APP_CONFIG.water, heatingCharacter: 1, barCharacter: 63 } });
-    assert.equal(saved.water.heatingCharacter, 1);
-    assert.equal(saved.water.barCharacter, 63);
-    await assert.rejects(store.save({ ...store.get(), water: { ...store.get().water, heatingCharacter: 43 } }), /heatingCharacter.*valid/i);
-    await assert.rejects(store.save({ ...store.get(), water: { ...store.get().water, barCharacter: 71 } }), /barCharacter.*valid/i);
-  } finally { await rm(dataDir, { recursive: true, force: true }); }
-});
-
-test("partial water patches retain an existing EMV binding", async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-emv-"));
-  try {
-    const store = await ConfigStore.open(dataDir, {});
-    await store.save({
-      ...DEFAULT_APP_CONFIG,
-      water: { ...DEFAULT_APP_CONFIG.water, enabled: true, emvPosition: { entityId: "sensor.emv" }, heatingCharacter: 1, barCharacter: 63 }
-    });
-    const patch = ConfigPatchSchema.parse({ water: { enabled: true } });
-    assert.equal("emvPosition" in (patch.water ?? {}), false);
-    assert.equal("heatingCharacter" in (patch.water ?? {}), false);
-    assert.equal("barCharacter" in (patch.water ?? {}), false);
-    const candidate = store.preview(patch);
-    assert.deepEqual(candidate.water.emvPosition, { entityId: "sensor.emv" });
-    await store.save(patch);
-    assert.deepEqual(store.get().water.emvPosition, { entityId: "sensor.emv" });
-    assert.equal(store.get().water.heatingCharacter, 1);
-    assert.equal(store.get().water.barCharacter, 63);
-  } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
 test("preserves and redacts an omitted Home Assistant token", async () => {
@@ -93,35 +45,6 @@ test("preserves and redacts an omitted Home Assistant token", async () => {
   assert.equal(second.getPublic().hasSecrets.haToken, true);
   await second.save({ ...second.get(), ha: { ...second.get().ha, token: undefined } });
   assert.equal(second.get().ha.token, "ha-secret");
-});
-
-test("drops legacy water baseline and temperature bar placements while loading", async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-"));
-  await mkdir(dataDir, { recursive: true });
-  await writeFile(join(dataDir, "config.json"), JSON.stringify({
-    version: 1,
-    ...DEFAULT_APP_CONFIG,
-    water: { ...DEFAULT_APP_CONFIG.water, baseline: 50 },
-    layout: [
-      { elementId: "water.temperature-bar", startRow: 0 },
-      { elementId: "water.temperature-text", startRow: 1 }
-    ]
-  }));
-  const store = await ConfigStore.open(dataDir, {});
-  assert.equal("baseline" in store.get().water, false);
-  assert.deepEqual(store.get().layout, [{ elementId: "water.temperature-text", startRow: 1 }]);
-});
-
-test("migrates older water configs to the default character choices", async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), "vbmux-config-water-characters-"));
-  try {
-    const { heatingCharacter: _heatingCharacter, barCharacter: _barCharacter, ...oldWater } = DEFAULT_APP_CONFIG.water;
-    await mkdir(dataDir, { recursive: true });
-    await writeFile(join(dataDir, "config.json"), JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water: oldWater }));
-    const store = await ConfigStore.open(dataDir, {});
-    assert.equal(store.get().water.heatingCharacter, 62);
-    assert.equal(store.get().water.barCharacter, 67);
-  } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
 test("keeps malformed saved layouts invalid and leaves the file untouched", async () => {
@@ -297,4 +220,195 @@ test("rejects invalid time zones before writing", async () => {
     store.save({ ...DEFAULT_APP_CONFIG, codex: { ...DEFAULT_APP_CONFIG.codex, timeZone: "Not/AZone" } }),
     /time zone/i
   );
+});
+
+test("retired water settings and placements are private, preserved without read rewrites, and explicitly removable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-water-"));
+  try {
+    const path = join(directory, "config.json");
+    const water = { token: "private-retired-token", arbitrary: [null, 42] };
+    const placements = [{ elementId: "water.temperature-bar", nonsense: true }, { elementId: "water.remaining", startRow: "invalid" }];
+    const supported = { elementId: "codex.window-1", startRow: 0 };
+    const raw = JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water, layout: [placements[0], supported, placements[1]] });
+    await writeFile(path, raw);
+    let store = await ConfigStore.open(directory, {});
+    assert.equal(store.repairError, undefined); assert.equal(await readFile(path, "utf8"), raw);
+    assert.deepEqual(store.get().layout, [supported]); assert.equal("water" in store.get(), false);
+    const warning = { keys: ["water"], elementIds: ["water.temperature-bar", "water.remaining"] };
+    assert.deepEqual(store.getPublic().ignoredConfiguration, warning);
+    assert.equal(JSON.stringify(store.getPublic()).includes("private-retired-token"), false);
+    await store.save({ board: "note" });
+    let persisted = JSON.parse(await readFile(path, "utf8"));
+    assert.equal("water" in persisted, false); assert.deepEqual(persisted.retiredPlugins.records[0].keys.water, water); assert.deepEqual(persisted.layout, [supported]);
+    assert.deepEqual(persisted.retiredPlugins.records[0].placements.map((entry: { value: unknown }) => entry.value), placements);
+    store = await ConfigStore.open(directory, {}); assert.deepEqual(store.getPublic().ignoredConfiguration, warning);
+    const replacement = { elementId: "codex.window-2", startRow: 1 };
+    await store.save({ layout: [replacement] });
+    persisted = JSON.parse(await readFile(path, "utf8")); assert.deepEqual(persisted.layout, [replacement]);
+    await store.save({ board: "flagship" });
+    persisted = JSON.parse(await readFile(path, "utf8")); assert.deepEqual(persisted.layout, [replacement]);
+    store = await ConfigStore.open(directory, {});
+    await store.save({ removeUnsupportedPlugins: true });
+    persisted = JSON.parse(await readFile(path, "utf8")); assert.equal("water" in persisted, false);
+    assert.deepEqual(persisted.layout, [replacement]); assert.equal("removeUnsupportedPlugins" in persisted, false); assert.equal("retiredPlugins" in persisted, false);
+    store = await ConfigStore.open(directory, {}); assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: [] });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("retirement recognition does not weaken strict supported validation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-strict-"));
+  try {
+    for (const extra of [{ ha: { ...DEFAULT_APP_CONFIG.ha, extra: true } }, { layout: [{ elementId: "codex.window-1", startRow: "bad" }] }, { barRows: "invalid" }]) {
+      const raw = JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water: null, ...extra });
+      await writeFile(join(directory, "config.json"), raw);
+      const store = await ConfigStore.open(directory, {}); assert.ok(store.repairError);
+      assert.equal(await readFile(join(directory, "config.json"), "utf8"), raw);
+    }
+    assert.equal(ConfigPatchSchema.safeParse({ water: {} }).success, false);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("failed cleanup persistence retains the retirement warning and original payload", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-failure-"));
+  try {
+    const path = join(directory, "config.json");
+    await writeFile(path, JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water: { original: true } }));
+    const store = await ConfigStore.open(directory, {});
+    await store.save({ board: "note" });
+    assert.ok(JSON.parse(await readFile(path, "utf8")).retiredPlugins);
+    await rm(path); await mkdir(path);
+    await assert.rejects(store.save({ removeUnsupportedPlugins: true }));
+    assert.equal(store.getPublic().ignoredConfiguration.keys.length, 1);
+    await rm(path, { recursive: true }); await store.save({ board: "note" });
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")).retiredPlugins.records[0].keys.water, { original: true });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("retirement warnings distinguish settings-only and placements-only saved files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-metadata-"));
+  try {
+    const path = join(directory, "config.json");
+    await writeFile(path, JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water: null }));
+    let store = await ConfigStore.open(directory, {});
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: ["water"], elementIds: [] });
+    await writeFile(path, JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, layout: [{ elementId: "water.custom", startRow: null }, { elementId: "water.custom", startRow: 2 }] }));
+    store = await ConfigStore.open(directory, {});
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: ["water.custom"] });
+    await store.save({ removeUnsupportedPlugins: false });
+    assert.equal(JSON.parse(await readFile(path, "utf8")).retiredPlugins.records[0].placements.length, 2);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("private archive preserves null and exact supported layouts across restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-null-"));
+  try {
+    const path = join(directory, "config.json");
+    await writeFile(path, JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water: { private: true }, layout: [{ elementId: "water.remaining", invalid: true }] }));
+    let store = await ConfigStore.open(directory, {});
+    await store.save({ layout: null });
+    store = await ConfigStore.open(directory, {});
+    assert.equal(store.get().layout, null); assert.equal(JSON.parse(await readFile(path, "utf8")).layout, null);
+    assert.equal(store.getPublic().ignoredConfiguration.keys.length, 1);
+    const layout = [{ elementId: "codex.window-1", startRow: 2, priority: 10 }];
+    await store.save({ layout }); store = await ConfigStore.open(directory, {});
+    assert.deepEqual(store.get().layout, layout);
+    await store.save({ removeUnsupportedPlugins: true }); store = await ConfigStore.open(directory, {});
+    assert.deepEqual(store.get().layout, layout); assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: [] });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("coexisting historical and archive records deduplicate exact records and preserve distinct records", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-coexist-"));
+  try {
+    const path = join(directory, "config.json");
+    const placement = { elementId: "water.remaining", startRow: 1 };
+    const record = { id: "water", settingsPresent: true, settings: { original: 1 }, placements: [{ index: 0, value: placement }] };
+    await writeFile(path, JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water: { original: 1 }, layout: [placement], retiredPlugins: { version: 1, records: [record, record] } }));
+    let store = await ConfigStore.open(directory, {}); assert.equal(store.repairError, undefined);
+    await store.save({ board: "note" });
+    assert.equal(JSON.parse(await readFile(path, "utf8")).retiredPlugins.records.length, 1);
+    const raw = JSON.parse(await readFile(path, "utf8")); raw.water = { original: 2 }; raw.layout = [placement];
+    await writeFile(path, JSON.stringify(raw)); store = await ConfigStore.open(directory, {});
+    await store.save({ board: "flagship" });
+    assert.equal(JSON.parse(await readFile(path, "utf8")).retiredPlugins.records.length, 2);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("private archive envelopes remain strict while archived obsolete payloads are unconstrained", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-envelope-"));
+  try {
+    for (const retiredPlugins of [{ version: 3, records: [] }, { version: 1, records: [{ id: "unknown", settingsPresent: true, placements: [] }] },
+      { version: 1, records: [{ id: "water", settingsPresent: "yes", placements: [] }] },
+      { version: 2, records: [{ keys: {}, placements: [{ index: -1, value: { elementId: "other.element" } }] }] }]) {
+      await writeFile(join(directory, "config.json"), JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, retiredPlugins }));
+      const store = await ConfigStore.open(directory, {}); assert.ok(store.repairError);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("arbitrary unknown saved keys and missing layout instances are ignored, archived and cleaned", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-unknown-saved-"));
+  try {
+    const path = join(directory, "config.json");
+    const disabledBlock = { id: "known", name: "Known disabled", enabled: false, entityId: "", attribute: "characters", width: 3, height: 1, unavailableDisplay: "na", staleAfterMinutes: 15 };
+    const supported = { elementId: "ha-block.known", startRow: 0, width: 3 };
+    const ignored = [{ elementId: "ha-block.missing", bad: true }, { elementId: "future.widget", startRow: "bad" }, { elementId: "bar-row.removed", startRow: 1 }];
+    const raw = JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, futurePlugin: { secret: "private-future" }, "strange-key": null, haBlocks: [disabledBlock], layout: [supported, ...ignored] });
+    await writeFile(path, raw);
+    let store = await ConfigStore.open(directory, {});
+    assert.equal(store.repairError, undefined); assert.equal(await readFile(path, "utf8"), raw);
+    assert.deepEqual(store.get().layout, [supported]);
+    const warning = { keys: ["futurePlugin", "strange-key"], elementIds: ignored.map((entry) => entry.elementId) };
+    assert.deepEqual(store.getPublic().ignoredConfiguration, warning);
+    assert.equal(JSON.stringify(store.getPublic()).includes("private-future"), false);
+    await store.save({ board: "note" }); store = await ConfigStore.open(directory, {});
+    assert.deepEqual(store.getPublic().ignoredConfiguration, warning);
+    const disk = JSON.parse(await readFile(path, "utf8")); assert.equal(disk.retiredPlugins.version, 2);
+    assert.deepEqual(disk.retiredPlugins.records[0].keys.futurePlugin, { secret: "private-future" });
+    await store.save({ removeUnsupportedPlugins: true }); store = await ConfigStore.open(directory, {});
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: [] }); assert.deepEqual(store.get().layout, [supported]);
+    assert.equal(ConfigPatchSchema.safeParse({ futurePlugin: {} }).success, false);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("recognized legacy saved keys normalize before unknown-key classification", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-legacy-known-"));
+  try {
+    const { haBlocks: _blocks, updateLimits: _limits, ...old } = DEFAULT_APP_CONFIG;
+    await writeFile(join(directory, "config.json"), JSON.stringify({ version: 1, ...old, updateIntervalMinutes: 7,
+      haBlock: { enabled: false, entityId: "", attribute: "characters", width: 3, height: 1, unavailableDisplay: "na", staleAfterMinutes: 15 },
+      layout: [{ elementId: "ha-block.characters", startRow: 0, width: 3 }] }));
+    const store = await ConfigStore.open(directory, {}); assert.equal(store.repairError, undefined);
+    assert.equal(store.get().haBlocks[0]!.id, "characters"); assert.equal(store.get().updateLimits[0]!.windowMinutes, 7);
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: [] });
+    await writeFile(join(directory, "config.json"), JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, updateIntervalMinutes: "invalid" }));
+    const malformed = await ConfigStore.open(directory, {});
+    assert.match(malformed.repairError!, /updateIntervalMinutes/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("ignored own prototype-like JSON keys and placement fields survive archive round trips verbatim", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-ignored-prototype-keys-"));
+  try {
+    const path = join(directory, "config.json");
+    const unknownKeys = JSON.parse('{"__proto__":{"secret":"kept"},"constructor":42}');
+    const placement = JSON.parse('{"elementId":"future.widget","__proto__":{"private":"placement"},"constructor":{"kept":true}}');
+    await writeFile(path, JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, ...unknownKeys, layout: [placement] }));
+    let store = await ConfigStore.open(directory, {});
+    assert.equal(store.repairError, undefined);
+    assert.deepEqual(store.getPublic().ignoredConfiguration.keys, ["__proto__", "constructor"]);
+    for (let round = 0; round < 2; round++) {
+      await store.save({ board: "note" });
+      const disk = JSON.parse(await readFile(path, "utf8"));
+      assert.deepEqual(disk.retiredPlugins.records[0].keys, unknownKeys);
+      assert.deepEqual(disk.retiredPlugins.records[0].placements[0].value, placement);
+      assert.equal(Object.getPrototypeOf(disk.retiredPlugins.records[0].keys), Object.prototype);
+      assert.equal(Object.hasOwn(disk.retiredPlugins.records[0].keys, "__proto__"), true);
+      store = await ConfigStore.open(directory, {});
+      assert.equal(store.repairError, undefined);
+      assert.deepEqual(store.getPublic().ignoredConfiguration.keys, ["__proto__", "constructor"]);
+    }
+    assert.equal(({} as { secret?: unknown }).secret, undefined);
+    assert.equal(({} as { private?: unknown }).private, undefined);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
