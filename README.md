@@ -2,7 +2,7 @@
 
 vbmux is a small service and web interface for arranging Home Assistant and Codex content on a [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT) (referral link). It supports Note (3 × 15) and Flagship (6 × 22), with a live board preview and configurable update limits.
 
-![Codex quota, a Home Assistant bar row, and custom temperature characters on Vestaboard Note](docs/images/board-hero.png)
+<img src="docs/images/board-hero.png" alt="Codex quota, a Home Assistant bar row, and custom temperature characters on Vestaboard Note" width="640">
 
 ## Features
 
@@ -45,9 +45,9 @@ Then configure content under **Plugins**, arrange it on **Board**, and choose **
 
 | Screenshot | Description |
 | --- | --- |
-| ![Board preview and layout editor](docs/images/web-board.jpg) | Preview your board and arrange its content. |
-| ![Bar and text row editor](docs/images/web-row-editor.jpg) | Configure generic rows with fixed label and text areas. |
-| ![Home Assistant connection settings](docs/images/web-settings.jpg) | Connect Home Assistant from the web interface. |
+| <img src="docs/images/web-board.jpg" alt="Board preview and layout editor" width="420"> | Preview your board and arrange its content. |
+| <img src="docs/images/web-row-editor.jpg" alt="Bar and text row editor" width="420"> | Configure generic rows with fixed label and text areas. |
+| <img src="docs/images/web-settings.jpg" alt="Home Assistant connection settings" width="420"> | Connect Home Assistant from the web interface. |
 
 ## Home Assistant
 
@@ -63,7 +63,7 @@ These examples use synthetic data rendered by the current plugins and captured f
 
 Show up to two quota windows with remaining percentages, reset times, and optional pacing colors that compare quota remaining with time remaining. Configure window labels and device sign-in under **Plugins → Codex**; optional auto-start can start a reset window when a watched quota is full.
 
-![Codex weekly and five-hour quota bars with reset times on Vestaboard Note](docs/images/plugin-codex.png)
+<img src="docs/images/plugin-codex.png" alt="Codex weekly and five-hour quota bars with reset times on Vestaboard Note" width="640">
 
 The bottom row shows the weekly reset date and time, then a heart separator and the five-hour reset time: `10/20-1200♥1500` means October 20 at 12:00 and 15:00, respectively, in the configured time zone.
 
@@ -71,7 +71,7 @@ The bottom row shows the weekly reset date and time, then a heart separator and 
 
 Combine a label, colored bar, and right-aligned text in fixed-width areas. Bind all values to attributes of one Home Assistant entity, or choose constants and entity states or attributes separately for each field. Home Assistant owns calculations such as remaining showers; vbmux renders the supplied values. Each row has its own color, widths, placement, and unavailable fallback.
 
-![Home Assistant hot-water, battery, and solar bar rows on Vestaboard Note](docs/images/plugin-bar-rows.png)
+<img src="docs/images/plugin-bar-rows.png" alt="Home Assistant hot-water, battery, and solar bar rows on Vestaboard Note" width="640">
 
 To reproduce these rows, expose the following entity states and attributes in HA (example entity data, not `configuration.yaml`):
 
@@ -88,7 +88,7 @@ Create three rows using **One entity with attributes** and select the correspond
 
 Let Home Assistant supply a flat array of Vestaboard character codes in an attribute of an entity whose state is `ready`. Use independent rectangular blocks for custom symbols, temperature displays, air quality, or status messages. Optionally append text from the same or another entity, or use a boolean activity attribute to yield space when inactive. Configure block size, placement, priority, and blank or `N/A` fallback in **Plugins → HA character blocks**.
 
-![Home Assistant character blocks showing temperature, air quality, and garage status on Vestaboard Note](docs/images/plugin-ha-characters.png)
+<img src="docs/images/plugin-ha-characters.png" alt="Home Assistant character blocks showing temperature, air quality, and garage status on Vestaboard Note" width="640">
 
 Here HA supplies the temperature characters and heart, an `AIR` label with a green tile and appended `GOOD` text, and a garage status message. These are example HA inputs, not built-in temperature or air-quality calculations.
 
