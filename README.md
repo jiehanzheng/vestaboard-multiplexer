@@ -94,6 +94,17 @@ Combine a label, colored bar, and right-aligned text in fixed-width areas. Bind 
 
 ![Home Assistant hot-water, battery, and solar bar rows on Vestaboard Note](docs/images/plugin-bar-rows.png)
 
+To reproduce these rows, expose the following entity states and attributes in HA (example entity data, not `configuration.yaml`):
+
+| Entity | State | `display_name` | `current` | `max` | `display_text` | Bar character |
+| --- | --- | --- | --- | --- | --- | --- |
+| `sensor.water_display` | `ready` | `HW` | 61.5 | 100 | `3S` | 67 (blue) |
+| `sensor.battery_display` | `ready` | `BT` | 80 | 100 | `80%` | 66 (green) |
+| `sensor.solar_display` | `ready` | `PV` | 42 | 100 | `4KW` | 65 (yellow) |
+
+Create three rows using **One entity with attributes** and select the corresponding entity. Map **Display name**, **Current value**, **Maximum value**, and **Display text** to `display_name`, `current`, `max`, and `display_text`. Use label width **2**, text width **3**, placement width **15**, and the bar character above; place the rows top to bottom. The remaining ten cells form the bar: these values fill seven, eight, and five cells, respectively.
+
+
 ### HA character blocks
 
 Let Home Assistant supply a flat array of Vestaboard character codes in an attribute of an entity whose state is `ready`. Use independent rectangular blocks for custom symbols, temperature displays, air quality, or status messages. Optionally append text from the same or another entity, or use a boolean activity attribute to yield space when inactive. Configure block size, placement, priority, and blank or `N/A` fallback in **Plugins → HA character blocks**.
@@ -101,3 +112,13 @@ Let Home Assistant supply a flat array of Vestaboard character codes in an attri
 ![Home Assistant character blocks showing temperature, air quality, and garage status on Vestaboard Note](docs/images/plugin-ha-characters.png)
 
 Here HA supplies the temperature characters and heart, an `AIR` label with a green tile and appended `GOOD` text, and a garage status message. These are example HA inputs, not built-in temperature or air-quality calculations.
+
+Expose these HA entities with state `ready` and the listed attributes:
+
+| Entity | `characters` attribute | `display_text` attribute | Rendered content |
+| --- | --- | --- | --- |
+| `sensor.temperature_display` | `[27, 28, 36, 62, 27, 28, 31, 6]` | — | `120♥125F` |
+| `sensor.air_display` | `[1, 9, 18, 66]` | `GOOD` | `AIR` + green tile + `GOOD` |
+| `sensor.garage_display` | `[7, 1, 18, 1, 7, 5, 0, 3, 12, 15, 19, 5, 4]` | — | `GARAGE CLOSED` |
+
+Create one block per entity, set **Character attribute** to `characters`, and use width **15** and height **1**. For the air block, set **Append text attribute** to `display_text` with the same entity as its text source; leave it empty for the other blocks. Leave **Activity attribute** empty and place the blocks top to bottom. Unused cells are padded with blanks. Code `62` is the heart, `66` is green, and `0` is a blank.
