@@ -39,7 +39,10 @@ export function selectLayout(elements: readonly LayoutElement[], layout: readonl
   }
   const decisions: LayoutDecision[] = layout.map((entry, index) => ({ index, elementId: entry.elementId, state: byId.get(entry.elementId)!.state ?? "active", reason: "inactive" }));
   const selected: number[] = [];
-  const order = layout.map((_, index) => index).sort((a, b) => (layout[b]!.priority ?? 0) - (layout[a]!.priority ?? 0) || a - b);
+  // Outage fallbacks must not hide healthy alternatives, but remain visible in otherwise unused space.
+  const order = layout.map((_, index) => index).sort((a, b) =>
+    Number(decisions[a]!.state === "unavailable") - Number(decisions[b]!.state === "unavailable") ||
+    (layout[b]!.priority ?? 0) - (layout[a]!.priority ?? 0) || a - b);
   for (const index of order) {
     const decision = decisions[index]!;
     if (decision.state === "inactive") continue;

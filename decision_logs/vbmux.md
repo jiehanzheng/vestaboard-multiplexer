@@ -30,6 +30,7 @@
 - The app shell keeps a compact expandable legacy-environment warning visible on Board, Plugins, and Settings. Board owns preview, output status, and layout editing; Settings owns board output configuration.
 - HA connection and raw entity subscriptions belong to the shared foundation. Water entity selection, units, validation, readings and settings belong to the water-heater plugin. Application wiring may know the plugins, but must not interpret their settings or readings. Plugins must not depend on one another.
 - Board layout entries support rectangular placement with optional starting column and width; omitted values preserve legacy full-row placement. Element metadata may require a minimum width, and each plugin remains responsible for rendering its allocated width. Water Heater exposes EMV position as its own compact element and setting.
+- User decision (2026-10-11): unavailable elements yield to overlapping active content regardless of saved priority. A Home Assistant restart otherwise lets the music block's blank outage fallback hide the water temperature; active blank cells still own their rectangle, and unopposed unavailable fallbacks remain visible.
 
 Remember the HA pause binding identity alongside its boolean so a different entity configured while the service is stopped cannot inherit an old unpaused value. Late events from a replaced connection must not resume the new binding. This is persistence metadata, not a separate pause mode.
 
