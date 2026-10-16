@@ -49,13 +49,15 @@ Then configure content under **Plugins**, arrange it on **Board**, and choose **
 | <img src="docs/images/web-row-editor.jpg" alt="Bar and text row editor" width="420"> | Bind HA attributes and configure fixed label, bar, and text areas. |
 | <img src="docs/images/web-settings.jpg" alt="Rolling-window and gradual-refill automatic update limits" width="420"> | Combine rolling-window and gradual-refill limits with live capacity counters. |
 | <img src="docs/images/web-layout-priority.jpg" alt="Shared-space layout priority settings" width="340"> | Set placement and priority for content that shares board space. |
-| <img src="docs/images/web-pause.jpg" alt="Pause overlay drawing editor" width="420"> | Draw a pause overlay with transparent cells over the current board. |
+| <img src="docs/images/web-pause.jpg" alt="Pause overlay drawing editor" width="420"> | Keep the board quiet when nobody is around: pause updates using a Home Assistant presence sensor and resume when someone returns. Customize the paused display with an overlay. |
 
 ## Home Assistant
 
 In Home Assistant, open **User profile → Security → Long-lived access tokens → Create token** ([token documentation](https://developers.home-assistant.io/docs/auth_api/#long-lived-access-token)). In vbmux, open **Settings → Home Assistant**, enter **Home Assistant URL** and **Long-lived access token**, then choose **Test connection** and **Save Home Assistant**. Use a URL reachable from the vbmux container; `localhost` inside the container refers to the container itself.
 
 Add entity-backed content under **Plugins → Bar and text rows** or **HA character blocks**. Home Assistant supplies values and formatting; vbmux composes the resulting content on your board.
+
+For presence-based pausing, open **Settings → Pause settings**, select your HA presence sensor, and set **Pause value** to `off` and **Resume value** to `on`. Data collection continues while paused, so the board can show the latest content when you return.
 
 ## Plugins
 
