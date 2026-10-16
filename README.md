@@ -58,7 +58,7 @@ Open **Settings → Board output**. Choose **Auto detect**, **Note**, or **Flags
 | **Local API** | Follow [Vestaboard’s Local API setup](https://docs.vestaboard.com/docs/local-api/authentication/) to request an enablement token and exchange it for the board’s API key. Enter the returned key in **Local API key**, not the enablement token. Set **Local API URL** to the board’s message endpoint (default `http://vestaboard.local:7000/local-api/message`). |
 | **Cloud API** | Create a board-specific token in the API tab on [Vestaboard’s web app](https://web.vestaboard.com/) or the mobile app’s **Settings → Advanced Settings**, following the [Cloud API instructions](https://docs.vestaboard.com/docs/read-write-api/authentication/). Enable **Write** permission for delivery and **Read** for automatic board detection. Enter it in **Cloud token** and keep **Cloud API URL** at `https://cloud.vestaboard.com/`. |
 
-Choose **Save board settings**. A saved local key takes precedence over the cloud token; to switch to Cloud API, clear the local key and save. Cloud is not automatic failover for a failed local connection. Local API animation settings apply only to local delivery.
+Choose **Save board settings**.
 
 Then configure content under **Plugins**, arrange it on **Board**, and choose **Apply layout**. Board shows the preview, delivery status, and connection errors. For Codex content, open **Plugins → Codex** to check the mounted account or start device sign-in.
 
