@@ -2,6 +2,8 @@
 
 vbmux is a small service and web interface for arranging Home Assistant and Codex content on a [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT). It supports Note (3 × 15) and Flagship (6 × 22), with a live board preview and configurable update limits.
 
+![Codex quota, a Home Assistant bar row, and custom temperature characters on Vestaboard Note](docs/images/board-hero.png)
+
 ## Features
 
 - **Local or Cloud API:** Send content directly to your Vestaboard over the local network or through Vestaboard’s cloud.
@@ -52,6 +54,28 @@ Then configure content under **Plugins**, arrange it on **Board**, and choose **
 In Home Assistant, open **User profile → Security → Long-lived access tokens → Create token** ([token documentation](https://developers.home-assistant.io/docs/auth_api/#long-lived-access-token)). In vbmux, open **Settings → Home Assistant**, enter **Home Assistant URL** and **Long-lived access token**, then choose **Test connection** and **Save Home Assistant**. Use a URL reachable from the vbmux container; `localhost` inside the container refers to the container itself.
 
 Add entity-backed content under **Plugins → Bar and text rows** or **HA character blocks**. Home Assistant supplies values and formatting; vbmux composes the resulting content on your board.
+
+## Plugins
+
+These examples use synthetic data rendered by the current plugins and captured from the official Vestaboard website in Safari.
+
+### Codex
+
+Show up to two quota windows with remaining percentages, reset times, and optional pacing colors that compare quota remaining with time remaining. Configure window labels and device sign-in under **Plugins → Codex**; optional auto-start can start a reset window when a watched quota is full.
+
+![Codex weekly and five-hour quota bars with reset times on Vestaboard Note](docs/images/plugin-codex.png)
+
+### Bar and text rows
+
+Combine a label, colored bar, and right-aligned text in fixed-width areas. Bind all values to attributes of one Home Assistant entity, or choose constants and entity states or attributes separately for each field. Home Assistant owns calculations such as remaining showers; vbmux renders the supplied values. Each row has its own color, widths, placement, and unavailable fallback.
+
+![Home Assistant hot-water, battery, and solar bar rows on Vestaboard Note](docs/images/plugin-bar-rows.png)
+
+### HA character blocks
+
+Let Home Assistant supply a flat array of Vestaboard character codes in an attribute of an entity whose state is `ready`. Use independent rectangular blocks for custom symbols, temperature displays, music, or status messages. Optionally append text from the same or another entity, or use a boolean activity attribute to yield space when inactive. Configure block size, placement, priority, and blank or `N/A` fallback in **Plugins → HA character blocks**.
+
+![Home Assistant character blocks showing temperature, music, and garage status on Vestaboard Note](docs/images/plugin-ha-characters.png)
 
 ## Saved settings
 
