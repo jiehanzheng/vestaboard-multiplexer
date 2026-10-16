@@ -45,9 +45,11 @@ Then configure content under **Plugins**, arrange it on **Board**, and choose **
 
 | Screenshot | Description |
 | --- | --- |
-| <img src="docs/images/web-board.jpg" alt="Board preview and layout editor" width="420"> | Preview your board and arrange its content. |
-| <img src="docs/images/web-row-editor.jpg" alt="Bar and text row editor" width="420"> | Configure generic rows with fixed label and text areas. |
-| <img src="docs/images/web-settings.jpg" alt="Home Assistant connection settings" width="420"> | Connect Home Assistant from the web interface. |
+| <img src="docs/images/web-board.jpg" alt="Board preview and layout editor" width="420"> | Preview your board, arrange content, and see live update capacity. |
+| <img src="docs/images/web-row-editor.jpg" alt="Bar and text row editor" width="420"> | Bind HA attributes and configure fixed label, bar, and text areas. |
+| <img src="docs/images/web-settings.jpg" alt="Rolling-window and gradual-refill automatic update limits" width="420"> | Combine rolling-window and gradual-refill limits with live capacity counters. |
+| <img src="docs/images/web-layout-priority.jpg" alt="Shared-space layout priority settings" width="340"> | Set placement and priority for content that shares board space. |
+| <img src="docs/images/web-pause.jpg" alt="Pause overlay drawing editor" width="420"> | Draw a pause overlay with transparent cells over the current board. |
 
 ## Home Assistant
 
