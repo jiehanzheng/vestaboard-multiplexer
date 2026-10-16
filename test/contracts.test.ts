@@ -42,7 +42,7 @@ test("public configuration schema requires secrets to be omitted", () => {
   const response = {
     config: publicConfig,
     legacyEnvironmentVariables: [],
-    ignoredPlugins: [],
+    ignoredConfiguration: { keys: [], elementIds: [] },
     hasSecrets: { token: true, localApiKey: false, haToken: true }
   };
   assert.equal(PublicConfigSchema.safeParse(response).success, true);
@@ -57,7 +57,7 @@ test("config save responses add a delivery outcome without changing public confi
   const response = {
     config: structuredClone(DEFAULT_APP_CONFIG),
     legacyEnvironmentVariables: [],
-    ignoredPlugins: [],
+    ignoredConfiguration: { keys: [], elementIds: [] },
     hasSecrets: { token: false, localApiKey: false, haToken: false },
     delivery: "failed"
   };

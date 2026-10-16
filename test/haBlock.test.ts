@@ -128,7 +128,7 @@ test("geometry and placement save/discard atomically and newer edits survive ack
     assert.deepEqual(replaceSection(draft, saved, section), saved);
     const newer = updateHABlockDraft(draft, { ...draft.haBlocks[0]!, height: 3 });
     const reconciled = reconcileSectionSave({ section, submittedDraft: draft, currentDraft: newer,
-      acknowledgement: { config: draft, legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "unchanged" } });
+      acknowledgement: { config: draft, legacyEnvironmentVariables: [], ignoredConfiguration: { keys: [], elementIds: [] }, hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "unchanged" } });
     assert.equal(reconciled.newerEdits, true); assert.deepEqual(reconciled.draftConfig, newer);
   }
 });

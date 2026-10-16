@@ -811,7 +811,7 @@ test("bar row draft preview, atomic save and removal preserve generic rows/music
 });
 
 
-test("historical retired water data cannot block application startup or supported composition", async () => {
+test("saved unsupported settings and orphan placements cannot block startup or supported composition", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-startup-"));
   try {
     const initial = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture" });
@@ -822,17 +822,20 @@ test("historical retired water data cannot block application startup or supporte
       width: 3, height: 1, unavailableDisplay: "blank", staleAfterMinutes: 15 };
     const path = join(directory, "config.json");
     const raw = { version: 1, ...initial.get(), board: "note", ha: { url: "http://ha.test" }, barRows: [row], haBlocks: [music],
-      water: { enabled: true, temperature: { constant: 120 } }, layout: [
+      water: { enabled: true, temperature: { constant: 120 } }, futurePlugin: { token: "private" }, layout: [
         { elementId: "codex.window-1", startRow: 0 },
         { elementId: "water.remaining", startRow: 1 },
         { elementId: "bar-row.level", startRow: 1 },
         { elementId: "water.temperature-bar", startRow: 2 },
+        { elementId: "future-panel.status", startRow: 2 },
+        { elementId: "ha-block.missing", startRow: 2 },
         { elementId: "ha-block.music", startRow: 2, width: 3 }] };
     await writeFile(path, JSON.stringify(raw));
     const store = await ConfigStore.open(directory, { CODEX_QUOTA_SOURCE: "fixture" });
     assert.equal(store.getPublic().error, undefined);
     assert.equal(await readFile(path, "utf8"), JSON.stringify(raw), "loading must never rewrite retired records");
-    assert.deepEqual(store.getPublic().ignoredPlugins, [{ id: "water", settingsPresent: true, elementIds: ["water.remaining", "water.temperature-bar"] }]);
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: ["water", "futurePlugin"], elementIds: ["water.remaining", "water.temperature-bar", "future-panel.status", "ha-block.missing"] });
+    assert.equal(JSON.stringify(store.getPublic()).includes("private"), false, "warnings expose names, never ignored payloads");
     let client!: FakeHomeAssistantClient;
     const app = await createApplication(store, directory, true, {
       createHomeAssistantClient: (options) => { client = new FakeHomeAssistantClient(options); return asHomeAssistantClient(client); }
@@ -845,13 +848,17 @@ test("historical retired water data cannot block application startup or supporte
       assert.deepEqual(app.actions.status().desired!.characters![2]!.slice(0, 3), [68, 25, 13]);
       assert.deepEqual(app.actions.status().desired!.characters![1]!.slice(0, 2), encode("LV"));
       await app.actions.save({ codex: { enabled: false } });
-      assert.equal((app.actions.config() as PublicConfig).ignoredPlugins.length, 1);
+      assert.deepEqual((app.actions.config() as PublicConfig).ignoredConfiguration.keys, ["water", "futurePlugin"]);
+      await assert.rejects(app.actions.save({ layout: [{ elementId: "ha-block.missing", startRow: 0 }] }), /unknown element/);
       await app.actions.save({ removeUnsupportedPlugins: true });
-      assert.deepEqual((app.actions.config() as PublicConfig).ignoredPlugins, []);
+      assert.deepEqual((app.actions.config() as PublicConfig).ignoredConfiguration, { keys: [], elementIds: [] });
       const restarted = await ConfigStore.open(directory, {});
-      assert.deepEqual(restarted.getPublic().ignoredPlugins, []);
+      assert.deepEqual(restarted.getPublic().ignoredConfiguration, { keys: [], elementIds: [] });
       assert.equal(restarted.get().layout!.some((entry) => entry.elementId.startsWith("water.")), false);
-      assert.equal("water" in JSON.parse(await readFile(path, "utf8")), false);
+      const persisted = JSON.parse(await readFile(path, "utf8"));
+      assert.equal("water" in persisted, false);
+      assert.equal("futurePlugin" in persisted, false);
+      assert.deepEqual(restarted.get().layout!.map((entry) => entry.elementId), ["codex.window-1", "bar-row.level", "ha-block.music"]);
     } finally { await app.stop(); }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

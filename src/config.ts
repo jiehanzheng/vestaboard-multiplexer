@@ -1,11 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import { RETIRED_PLUGINS } from "./contracts/unsupportedPlugins.js";
+import { supportedElementIds } from "./elementCatalog.js";
 import { intervalLimit } from "./contracts/updateLimits.js";
 import { mergeHABlocks, normalizeLegacyHABlocks } from "./plugins/haBlock/config.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { AppConfigSchema, type AppConfig, type ConfigPatch, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, PublicConfigSchema } from "./contracts/config.js";
+import { AppConfigSchema, ConfigPatchSchema, type AppConfig, type ConfigPatch, type HAConfig, type LayoutEntry, type LocalMessageTransitionOptions, type LocalMessageTransitionStrategy, type PublicConfig, PublicConfigSchema } from "./contracts/config.js";
 import { applyCodexEnvironment, DEFAULT_CODEX_CONFIG } from "./plugins/codexQuota/config.js";
 import { DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS } from "./vestaboard.js";
 import { defaultPauseOverlay } from "./pauseOverlay.js";
@@ -109,7 +109,7 @@ export class ConfigStore {
       }
     }
 
-    if (hasRetired(retired)) console.warn("Ignored retired water plugin settings or placements. Remove unsupported plugins in Settings to clean the saved configuration.");
+    if (hasRetired(retired)) console.warn("Ignored unsupported saved configuration keys or layout elements. Remove ignored configuration in Settings to clean the saved file.");
     return new ConfigStore(filePath, legacyEnvironmentVariables, saved, savedError, retired);
   }
 
@@ -132,7 +132,7 @@ export class ConfigStore {
     return {
       config,
       legacyEnvironmentVariables: [...this.legacyEnvironmentVariables],
-      ignoredPlugins: hasRetired(this.retired) ? [{ id: "water", settingsPresent: this.retired.some((record) => record.settingsPresent), elementIds: [...new Set(this.retired.flatMap((record) => record.placements.map(({ value }) => (value as { elementId: string }).elementId))) ] }] : [],
+      ignoredConfiguration: { keys: [...new Set(this.retired.flatMap((record) => Object.keys(record.keys)))], elementIds: [...new Set(this.retired.flatMap((record) => record.placements.map(({ value }) => value.elementId)))] },
       hasSecrets,
       ...(this.savedError ? { error: this.savedError } : {})
     };
@@ -181,12 +181,18 @@ function parseSavedConfig(raw: string): { config: Partial<AppConfig>; retired: R
     throw new Error("Config version must be 1.");
   }
   const { version: _version, ...savedConfig } = record;
-  const { config, retired } = captureRetired(savedConfig);
-  if (config.codex && typeof config.codex === "object" && !Array.isArray(config.codex)) {
-    const { demoPauseMinutes: _demoPauseMinutes, ...codex } = config.codex as Record<string, unknown>;
-    return { config: normalizeLegacyHABlocks({ ...config, codex }) as Partial<AppConfig>, retired };
+  const normalized = normalizeLegacyHABlocks(savedConfig) as Record<string, unknown>;
+  if (normalized.codex && typeof normalized.codex === "object" && !Array.isArray(normalized.codex)) {
+    const { demoPauseMinutes: _demoPauseMinutes, ...codex } = normalized.codex as Record<string, unknown>;
+    normalized.codex = codex;
   }
-  return { config: normalizeLegacyHABlocks(config) as Partial<AppConfig>, retired };
+  if (normalized.updateIntervalMinutes !== undefined) {
+    const legacy = ConfigPatchSchema.pick({ updateIntervalMinutes: true }).parse({ updateIntervalMinutes: normalized.updateIntervalMinutes });
+    if (normalized.updateLimits === undefined) normalized.updateLimits = intervalLimit(legacy.updateIntervalMinutes!);
+  }
+  delete normalized.updateIntervalMinutes;
+  const { config, retired } = captureRetired(normalized);
+  return { config: config as Partial<AppConfig>, retired };
 }
 
 function legacyConfig(env: ConfigEnvironment): AppConfig {
@@ -305,41 +311,45 @@ function isMissingFile(error: unknown): boolean {
 }
 
 interface RetiredRecord {
-  id: "water";
-  settingsPresent: boolean;
-  settings?: unknown;
+  keys: Record<string, unknown>;
   placements: { index: number; value: { elementId: string; [key: string]: unknown } }[];
 }
 type RetiredConfig = RetiredRecord[];
-const RetiredArchiveSchema = z.object({
-  version: z.literal(1),
-  records: z.array(z.object({
-    id: z.literal("water"), settingsPresent: z.boolean(), settings: z.unknown().optional(),
-    placements: z.array(z.object({ index: z.number().int().nonnegative(),
-      value: z.object({ elementId: z.string().startsWith("water.") }).catchall(z.unknown()) }).strict())
-  }).strict())
-}).strict();
+const rawObjectSchema = z.custom<Record<string, unknown>>((value) => value !== null && typeof value === "object" && !Array.isArray(value), "Expected an object.");
+// Keep ignored JSON verbatim, including own keys that object schema parsers may discard.
+const rawPlacementSchema = z.custom<{ elementId: string; [key: string]: unknown }>((value) => rawObjectSchema.safeParse(value).success && Object.hasOwn(value as object, "elementId") && typeof (value as { elementId: unknown }).elementId === "string", "Expected a placement object with an elementId string.");
+const placementSchema = z.object({ index: z.number().int().nonnegative(), value: rawPlacementSchema }).strict();
+const LegacyArchiveSchema = z.object({ version: z.literal(1), records: z.array(z.object({ id: z.literal("water"), settingsPresent: z.boolean(), settings: z.unknown().optional(), placements: z.array(placementSchema) }).strict()) }).strict();
+const ArchiveSchema = z.object({ version: z.literal(2), records: z.array(z.object({ keys: rawObjectSchema, placements: z.array(placementSchema) }).strict()) }).strict();
 function emptyRetired(): RetiredConfig { return []; }
-function hasRetired(value: RetiredConfig): boolean { return value.some((record) => record.settingsPresent || record.placements.length > 0); }
+function hasRetired(value: RetiredConfig): boolean { return value.some((record) => Object.keys(record.keys).length > 0 || record.placements.length > 0); }
 function captureRetired(record: Record<string, unknown>): { config: Record<string, unknown>; retired: RetiredConfig } {
-  const definition = RETIRED_PLUGINS[0];
-  const { [definition.settingsKey]: settings, retiredPlugins, ...config } = record;
-  const archived = retiredPlugins === undefined ? [] : RetiredArchiveSchema.parse(retiredPlugins).records;
-  const legacy: RetiredRecord = { id: "water", settingsPresent: Object.hasOwn(record, definition.settingsKey), ...(Object.hasOwn(record, definition.settingsKey) ? { settings: structuredClone(settings) } : {}), placements: [] };
+  const { retiredPlugins, ...raw } = record;
+  let archived: RetiredConfig = [];
+  if (retiredPlugins !== undefined) {
+    const version = retiredPlugins && typeof retiredPlugins === "object" && "version" in retiredPlugins ? retiredPlugins.version : undefined;
+    archived = version === 1 ? LegacyArchiveSchema.parse(retiredPlugins).records.map((entry) => ({ keys: entry.settingsPresent ? { water: entry.settings } : {}, placements: entry.placements })) : ArchiveSchema.parse(retiredPlugins).records;
+  }
+  const knownKeys = new Set(Object.keys(AppConfigSchema.shape));
+  const config = Object.fromEntries(Object.entries(raw).filter(([key]) => knownKeys.has(key)));
+  const unknownKeys = Object.fromEntries(Object.entries(raw).filter(([key]) => !knownKeys.has(key)));
+  // Validate supported instances before deciding whether a saved placement references one.
+  const supported = validateConfig(mergeConfig(DEFAULT_APP_CONFIG, { ...config, layout: null } as ConfigPatch));
+  const elementIds = supportedElementIds(supported);
+  const legacy: RetiredRecord = { keys: structuredClone(unknownKeys), placements: [] };
   if (Array.isArray(config.layout)) config.layout = config.layout.filter((value, index) => {
-    if (value && typeof value === "object" && typeof value.elementId === "string" && value.elementId.startsWith(definition.elementPrefix)) {
+    if (value && typeof value === "object" && typeof value.elementId === "string" && !elementIds.has(value.elementId)) {
       legacy.placements.push({ index, value: structuredClone(value) }); return false;
     }
     return true;
   });
-  // Exact duplicate archival records can arise when hand-edited files contain both forms.
   const candidates = [...archived, ...(hasRetired([legacy]) ? [legacy] : [])];
   const retired = candidates.filter((candidate, index) => !candidates.slice(0, index).some((previous) => isDeepStrictEqual(previous, candidate)));
   return { config, retired };
 }
 function restoreRetired(config: AppConfig, retired: RetiredConfig): Record<string, unknown> {
   const result: Record<string, unknown> = structuredClone(config);
-  // The private archive preserves obsolete payloads without changing supported layout:null semantics.
-  if (hasRetired(retired)) result.retiredPlugins = { version: 1, records: structuredClone(retired) };
+  // Archive ignored data separately so supported layout:null keeps its default-layout meaning.
+  if (hasRetired(retired)) result.retiredPlugins = { version: 2, records: structuredClone(retired) };
   return result;
 }

@@ -18,7 +18,7 @@ import {
 } from "./api";
 import { PluginsScreen, SettingsScreen, type PluginView } from "./ConnectionsScreen";
 import { LogsScreen } from "./LogsScreen";
-import { UnsupportedPluginsWarning } from "./UnsupportedPluginsWarning";
+import { UnsupportedConfigurationWarning } from "./UnsupportedConfigurationWarning";
 import { LegacyEnvironmentWarning } from "./LegacyEnvironmentWarning";
 import { configPatchForSection, replaceSection, reconcileSectionSave, sectionIsDirty, type ConfigSection } from "./draftState";
 import type {
@@ -387,11 +387,11 @@ export default function App(): ReactNode {
     setNotice(undefined);
     try {
       const response = await saveConfig({ removeUnsupportedPlugins: true });
-      // Cleanup changes only retired payloads; replacing drafts here would discard unrelated edits.
+      // Cleanup changes only ignored saved data; replacing drafts here would discard unrelated edits.
       setConfigResponse(response);
-      setNotice({ tone: "success", message: "Removed retired plugin settings and placements. Unrelated drafts remain unsaved." });
+      setNotice({ tone: "success", message: "Removed ignored saved data and layout references. Unrelated drafts remain unsaved." });
     } catch (error: unknown) {
-      setNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not remove retired plugin settings." });
+      setNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not remove ignored saved data." });
     } finally {
       cleanupSavingRef.current = false;
       setCleanupSaving(false);
@@ -446,7 +446,7 @@ export default function App(): ReactNode {
 
       <main className="page-shell">
         <LegacyEnvironmentWarning names={configResponse?.legacyEnvironmentVariables ?? []} />
-        <UnsupportedPluginsWarning plugins={configResponse?.ignoredPlugins ?? []} saving={cleanupSaving} disabled={Boolean(savingSection) || cleanupSaving} onRemove={() => { void removeUnsupportedPlugins(); }} />
+        <UnsupportedConfigurationWarning configuration={configResponse?.ignoredConfiguration ?? { keys: [], elementIds: [] }} saving={cleanupSaving} disabled={Boolean(savingSection) || cleanupSaving} onRemove={() => { void removeUnsupportedPlugins(); }} />
         {notice && !notice.section ? <p className={`inline-message ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.message}</p> : null}
         {view === "board" ? (
           <BoardScreen

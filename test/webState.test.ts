@@ -49,7 +49,7 @@ test("board save acknowledgement preserves a newer pause animation draft", () =>
   submittedDraft.transport.localMessageTransition = { strategy: "column", stepIntervalMs: 900, stepSize: 2 };
   const currentDraft = structuredClone(submittedDraft);
   currentDraft.transport.pauseMessageTransition = { strategy: "diagonal", stepIntervalMs: 700, stepSize: 2 };
-  const acknowledgement = { config: structuredClone(saved), legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
+  const acknowledgement = { config: structuredClone(saved), legacyEnvironmentVariables: [], ignoredConfiguration: { keys: [], elementIds: [] }, hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
   const result = reconcileSectionSave({ section: "board", acknowledgement, submittedDraft, currentDraft });
   assert.equal(result.newerEdits, false);
   assert.deepEqual(result.draftConfig.transport.pauseMessageTransition, currentDraft.transport.pauseMessageTransition);
@@ -84,7 +84,7 @@ test("section reconciliation preserves later edits and unrelated drafts", () => 
   currentDraft.ha.url = "http://draft.example";
   const acknowledgement = {
     config: structuredClone(DEFAULT_APP_CONFIG),
-    legacyEnvironmentVariables: [], ignoredPlugins: [],
+    legacyEnvironmentVariables: [], ignoredConfiguration: { keys: [], elementIds: [] },
     hasSecrets: { token: false, localApiKey: false, haToken: false },
     delivery: "sent" as const
   };
@@ -101,7 +101,7 @@ test("a section acknowledgement accepts server normalization when untouched", ()
   submittedDraft.codex.enabled = true;
   const acknowledgement = {
     config: structuredClone(DEFAULT_APP_CONFIG),
-    legacyEnvironmentVariables: [], ignoredPlugins: [],
+    legacyEnvironmentVariables: [], ignoredConfiguration: { keys: [], elementIds: [] },
     hasSecrets: { token: false, localApiKey: false, haToken: false },
     delivery: "sent" as const
   };
@@ -116,7 +116,7 @@ test("HA save keeps a concurrent pause edit", () => {
   submittedDraft.ha.url = "http://saved.example";
   const currentDraft = structuredClone(submittedDraft);
   currentDraft.ha.pause = { entityId: "input_boolean.pause", pauseValue: "on", resumeValue: "off" };
-  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
+  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], ignoredConfiguration: { keys: [], elementIds: [] }, hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
   const result = reconcileSectionSave({ section: "ha", acknowledgement, submittedDraft, currentDraft });
   assert.deepEqual(result.draftConfig.ha.pause, currentDraft.ha.pause);
 });
@@ -127,7 +127,7 @@ test("pause save keeps concurrent Home Assistant URL and token edits", () => {
   const currentDraft = structuredClone(submittedDraft);
   currentDraft.ha.url = "http://new.example";
   currentDraft.ha.token = "new-token";
-  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], ignoredPlugins: [], hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
+  const acknowledgement = { config: structuredClone(submittedDraft), legacyEnvironmentVariables: [], ignoredConfiguration: { keys: [], elementIds: [] }, hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "sent" as const };
   const result = reconcileSectionSave({ section: "pause", acknowledgement, submittedDraft, currentDraft });
   assert.equal(result.draftConfig.ha.url, "http://new.example");
   assert.equal(result.draftConfig.ha.token, "new-token");
@@ -253,7 +253,7 @@ test("bar rows and both HA display collections save with layout while unrelated 
   assert.deepEqual(patch, { barRows: draft.barRows, haBlocks: draft.haBlocks, layout: draft.layout });
   assert.equal(sectionIsDirty("layout", draft, saved), true);
   const submittedDraft = structuredClone(draft);
-  const acknowledgement = { config: { ...saved, ...patch }, legacyEnvironmentVariables: [], ignoredPlugins: [],
+  const acknowledgement = { config: { ...saved, ...patch }, legacyEnvironmentVariables: [], ignoredConfiguration: { keys: [], elementIds: [] },
     hasSecrets: { token: false, localApiKey: false, haToken: false }, delivery: "unchanged" as const };
   const result = reconcileSectionSave({ section: "barRows", acknowledgement: acknowledgement as Parameters<typeof reconcileSectionSave>[0]["acknowledgement"], submittedDraft, currentDraft: draft });
   assert.equal(result.newerEdits, false);

@@ -1,4 +1,4 @@
-import { IgnoredPluginSchema } from "./unsupportedPlugins.js";
+import { IgnoredConfigurationSchema } from "./ignoredConfiguration.js";
 import { BarRowsSchema } from "../plugins/barRows/config.js";
 import { UpdateLimitsSchema } from "./updateLimits.js";
 import { HABlocksSchema, HABlockConfigPatchSchema } from "../plugins/haBlock/config.js";
@@ -90,7 +90,7 @@ export type ConfigPatch = z.infer<typeof ConfigPatchSchema>;
 export const PublicConfigSchema = z.object({
   config: PublicAppConfigSchema,
   legacyEnvironmentVariables: z.array(z.string()),
-  ignoredPlugins: z.array(IgnoredPluginSchema),
+  ignoredConfiguration: IgnoredConfigurationSchema,
   hasSecrets: z.object({
     token: z.boolean(),
     localApiKey: z.boolean(),

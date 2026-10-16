@@ -238,7 +238,7 @@ a { color: inherit; }
 .legacy-warning summary::after { float: right; color: var(--muted); content: "⌄"; }
 .legacy-warning p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .legacy-warning code { display: block; margin-top: 6px; overflow-wrap: anywhere; color: var(--error); font-size: 11px; }
-.legacy-warning li code { display: inline; margin: 0; }
+.legacy-warning p code { display: inline; margin: 0; }
 
 .loading-shell { display: grid; min-height: 100vh; place-items: center; color: var(--muted); font-size: 14px; }
 .error-screen { display: grid; place-items: center; align-content: center; min-height: 100vh; padding: 32px; text-align: center; }

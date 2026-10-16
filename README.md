@@ -37,7 +37,9 @@ Application settings are persisted in `data/config.json` (or the directory selec
 
 `VBMUX_HOST`, `VBMUX_PORT`, and `VBMUX_DATA_DIR` control the process location and storage path. The board connection, delivery interval, plugin options, Home Assistant binding, layout, and pause overlay are saved through the web UI. Secrets are omitted from the public configuration response and redacted from logs. If `config.json` is malformed or unreadable, vbmux leaves it untouched, keeps the web UI available for repair, and blocks board delivery until it is valid.
 
-The dedicated Water heater plugin is retired. Saved `water` settings and `water.*` placements are ignored and reported in an expandable warning on every screen; **Remove retired settings and placements** explicitly removes them while preserving unrelated drafts. Replace remaining-water displays with HA bar and text rows, and supply temperature/EMV characters through HA character blocks. Reads leave the file untouched. Ordinary saves retain retired payloads privately in a versioned archive, including a retired default-layout selection, so the warning persists until deliberate cleanup. No automatic conversion is performed; malformed supported settings and unknown keys still report errors.
+Unsupported top-level saved keys and layout element references are ignored and listed in an expandable warning on every screen. Reads leave the file untouched; ordinary saves retain ignored data privately in a versioned archive, so warnings persist until **Remove ignored saved data** explicitly removes it while preserving unrelated drafts. Supported legacy migrations run before classification. Malformed supported settings, unknown fields inside supported settings, and unsupported API patch keys remain errors.
+
+The dedicated Water heater plugin is removed. Use HA bar and text rows for remaining-water displays and HA character blocks for temperature/EMV characters; Home Assistant owns calculations and formatting. No automatic conversion is performed.
 
 The initial saved defaults are:
 

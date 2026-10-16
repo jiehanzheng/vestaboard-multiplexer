@@ -228,21 +228,21 @@ test("retired water settings and placements are private, preserved without read 
     const path = join(directory, "config.json");
     const water = { token: "private-retired-token", arbitrary: [null, 42] };
     const placements = [{ elementId: "water.temperature-bar", nonsense: true }, { elementId: "water.remaining", startRow: "invalid" }];
-    const supported = { elementId: "codex.window-1-small", startRow: 0 };
+    const supported = { elementId: "codex.window-1", startRow: 0 };
     const raw = JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water, layout: [placements[0], supported, placements[1]] });
     await writeFile(path, raw);
     let store = await ConfigStore.open(directory, {});
     assert.equal(store.repairError, undefined); assert.equal(await readFile(path, "utf8"), raw);
     assert.deepEqual(store.get().layout, [supported]); assert.equal("water" in store.get(), false);
-    const warning = [{ id: "water", settingsPresent: true, elementIds: ["water.temperature-bar", "water.remaining"] }];
-    assert.deepEqual(store.getPublic().ignoredPlugins, warning);
+    const warning = { keys: ["water"], elementIds: ["water.temperature-bar", "water.remaining"] };
+    assert.deepEqual(store.getPublic().ignoredConfiguration, warning);
     assert.equal(JSON.stringify(store.getPublic()).includes("private-retired-token"), false);
     await store.save({ board: "note" });
     let persisted = JSON.parse(await readFile(path, "utf8"));
-    assert.equal("water" in persisted, false); assert.deepEqual(persisted.retiredPlugins.records[0].settings, water); assert.deepEqual(persisted.layout, [supported]);
+    assert.equal("water" in persisted, false); assert.deepEqual(persisted.retiredPlugins.records[0].keys.water, water); assert.deepEqual(persisted.layout, [supported]);
     assert.deepEqual(persisted.retiredPlugins.records[0].placements.map((entry: { value: unknown }) => entry.value), placements);
-    store = await ConfigStore.open(directory, {}); assert.deepEqual(store.getPublic().ignoredPlugins, warning);
-    const replacement = { elementId: "codex.window-2-small", startRow: 1 };
+    store = await ConfigStore.open(directory, {}); assert.deepEqual(store.getPublic().ignoredConfiguration, warning);
+    const replacement = { elementId: "codex.window-2", startRow: 1 };
     await store.save({ layout: [replacement] });
     persisted = JSON.parse(await readFile(path, "utf8")); assert.deepEqual(persisted.layout, [replacement]);
     await store.save({ board: "flagship" });
@@ -251,14 +251,14 @@ test("retired water settings and placements are private, preserved without read 
     await store.save({ removeUnsupportedPlugins: true });
     persisted = JSON.parse(await readFile(path, "utf8")); assert.equal("water" in persisted, false);
     assert.deepEqual(persisted.layout, [replacement]); assert.equal("removeUnsupportedPlugins" in persisted, false); assert.equal("retiredPlugins" in persisted, false);
-    store = await ConfigStore.open(directory, {}); assert.deepEqual(store.getPublic().ignoredPlugins, []);
+    store = await ConfigStore.open(directory, {}); assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: [] });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("retirement recognition does not weaken strict supported validation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-strict-"));
   try {
-    for (const extra of [{ otherPlugin: {} }, { layout: [{ elementId: "other.element", startRow: "bad" }] }, { barRows: "invalid" }]) {
+    for (const extra of [{ ha: { ...DEFAULT_APP_CONFIG.ha, extra: true } }, { layout: [{ elementId: "codex.window-1", startRow: "bad" }] }, { barRows: "invalid" }]) {
       const raw = JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water: null, ...extra });
       await writeFile(join(directory, "config.json"), raw);
       const store = await ConfigStore.open(directory, {}); assert.ok(store.repairError);
@@ -278,9 +278,9 @@ test("failed cleanup persistence retains the retirement warning and original pay
     assert.ok(JSON.parse(await readFile(path, "utf8")).retiredPlugins);
     await rm(path); await mkdir(path);
     await assert.rejects(store.save({ removeUnsupportedPlugins: true }));
-    assert.equal(store.getPublic().ignoredPlugins.length, 1);
+    assert.equal(store.getPublic().ignoredConfiguration.keys.length, 1);
     await rm(path, { recursive: true }); await store.save({ board: "note" });
-    assert.deepEqual(JSON.parse(await readFile(path, "utf8")).retiredPlugins.records[0].settings, { original: true });
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")).retiredPlugins.records[0].keys.water, { original: true });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -290,10 +290,10 @@ test("retirement warnings distinguish settings-only and placements-only saved fi
     const path = join(directory, "config.json");
     await writeFile(path, JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, water: null }));
     let store = await ConfigStore.open(directory, {});
-    assert.deepEqual(store.getPublic().ignoredPlugins, [{ id: "water", settingsPresent: true, elementIds: [] }]);
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: ["water"], elementIds: [] });
     await writeFile(path, JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, layout: [{ elementId: "water.custom", startRow: null }, { elementId: "water.custom", startRow: 2 }] }));
     store = await ConfigStore.open(directory, {});
-    assert.deepEqual(store.getPublic().ignoredPlugins, [{ id: "water", settingsPresent: false, elementIds: ["water.custom"] }]);
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: ["water.custom"] });
     await store.save({ removeUnsupportedPlugins: false });
     assert.equal(JSON.parse(await readFile(path, "utf8")).retiredPlugins.records[0].placements.length, 2);
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -308,12 +308,12 @@ test("private archive preserves null and exact supported layouts across restart"
     await store.save({ layout: null });
     store = await ConfigStore.open(directory, {});
     assert.equal(store.get().layout, null); assert.equal(JSON.parse(await readFile(path, "utf8")).layout, null);
-    assert.equal(store.getPublic().ignoredPlugins.length, 1);
-    const layout = [{ elementId: "codex.window-1-small", startRow: 2, priority: 10 }];
+    assert.equal(store.getPublic().ignoredConfiguration.keys.length, 1);
+    const layout = [{ elementId: "codex.window-1", startRow: 2, priority: 10 }];
     await store.save({ layout }); store = await ConfigStore.open(directory, {});
     assert.deepEqual(store.get().layout, layout);
     await store.save({ removeUnsupportedPlugins: true }); store = await ConfigStore.open(directory, {});
-    assert.deepEqual(store.get().layout, layout); assert.deepEqual(store.getPublic().ignoredPlugins, []);
+    assert.deepEqual(store.get().layout, layout); assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: [] });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -337,11 +337,78 @@ test("coexisting historical and archive records deduplicate exact records and pr
 test("private archive envelopes remain strict while archived obsolete payloads are unconstrained", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vbmux-retired-envelope-"));
   try {
-    for (const retiredPlugins of [{ version: 2, records: [] }, { version: 1, records: [{ id: "unknown", settingsPresent: true, placements: [] }] },
+    for (const retiredPlugins of [{ version: 3, records: [] }, { version: 1, records: [{ id: "unknown", settingsPresent: true, placements: [] }] },
       { version: 1, records: [{ id: "water", settingsPresent: "yes", placements: [] }] },
-      { version: 1, records: [{ id: "water", settingsPresent: false, placements: [{ index: 0, value: { elementId: "other.element" } }] }] }]) {
+      { version: 2, records: [{ keys: {}, placements: [{ index: -1, value: { elementId: "other.element" } }] }] }]) {
       await writeFile(join(directory, "config.json"), JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, retiredPlugins }));
       const store = await ConfigStore.open(directory, {}); assert.ok(store.repairError);
     }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("arbitrary unknown saved keys and missing layout instances are ignored, archived and cleaned", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-unknown-saved-"));
+  try {
+    const path = join(directory, "config.json");
+    const disabledBlock = { id: "known", name: "Known disabled", enabled: false, entityId: "", attribute: "characters", width: 3, height: 1, unavailableDisplay: "na", staleAfterMinutes: 15 };
+    const supported = { elementId: "ha-block.known", startRow: 0, width: 3 };
+    const ignored = [{ elementId: "ha-block.missing", bad: true }, { elementId: "future.widget", startRow: "bad" }, { elementId: "bar-row.removed", startRow: 1 }];
+    const raw = JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, futurePlugin: { secret: "private-future" }, "strange-key": null, haBlocks: [disabledBlock], layout: [supported, ...ignored] });
+    await writeFile(path, raw);
+    let store = await ConfigStore.open(directory, {});
+    assert.equal(store.repairError, undefined); assert.equal(await readFile(path, "utf8"), raw);
+    assert.deepEqual(store.get().layout, [supported]);
+    const warning = { keys: ["futurePlugin", "strange-key"], elementIds: ignored.map((entry) => entry.elementId) };
+    assert.deepEqual(store.getPublic().ignoredConfiguration, warning);
+    assert.equal(JSON.stringify(store.getPublic()).includes("private-future"), false);
+    await store.save({ board: "note" }); store = await ConfigStore.open(directory, {});
+    assert.deepEqual(store.getPublic().ignoredConfiguration, warning);
+    const disk = JSON.parse(await readFile(path, "utf8")); assert.equal(disk.retiredPlugins.version, 2);
+    assert.deepEqual(disk.retiredPlugins.records[0].keys.futurePlugin, { secret: "private-future" });
+    await store.save({ removeUnsupportedPlugins: true }); store = await ConfigStore.open(directory, {});
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: [] }); assert.deepEqual(store.get().layout, [supported]);
+    assert.equal(ConfigPatchSchema.safeParse({ futurePlugin: {} }).success, false);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("recognized legacy saved keys normalize before unknown-key classification", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-legacy-known-"));
+  try {
+    const { haBlocks: _blocks, updateLimits: _limits, ...old } = DEFAULT_APP_CONFIG;
+    await writeFile(join(directory, "config.json"), JSON.stringify({ version: 1, ...old, updateIntervalMinutes: 7,
+      haBlock: { enabled: false, entityId: "", attribute: "characters", width: 3, height: 1, unavailableDisplay: "na", staleAfterMinutes: 15 },
+      layout: [{ elementId: "ha-block.characters", startRow: 0, width: 3 }] }));
+    const store = await ConfigStore.open(directory, {}); assert.equal(store.repairError, undefined);
+    assert.equal(store.get().haBlocks[0]!.id, "characters"); assert.equal(store.get().updateLimits[0]!.windowMinutes, 7);
+    assert.deepEqual(store.getPublic().ignoredConfiguration, { keys: [], elementIds: [] });
+    await writeFile(join(directory, "config.json"), JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, updateIntervalMinutes: "invalid" }));
+    const malformed = await ConfigStore.open(directory, {});
+    assert.match(malformed.repairError!, /updateIntervalMinutes/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("ignored own prototype-like JSON keys and placement fields survive archive round trips verbatim", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vbmux-ignored-prototype-keys-"));
+  try {
+    const path = join(directory, "config.json");
+    const unknownKeys = JSON.parse('{"__proto__":{"secret":"kept"},"constructor":42}');
+    const placement = JSON.parse('{"elementId":"future.widget","__proto__":{"private":"placement"},"constructor":{"kept":true}}');
+    await writeFile(path, JSON.stringify({ version: 1, ...DEFAULT_APP_CONFIG, ...unknownKeys, layout: [placement] }));
+    let store = await ConfigStore.open(directory, {});
+    assert.equal(store.repairError, undefined);
+    assert.deepEqual(store.getPublic().ignoredConfiguration.keys, ["__proto__", "constructor"]);
+    for (let round = 0; round < 2; round++) {
+      await store.save({ board: "note" });
+      const disk = JSON.parse(await readFile(path, "utf8"));
+      assert.deepEqual(disk.retiredPlugins.records[0].keys, unknownKeys);
+      assert.deepEqual(disk.retiredPlugins.records[0].placements[0].value, placement);
+      assert.equal(Object.getPrototypeOf(disk.retiredPlugins.records[0].keys), Object.prototype);
+      assert.equal(Object.hasOwn(disk.retiredPlugins.records[0].keys, "__proto__"), true);
+      store = await ConfigStore.open(directory, {});
+      assert.equal(store.repairError, undefined);
+      assert.deepEqual(store.getPublic().ignoredConfiguration.keys, ["__proto__", "constructor"]);
+    }
+    assert.equal(({} as { secret?: unknown }).secret, undefined);
+    assert.equal(({} as { private?: unknown }).private, undefined);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
