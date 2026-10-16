@@ -7,10 +7,10 @@ export const BarRowTextInputSchema = z.union([z.object({ kind: z.literal("consta
 export const BarRowSourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("entity"), entityId: z.string().trim(), attributes: z.object({
     displayName: z.string().trim().min(1).default("display_name"), current: z.string().trim().min(1).default("current"),
-    max: z.string().trim().min(1).default("max"), displayText: z.string().trim().min(1).default("display_text")
+    max: z.string().trim().min(1).default("max"), displayText: z.string().trim().min(1).default("display_text"), marker: z.string().trim().min(1).optional()
   }).strict().default({ displayName: "display_name", current: "current", max: "max", displayText: "display_text" }) }).strict(),
   z.object({ kind: z.literal("fields"), displayName: BarRowTextInputSchema, current: BarRowNumberInputSchema,
-    max: BarRowNumberInputSchema, displayText: BarRowTextInputSchema }).strict()
+    max: BarRowNumberInputSchema, displayText: BarRowTextInputSchema, marker: BarRowEntityInputSchema.required({ attribute: true }).optional() }).strict()
 ]);
 export const BarRowConfigSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9_-]+$/, "Use a stable row ID containing letters, digits, hyphens, or underscores."),

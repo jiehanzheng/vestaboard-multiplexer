@@ -1,17 +1,21 @@
 import type { HAEntity } from "../contracts/homeAssistant.js";
 import type { HomeAssistantService, HomeAssistantSnapshot } from "../homeAssistantService.js";
 import type { Element } from "../elements.js";
-import { BLANK, encode, encodeDisplayText } from "../vestaboardCharacters.js";
+import { BLANK, encodeDisplayText, isValidCharacterCode } from "../vestaboardCharacters.js";
 import { BarRowsSchema, barRowElementId, barRowGeometry, type BarRowConfig, type BarRowInput } from "./barRows/config.js";
-import { BarRowFields, type BarRowField, type BarRowStatus } from "./barRows/status.js";
+import { type BarRowField, type BarRowStatus } from "./barRows/status.js";
 export * from "./barRows/config.js";
 export * from "./barRows/status.js";
 
-type Values = { displayName: string; current: number; max: number; displayText: string };
-function bindings(config: BarRowConfig): Record<BarRowField, BarRowInput> {
+type Values = { displayName: string; current: number; max: number; displayText: string; marker: number[] };
+function bindings(config: BarRowConfig): Record<BarRowField, BarRowInput> & { marker?: BarRowInput } {
   const source = config.source;
-  return source.kind === "fields" ? source : Object.fromEntries(BarRowFields.map((field) => [field,
-    { kind: "entity", entityId: source.entityId, attribute: source.attributes[field] }])) as Record<BarRowField, BarRowInput>;
+  if (source.kind === "fields") {
+    const { kind: _kind, ...fields } = source;
+    return fields;
+  }
+  return Object.fromEntries(Object.entries(source.attributes).map(([field, attribute]) => [field,
+    { kind: "entity", entityId: source.entityId, attribute }])) as Record<BarRowField, BarRowInput> & { marker?: BarRowInput };
 }
 function resolve(input: BarRowInput, entities: Map<string, HAEntity>, connected: boolean): unknown {
   if (input.kind === "constant") return input.value;
@@ -32,15 +36,21 @@ function text(value: unknown): string {
 }
 function evaluate(config: BarRowConfig, entities: readonly HAEntity[], connected: boolean): { status: BarRowStatus; values?: Values } {
   const inputs = {} as BarRowStatus["inputs"];
-  const values: Partial<Values> = {};
+  const values: Partial<Values> = { marker: [] };
   const map = new Map(entities.map((entity) => [entity.entity_id, entity]));
   const sources = bindings(config);
-  for (const field of BarRowFields) {
+  for (const [field, binding] of Object.entries(sources) as [BarRowField | "marker", BarRowInput][]) {
     inputs[field] = { configured: true };
     if (!config.enabled) continue;
     try {
-      const raw = resolve(sources[field], map, connected);
-      if (field === "current" || field === "max") {
+      const raw = resolve(binding, map, connected);
+      if (field === "marker") {
+        if (!Array.isArray(raw) || !raw.every((code) => typeof code === "number" && isValidCharacterCode(code))) {
+          throw new Error("Marker must be an array of supported integer character codes; use [] for no marker.");
+        }
+        values.marker = raw;
+        inputs.marker!.value = raw;
+      } else if (field === "current" || field === "max") {
         const number = numeric(raw);
         if (field === "max" && number <= 0) throw new Error("Maximum must be positive.");
         values[field] = number;
@@ -54,7 +64,7 @@ function evaluate(config: BarRowConfig, entities: readonly HAEntity[], connected
       }
     } catch (error) { inputs[field].error = error instanceof Error ? error.message : String(error); }
   }
-  const error = BarRowFields.flatMap((field) => inputs[field].error ? [`${field}: ${inputs[field].error}`] : []).join(" ");
+  const error = Object.entries(inputs).flatMap(([field, input]) => input.error ? [`${field}: ${input.error}`] : []).join(" ");
   return { status: { enabled: config.enabled, state: !config.enabled ? "inactive" : error ? "unavailable" : "active", inputs, stale: false, ...(error ? { error } : {}) },
     ...(config.enabled && !error ? { values: values as Values } : {}) };
 }
@@ -68,10 +78,13 @@ function makeElement(config: BarRowConfig, result: ReturnType<typeof evaluate>):
     render(width) {
       if (!config.enabled) return [Array(width).fill(BLANK)];
       const barWidth = width - config.labelWidth - config.textWidth;
-      if (!result.values || barWidth < 1) return [config.unavailableDisplay === "na" && width >= 3 ? padded("N/A", width) : Array(width).fill(BLANK)];
-      const { displayName, current, max, displayText } = result.values;
+      if (!result.values || barWidth < 1 || result.values.marker.length > barWidth) return [config.unavailableDisplay === "na" && width >= 3 ? padded("N/A", width) : Array(width).fill(BLANK)];
+      const { displayName, current, max, displayText, marker } = result.values;
       const fill = Math.ceil(Math.max(0, Math.min(1, current / max)) * barWidth);
-      return [[...padded(displayName, config.labelWidth), ...Array(fill).fill(config.barCharacter), ...Array(barWidth - fill).fill(BLANK), ...padded(displayText, config.textWidth, "right")]];
+      const bar = [...Array(fill).fill(config.barCharacter), ...Array(barWidth - fill).fill(BLANK)];
+      // Keep HA's marker intact inside the bar, including when the fill reaches its end.
+      bar.splice(Math.min(fill, barWidth - marker.length), marker.length, ...marker);
+      return [[...padded(displayName, config.labelWidth), ...bar, ...padded(displayText, config.textWidth, "right")]];
     } };
 }
 export function barRowEntityIds(configs: readonly BarRowConfig[]): string[] {

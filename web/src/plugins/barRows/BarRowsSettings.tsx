@@ -55,7 +55,7 @@ function RowEditor({ value, status, entities, loading, error, layoutError, onCha
         const kind = event.target.value;
         const next: BarRowSource = alternate?.kind === kind ? alternate : kind === "entity"
           ? { kind: "entity", entityId: "", attributes }
-          : source.kind === "entity" ? { kind: "fields", ...Object.fromEntries(fields.map((field) => [field, { kind: "entity", entityId: source.entityId, attribute: source.attributes[field] }])) } as BarRowSource
+          : source.kind === "entity" ? { kind: "fields", ...Object.fromEntries(fields.map((field) => [field, { kind: "entity", entityId: source.entityId, attribute: source.attributes[field] }])), ...(source.attributes.marker ? { marker: { kind: "entity", entityId: source.entityId, attribute: source.attributes.marker } } : {}) } as BarRowSource
           : source;
         setAlternate(source);
         onChange({ ...value, source: next });
@@ -65,6 +65,18 @@ function RowEditor({ value, status, entities, loading, error, layoutError, onCha
         <div className="settings-grid">{fields.map((field) => <label key={field} className="config-field"><span>{labels[field]} attribute</span><input value={source.attributes[field]} onChange={(event) => onChange({ ...value, source: { ...source, attributes: { ...source.attributes, [field]: event.target.value } } })} /></label>)}</div>
       </> : fields.map((field) => <FieldBinding key={field} id={`bar-row-${value.id}-${field}`} label={labels[field]} numeric={field === "current" || field === "max"} value={source[field]} entities={entities} loading={loading} error={error}
         onChange={(binding) => onChange({ ...value, source: { ...source, [field]: binding } as BarRowSource })} />)}
+      {source.kind === "entity" ? <label className="config-field"><span>Marker character attribute (optional)</span><input placeholder="No marker" value={source.attributes.marker ?? ""} onChange={(event) => {
+        const { marker: _marker, ...base } = source.attributes;
+        onChange({ ...value, source: { ...source, attributes: event.target.value ? { ...base, marker: event.target.value } : base } });
+      }} /></label> : <>
+        <EntityPicker id={`bar-row-${value.id}-marker`} label="Marker entity (optional)" value={source.marker?.entityId ?? ""} entities={entities} loading={loading} error={error} onChange={(entityId) => {
+          const { marker, ...base } = source;
+          onChange({ ...value, source: entityId ? { ...base, marker: { kind: "entity", entityId, attribute: marker?.attribute ?? "bar_marker" } } : base });
+        }} />
+        {source.marker ? <label className="config-field"><span>Marker character attribute</span><input value={source.marker.attribute ?? ""} onChange={(event) => onChange({ ...value, source: { ...source, marker: { ...source.marker!, attribute: event.target.value } } })} /></label> : null}
+      </>}
+      <p className="screen-footnote">Marker codes render directly inside the bar: [62] is a heart; [] shows no marker. Leave the binding empty to disable it.</p>
+      {status?.inputs.marker?.error ? <p className="inline-message error" role="status">Marker: {status.inputs.marker.error}</p> : null}
       {fields.map((field) => status?.inputs[field].error ? <p key={field} className="inline-message error" role="status">{labels[field]}: {status.inputs[field].error}</p> : null)}
       <p className="screen-footnote">Unknown, unavailable, restored, disconnected, or invalid inputs use the fallback immediately. All required fields must be valid together; no previous values are retained.</p>
     </SettingsGroup>

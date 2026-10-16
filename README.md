@@ -85,6 +85,7 @@ To reproduce these rows, expose the following entity states and attributes in HA
 
 Create three rows using **One entity with attributes** and select the corresponding entity. Map **Display name**, **Current value**, **Maximum value**, and **Display text** to `display_name`, `current`, `max`, and `display_text`. Use label width **2**, text width **3**, placement width **15**, and the bar character above; place the rows top to bottom. The remaining ten cells form the bar: these values fill seven, eight, and five cells, respectively.
 
+For an optional bar-end marker, expose `bar_marker: [62]` in HA and set **Marker character attribute** to `bar_marker` (or bind its entity/attribute individually). `[]` hides it. Codes render after the fill, shifting left at the end.
 
 ### HA character blocks
 
