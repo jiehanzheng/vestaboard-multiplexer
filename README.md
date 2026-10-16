@@ -2,6 +2,13 @@
 
 vbmux is a small service and web interface for arranging Home Assistant and Codex content on a [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT). It supports Note (3 × 15) and Flagship (6 × 22), with a live board preview and configurable update limits.
 
+## Features
+
+- **Local or Cloud API:** Send content directly to your Vestaboard over the local network or through Vestaboard’s cloud.
+- **Home Assistant integration:** Build bar and text rows from entity states and attributes, or let Home Assistant supply character-code arrays for custom displays.
+- **Codex quota integration:** Display usage limits, reset timing, and quota pacing alongside your Home Assistant content.
+- **Flexible layouts:** Preview and arrange content on Note or Flagship, with shared-space priorities and configurable automatic update limits.
+
 ## Install (Docker recommended)
 
 Install Git and Docker with the Docker Compose plugin on the computer that will run vbmux. Docker includes the application runtime and Codex CLI; you do not need to install Node.js separately.
