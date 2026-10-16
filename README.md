@@ -65,6 +65,8 @@ Show up to two quota windows with remaining percentages, reset times, and option
 
 ![Codex weekly and five-hour quota bars with reset times on Vestaboard Note](docs/images/plugin-codex.png)
 
+The bottom row shows the weekly reset date and time, then a heart separator and the five-hour reset time: `10/20-1200♥1500` means October 20 at 12:00 and 15:00, respectively, in the configured time zone.
+
 ### Bar and text rows
 
 Combine a label, colored bar, and right-aligned text in fixed-width areas. Bind all values to attributes of one Home Assistant entity, or choose constants and entity states or attributes separately for each field. Home Assistant owns calculations such as remaining showers; vbmux renders the supplied values. Each row has its own color, widths, placement, and unavailable fallback.
@@ -73,9 +75,11 @@ Combine a label, colored bar, and right-aligned text in fixed-width areas. Bind 
 
 ### HA character blocks
 
-Let Home Assistant supply a flat array of Vestaboard character codes in an attribute of an entity whose state is `ready`. Use independent rectangular blocks for custom symbols, temperature displays, music, or status messages. Optionally append text from the same or another entity, or use a boolean activity attribute to yield space when inactive. Configure block size, placement, priority, and blank or `N/A` fallback in **Plugins → HA character blocks**.
+Let Home Assistant supply a flat array of Vestaboard character codes in an attribute of an entity whose state is `ready`. Use independent rectangular blocks for custom symbols, temperature displays, air quality, or status messages. Optionally append text from the same or another entity, or use a boolean activity attribute to yield space when inactive. Configure block size, placement, priority, and blank or `N/A` fallback in **Plugins → HA character blocks**.
 
-![Home Assistant character blocks showing temperature, music, and garage status on Vestaboard Note](docs/images/plugin-ha-characters.png)
+![Home Assistant character blocks showing temperature, air quality, and garage status on Vestaboard Note](docs/images/plugin-ha-characters.png)
+
+Here HA supplies the temperature characters and heart, an `AIR` label with a green tile and appended `GOOD` text, and a garage status message. These are example HA inputs, not built-in temperature or air-quality calculations.
 
 ## Saved settings
 
