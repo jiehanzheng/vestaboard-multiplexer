@@ -97,7 +97,7 @@ Combine a label, colored bar, and right-aligned text in fixed-width areas. Bind 
 
 <img src="docs/images/plugin-bar-rows.png" alt="Home Assistant hot-water, battery, and solar bar rows on Vestaboard Note" width="640">
 
-To reproduce these rows, expose the following entity states and attributes in HA:
+Bar colors use [Vestaboard character codes](https://docs.vestaboard.com/docs/characterCodes). To reproduce these rows, expose the following entity states and attributes in HA:
 
 | Entity | State | `display_name` | `current` | `max` | `display_text` | Bar character |
 | --- | --- | --- | --- | --- | --- | --- |
