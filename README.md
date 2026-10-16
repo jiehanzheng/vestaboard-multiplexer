@@ -13,7 +13,7 @@ vbmux is a small service and web interface for arranging Home Assistant and Code
 
 ## Install (Docker recommended)
 
-Install Git and Docker with the Docker Compose plugin on the computer that will run vbmux. Docker includes the application runtime and Codex CLI.
+Docker Compose is the recommended way to run vbmux.
 
 ```sh
 git clone https://github.com/jiehanzheng/vestaboard-multiplexer.git
@@ -24,9 +24,30 @@ docker compose up --build
 
 Open `http://<server-host>:3000`, replacing `<server-host>` with the hostname or IP address of the computer running Docker. Use `http://localhost:3000` only when browsing on that same computer. To change the published port, set `VBMUX_PORT` in `.env` before starting Compose and use that port in the URL. If you use a reverse proxy, open its configured URL instead. The web interface has no application login; keep it on a trusted network or protect access through your reverse proxy.
 
-Compose keeps application settings in the `vbmux-data` volume. It mounts `${HOME}/.codex` for Codex credentials; set `CODEX_HOST_DIR` in `.env` if they live elsewhere. That directory must be writable so Codex can save and refresh credentials. Configure connections through the web interface after startup, as described below.
+Compose keeps application settings in the `vbmux-data` volume. It mounts `${HOME}/.codex` for Codex credentials; set `CODEX_HOST_DIR` in `.env` if they live elsewhere.
 
-Stop with Ctrl-C; `docker compose down` removes the containers while retaining saved settings. Do not add `--volumes` unless you intend to delete those settings. View logs with `docker compose logs --tail 200 --follow vestaboard-orchestrator`. Keep the same checkout directory or preserve the Compose project name when moving an installation so Compose continues using its existing data volume.
+The included `docker-compose.yml`:
+
+```yaml
+services:
+  vestaboard-orchestrator:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${VBMUX_PORT:-3000}:3000"
+    environment:
+      VBMUX_PORT: 3000
+      VBMUX_DATA_DIR: /app/data
+    volumes:
+      - vbmux-data:/app/data
+      - ${CODEX_HOST_DIR:-${HOME}/.codex}:/home/node/.codex
+
+volumes:
+  vbmux-data:
+```
 
 ## Connect your Vestaboard
 
