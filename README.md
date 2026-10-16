@@ -80,7 +80,3 @@ Let Home Assistant supply a flat array of Vestaboard character codes in an attri
 ![Home Assistant character blocks showing temperature, air quality, and garage status on Vestaboard Note](docs/images/plugin-ha-characters.png)
 
 Here HA supplies the temperature characters and heart, an `AIR` label with a green tile and appended `GOOD` text, and a garage status message. These are example HA inputs, not built-in temperature or air-quality calculations.
-
-## Saved settings
-
-Application settings are saved in `config.json` inside the data directory (`/app/data` in Docker). They remain authoritative across restarts. On first startup only, a missing configuration imports supported legacy environment settings; later environment changes do not override saved application settings. Use the web interface for board credentials, plugins, layout, and update limits; `.env` controls deployment settings such as the published port and Codex credential mount.
