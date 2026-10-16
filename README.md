@@ -1,4 +1,4 @@
-# [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT) Multiplexer
+# [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT) Multiplexer (`vbmux`)
 
 vbmux is a small service and web interface for arranging Home Assistant and Codex content on a [Vestaboard](https://web.vestaboard.com/referral?vbref=NZJHOT) (referral link). It supports Note (3 × 15) and Flagship (6 × 22), with a live board preview and configurable update limits.
 
