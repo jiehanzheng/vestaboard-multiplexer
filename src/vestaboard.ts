@@ -1,3 +1,4 @@
+import { isValidCharacterCode } from "./vestaboardCharacters.js";
 import type { VestaboardBoard } from "./vestaboardTypes.js";
 import type { LocalMessageTransitionOptions, LocalMessageTransitionStrategy } from "./contracts/config.js";
 export type { LocalMessageTransitionOptions, LocalMessageTransitionStrategy } from "./contracts/config.js";
@@ -10,6 +11,10 @@ export interface VestaboardMessage {
 export interface VestaboardClient {
   send(message: VestaboardMessage): Promise<void>;
   detectBoard?(): Promise<VestaboardBoard | undefined>;
+  readCurrent?(): Promise<number[][]>;
+  observationSource?: "local" | "cloud";
+  minimumWriteIntervalMs?: number;
+  observationDelayMs?(message: VestaboardMessage): number;
 }
 
 export const DEFAULT_LOCAL_MESSAGE_TRANSITION_OPTIONS: LocalMessageTransitionOptions = {
@@ -60,6 +65,9 @@ export function createVestaboardClient({
   if (localApiKey) {
     return {
       detectBoard,
+      observationSource: "local",
+      readCurrent: () => readCurrent(fetchImpl, localUrl, { "X-Vestaboard-Local-Api-Key": localApiKey }, "local"),
+      observationDelayMs: (message) => transitionScheduleMs(message, localMessageTransition),
       send(message) {
         if (!message.characters) {
           throw new Error("Local Vestaboard mode requires character-code messages.");
@@ -84,10 +92,14 @@ export function createVestaboardClient({
 
   return {
     detectBoard,
+    observationSource: "cloud",
+    minimumWriteIntervalMs: 15_000,
+    readCurrent: () => readCurrent(fetchImpl, cloudUrl, { "X-Vestaboard-Token": token }, "cloud"),
     send: (message) =>
       post(fetchImpl, cloudUrl, {
         headers: { "X-Vestaboard-Token": token },
-        body: message.characters ? { characters: message.characters } : { text: message.text }
+        body: message.characters ? { characters: message.characters } : { text: message.text },
+        cloud: true
       })
   };
 }
@@ -269,7 +281,7 @@ function parseJson(value: string): unknown {
 async function post(
   fetchImpl: typeof fetch,
   url: string,
-  { headers, body }: { headers: Record<string, string>; body: unknown }
+  { headers, body, cloud = false }: { headers: Record<string, string>; body: unknown; cloud?: boolean }
 ): Promise<void> {
   const response = await fetchImpl(url, {
     signal: AbortSignal.timeout(30_000),
@@ -281,7 +293,36 @@ async function post(
     body: JSON.stringify(body)
   });
 
-  if (!response.ok) {
-    throw new Error(`Vestaboard API returned ${response.status}: ${await response.text()}`);
+  // Consume the complete response before releasing the single-writer operation.
+  const content = await response.text();
+  if (!response.ok) throw new Error(`Vestaboard API returned ${response.status}.`);
+  if (cloud) {
+    const result = parseJson(content);
+    if (!result || typeof result !== "object" || !("status" in result) || result.status !== "ok") {
+      throw new Error("Vestaboard Cloud API did not acknowledge the message.");
+    }
   }
+}
+
+async function readCurrent(fetchImpl: typeof fetch, url: string, headers: Record<string, string>, source: "local" | "cloud"): Promise<number[][]> {
+  const response = await fetchImpl(url, { method: "GET", headers, signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error(`Vestaboard readback returned ${response.status}.`);
+  const body: unknown = await response.json();
+  const raw = source === "local" ? localApiLayout(body)
+    : body && typeof body === "object" && "currentMessage" in body
+      ? (body.currentMessage as { layout?: unknown } | null)?.layout : undefined;
+  const layout: unknown = typeof raw === "string" ? parseJson(raw) : raw;
+  if (!boardFromLayout(layout) || !(layout as unknown[][]).every((row) => row.every((code) => typeof code === "number" && isValidCharacterCode(code)))) {
+    throw new Error("Vestaboard readback did not contain a supported board matrix.");
+  }
+  return layout as number[][];
+}
+
+/** The last scheduled step is a lower bound for observation, not mechanical completion. */
+function transitionScheduleMs(message: VestaboardMessage, transition: LocalMessageTransitionOptions): number {
+  const rows = message.characters?.length ?? 0;
+  const columns = message.characters?.[0]?.length ?? 0;
+  const units = transition.strategy === "row" ? rows : transition.strategy === "diagonal" ? rows + columns - 1
+    : transition.strategy === "random" ? rows * columns : transition.strategy === "edges-to-center" ? Math.ceil(columns / 2) : columns;
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.ceil(units / transition.stepSize) - 1) * transition.stepIntervalMs);
 }

@@ -1,3 +1,4 @@
+import { DeliveryVerificationSchema } from "./deliveryVerification.js";
 import { BarRowsSchema } from "../plugins/barRows/config.js";
 import { BarRowsStatusSchema } from "../plugins/barRows/status.js";
 import { UpdateLimitStatusSchema } from "./updateLimits.js";
@@ -87,6 +88,7 @@ export const RuntimeStatusSchema = z.object({
   nextAttemptAt: z.number(),
   updateLimits: z.array(UpdateLimitStatusSchema).optional(),
   pendingDelivery: z.boolean().optional(),
+  deliveryVerification: DeliveryVerificationSchema.optional(),
   lastSentAt: z.number().optional(),
   manualPause: z.boolean(),
   haPause: z.boolean(),

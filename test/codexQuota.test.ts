@@ -2368,7 +2368,7 @@ test("vestaboard client falls back to cloud API when local key is absent", async
     cloudUrl: "https://cloud.example/",
     fetchImpl: async (url, init) => {
       requests.push({ url: String(url), init: init ?? {} });
-      return new Response("", { status: 200 });
+      return Response.json({ status: "ok" });
     }
   });
 

@@ -76,24 +76,31 @@ export async function createApplication(store: ConfigStore, directory: string, d
   const delivery = new DeliveryController({
     limits: config.updateLimits, now,
     logger: logs.child("delivery"),
-    send: async (frame, usePauseAnimation) => {
-      const stateAtAttempt = pause.status();
+    captureTarget: (usePauseAnimation) => {
+      const transport = structuredClone(config.transport);
       const boardAtAttempt = board;
-      const baseAtAttempt = stateAtAttempt.paused && frozenBoard === boardAtAttempt && frozenBase ? structuredClone(frozenBase) : structuredClone(frame);
-      try {
-        const localMessageTransition = usePauseAnimation
-          ? config.transport.pauseMessageTransition ?? config.transport.localMessageTransition
-          : config.transport.localMessageTransition;
-        await makeBoard({ dryRun, ...config.transport, localMessageTransition, logger: logs.child("vestaboard") }).send(frame);
-        deliveryError = undefined;
-        if (board === boardAtAttempt && frameMatchesBoard(baseAtAttempt, boardAtAttempt)) {
-          lastSuccessfulBase = baseAtAttempt;
-          lastSuccessfulBoard = boardAtAttempt;
+      const client = makeBoard({ dryRun, ...transport, localMessageTransition: usePauseAnimation ? transport.pauseMessageTransition ?? transport.localMessageTransition : transport.localMessageTransition, logger: logs.child("vestaboard") });
+      return {
+        readCurrent: client.readCurrent?.bind(client),
+        observationSource: client.observationSource,
+        minimumWriteIntervalMs: client.minimumWriteIntervalMs,
+        observationDelayMs: (frame) => client.observationDelayMs?.(frame) ?? 0,
+        send: async (frame) => {
+          const stateAtAttempt = pause.status();
+          const baseAtAttempt = stateAtAttempt.paused && frozenBoard === boardAtAttempt && frozenBase ? structuredClone(frozenBase) : structuredClone(frame);
+          try {
+            await client.send(frame);
+            deliveryError = undefined;
+            if (board === boardAtAttempt && frameMatchesBoard(baseAtAttempt, boardAtAttempt)) {
+              lastSuccessfulBase = baseAtAttempt;
+              lastSuccessfulBoard = boardAtAttempt;
+            }
+          } catch {
+            deliveryError = "Board update failed. Check the connection and credentials.";
+            throw new Error(deliveryError);
+          }
         }
-      } catch {
-        deliveryError = "Board update failed. Check the connection and credentials; the next attempt will respect the update interval.";
-        throw new Error(deliveryError);
-      }
+      };
     }
   });
   delivery.onStatusChange(notifyChanged);
@@ -238,6 +245,7 @@ export async function createApplication(store: ConfigStore, directory: string, d
       lastSentAt: deliveryState.lastSuccessfulAt?.getTime(),
       updateLimits: deliveryState.limits,
       pendingDelivery: deliveryState.pending,
+      deliveryVerification: deliveryState.verification,
       ...pauseState, paused: deliveryState.paused || pauseState.paused,
       pauseReason: deliveryState.pauseReason ?? pauseState.pauseReason,
       persistenceError: pauseState.persistenceError ?? saveError,
