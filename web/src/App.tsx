@@ -16,7 +16,8 @@ import {
   setPause,
   subscribeToEvents
 } from "./api";
-import { PluginsScreen, SettingsScreen, type PluginView } from "./ConnectionsScreen";
+import { PluginsScreen, SettingsScreen } from "./ConnectionsScreen";
+import { routeFromHash, routeToHash, type RouteState, type View, type PluginView } from "./routes";
 import { LogsScreen } from "./LogsScreen";
 import { UnsupportedConfigurationWarning } from "./UnsupportedConfigurationWarning";
 import { LegacyEnvironmentWarning } from "./LegacyEnvironmentWarning";
@@ -48,8 +49,6 @@ import type { Notice, NoticeTone } from "./notice";
 import { BoardCell } from "./BoardCell";
 import { BoardSurface } from "./BoardSurface";
 
-type View = "board" | "plugins" | "settings";
-
 function saveDeliveryFeedback(delivery: DeliveryOutcome, dryRun: boolean | undefined, savedLabel: string): { message: string; tone?: NoticeTone } {
   switch (delivery) {
     case "sent": return { message: `Saved ${savedLabel}; ${dryRun === true ? "preview simulated." : "board updated."}` };
@@ -62,41 +61,9 @@ function saveDeliveryFeedback(delivery: DeliveryOutcome, dryRun: boolean | undef
   }
 }
 
-interface RouteState {
-  view: View;
-  plugin?: PluginView;
-  settingsSubview: "main" | "logs";
-  logsSource?: string;
-}
-
-function routeFromHash(hash: string): RouteState {
-  const value = hash.replace(/^#/, "") || "board";
-  const [path, query] = value.split("?", 2);
-  const source = new URLSearchParams(query ?? "").get("source") ?? undefined;
-  if (path === "plugins/codex") return { view: "plugins", plugin: "codex", settingsSubview: "main" };
-  if (path === "plugins/barRows") return { view: "plugins", plugin: "barRows", settingsSubview: "main" };
-  if (path === "plugins/haBlock") return { view: "plugins", plugin: "haBlock", settingsSubview: "main" };
-  if (path === "plugins") return { view: "plugins", settingsSubview: "main" };
-  if (path === "settings/logs") return { view: "settings", settingsSubview: "logs", logsSource: source };
-  if (path === "settings") return { view: "settings", settingsSubview: "main" };
-  return { view: "board", settingsSubview: "main" };
-}
-
-function routeToHash(route: RouteState): string {
-  if (route.view === "plugins") return route.plugin ? `#plugins/${route.plugin}` : "#plugins";
-  if (route.view === "settings") {
-    if (route.settingsSubview === "logs") {
-      const query = route.logsSource ? `?source=${encodeURIComponent(route.logsSource)}` : "";
-      return `#settings/logs${query}`;
-    }
-    return "#settings";
-  }
-  return "#board";
-}
-
 export default function App(): ReactNode {
   const [route, setRoute] = useState<RouteState>(() => routeFromHash(window.location.hash));
-  const { view, plugin: pluginView, settingsSubview, logsSource } = route;
+  const { view, plugin: pluginView, logsSource } = route;
   const [logs, setLogs] = useState<LogsResponse["entries"]>([]);
   const [status, setStatus] = useState<RuntimeStatus>();
   const [configResponse, setConfigResponse] = useState<ConfigResponse>();
@@ -127,12 +94,13 @@ export default function App(): ReactNode {
 
   useEffect(() => {
     const onHashChange = (): void => {
-      setRoute(routeFromHash(window.location.hash));
+      const next = routeFromHash(window.location.hash);
+      const canonical = routeToHash(next);
+      // Preserve existing log bookmarks while keeping one canonical route in history.
+      if (window.location.hash !== canonical) window.history.replaceState(null, "", canonical);
+      setRoute(next);
     };
-    const currentRoute = routeFromHash(window.location.hash);
-    const expectedHash = routeToHash(currentRoute);
-    if (window.location.hash !== expectedHash) window.history.replaceState(null, "", expectedHash);
-    setRoute(currentRoute);
+    onHashChange();
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
@@ -144,13 +112,13 @@ export default function App(): ReactNode {
   }, []);
 
   const openPlugin = useCallback((nextPlugin: PluginView | undefined): void => {
-    navigate({ view: "plugins", plugin: nextPlugin, settingsSubview: "main" });
+    navigate({ view: "plugins", plugin: nextPlugin });
   }, [navigate]);
   const openView = useCallback((nextView: View): void => {
-    navigate({ view: nextView, settingsSubview: "main" });
+    navigate({ view: nextView });
   }, [navigate]);
   const openLogs = useCallback((source?: string): void => {
-    navigate({ view: "settings", settingsSubview: "logs", logsSource: source });
+    navigate({ view: "logs", logsSource: source });
   }, [navigate]);
 
   useEffect(() => {
@@ -436,6 +404,7 @@ export default function App(): ReactNode {
           <button className={view === "board" ? "nav-tab active" : "nav-tab"} onClick={() => openView("board")} aria-current={view === "board" ? "page" : undefined}>Board</button>
           <button className={view === "plugins" ? "nav-tab active" : "nav-tab"} onClick={() => openView("plugins")} aria-current={view === "plugins" ? "page" : undefined}>Plugins</button>
           <button className={view === "settings" ? "nav-tab active" : "nav-tab"} onClick={() => openView("settings")} aria-current={view === "settings" ? "page" : undefined}>Settings</button>
+          <button className={view === "logs" ? "nav-tab active" : "nav-tab"} onClick={() => openView("logs")} aria-current={view === "logs" ? "page" : undefined}>Logs</button>
         </nav>
         <div className={events.connected ? "live-status is-live" : "live-status"} role="status">
           <span className="status-dot" aria-hidden="true" />
@@ -500,11 +469,10 @@ export default function App(): ReactNode {
             onOpenSettings={() => openView("settings")}
             onOpenLogs={openLogs}
           />
-        ) : draftConfig && view === "settings" && settingsSubview === "logs" ? <LogsScreen
+        ) : view === "logs" ? <LogsScreen
           entries={logs}
           source={logsSource}
           connected={events.connected}
-          onBack={() => openView("settings")}
         /> : draftConfig ? <SettingsScreen
           status={status}
           config={draftConfig}

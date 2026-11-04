@@ -267,12 +267,16 @@ a { color: inherit; }
   .row-actions { grid-column: 2; grid-row: 1; }
 }
 
+@media (min-width: 761px) and (max-width: 1000px) {
+  .nav-tab { min-width: 0; padding: 0 12px; }
+}
+
 @media (max-width: 760px) {
   .app-header { grid-template-columns: 1fr auto; grid-template-rows: 60px 48px; min-height: 108px; padding: 0 18px; }
   .wordmark { font-size: 27px; }
   .live-status { grid-column: 2; grid-row: 1; font-size: 12px; }
   .top-nav { grid-column: 1 / -1; grid-row: 2; justify-content: center; }
-  .nav-tab { min-width: 0; flex: 1; padding: 0 14px; }
+  .nav-tab { min-width: 0; flex: 1; padding: 0 10px; }
   .page-shell { padding: 32px 18px 42px; }
   .page-heading { align-items: flex-start; flex-direction: column; gap: 18px; margin-bottom: 26px; }
   .page-heading h1 { font-size: 36px; }

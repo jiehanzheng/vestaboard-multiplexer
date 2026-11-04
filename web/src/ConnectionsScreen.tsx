@@ -17,8 +17,7 @@ import { AnimationSettings, PauseAnimationSettings } from "./AnimationSettings";
 import type { ConfigSection } from "./draftState";
 import type { ConfigResponse, LoginStatus, RuntimeStatus } from "./types";
 import type { Notice } from "./notice";
-
-export type PluginView = "codex" | "haBlock" | "barRows";
+import type { PluginView } from "./routes";
 
 interface SharedProps {
   layoutError?: string;
@@ -81,7 +80,7 @@ export function SettingsScreen(props: SharedProps): ReactNode {
   const savingAny = props.savingAny;
   return (
     <>
-      <div className="page-heading"><div><h1>Settings</h1><p>Manage board output and shared services. Each section saves independently.</p><button className="text-link" type="button" onClick={() => props.onOpenLogs()}>View live logs</button></div></div>
+      <div className="page-heading"><div><h1>Settings</h1><p>Manage board output and shared services. Each section saves independently.</p></div></div>
       <section className="settings-section" aria-labelledby="board-output-heading">
         <div className="section-heading"><div><h2 id="board-output-heading">Board output</h2><p>Choose the board and delivery credentials used by vbmux.</p></div></div>
         <BoardOutputSettings status={props.status} config={props.config} response={props.configResponse} onChange={props.onConfigChange} dirty={props.dirty("board")} saving={props.saving === "board"} saveDisabled={savingAny && props.saving !== "board"} feedback={sectionNotice(props.notice, "board")} onSave={() => props.onSave("board")} onDiscard={() => props.onDiscard("board")} />
