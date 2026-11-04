@@ -572,7 +572,11 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
   const currentPauseReason = status ? pauseReason(status) : "";
   const outputLabel = dryRun === true ? "Dry run" : dryRun === false ? "Board delivery" : "Checking output mode";
   const outputDetail = dryRun === true ? "Physical board writes disabled" : dryRun === false ? "Physical board writes enabled" : "Output mode is being checked";
-  const sentLabel = dryRun === true ? "Last simulated" : "Last sent";
+  const sentLabel = dryRun === true ? "Last simulated" : "Last accepted";
+  const verification = status?.deliveryVerification;
+  const observedLabel = verification?.source === "local" ? "Device readback" : "Cloud readback";
+  const outputState = dryRun ? "Simulation current" : verification?.state === "matched" ? "Readback matched"
+    : verification?.state === "mismatch" ? "Readback mismatch" : verification?.state === "pending" ? "Awaiting readback" : "Output unverified";
   const updateSelectedEntry = (patch: Partial<LayoutEntry>): void => {
     if (!selectedEntry || selectedEntryIndex === undefined) return;
     const nextEntry = { ...selectedEntry, ...patch };
@@ -595,13 +599,19 @@ function BoardScreen(props: BoardScreenProps): ReactNode {
         <OutputStatusItem label={outputLabel} detail={outputDetail} />
         <OutputStatusItem label={dirty ? "Draft layout" : "Saved layout"} detail={dirty ? "Unsaved changes" : "Matches saved settings"} />
         <OutputStatusItem label={status?.lastSentAt ? sentLabel : "Last output"} detail={status?.lastSentAt ? relativeTime(status.lastSentAt) : "No output yet"} />
-        <OutputStatusItem label={contentPaused ? "Content paused" : deliveryHeld ? "Delivery held" : status?.pendingDelivery === false ? "Output current" : "Next allowed update"} detail={contentPaused ? `${currentPauseReason}${status?.pauseBackground ? status.nextAttemptAt ? ` · overlay next ${formatDate(status.nextAttemptAt)}` : " · overlay follows normal cadence" : ""}` : deliveryHeld ? currentPauseReason : status?.pendingDelivery === false ? "Waiting for content changes" : status?.nextAttemptAt ? formatDate(status.nextAttemptAt) : "Ready"} warning={deliveryHeld} />
+        <OutputStatusItem label={contentPaused ? "Content paused" : deliveryHeld ? "Delivery held" : status?.pendingDelivery === false ? outputState : "Next allowed update"} detail={contentPaused ? `${currentPauseReason}${status?.pauseBackground ? status.nextAttemptAt ? ` · overlay next ${formatDate(status.nextAttemptAt)}` : " · overlay follows normal cadence" : ""}` : deliveryHeld ? currentPauseReason : status?.pendingDelivery === false ? verification?.state === "pending" ? "Verification scheduled" : "Waiting for content changes" : status?.nextAttemptAt ? formatDate(status.nextAttemptAt) : "Ready"} warning={deliveryHeld || verification?.state === "mismatch" || Boolean(verification?.error)} />
       </div>
+
+      {!dryRun && verification && <p role="status" className="screen-footnote">
+        {verification.state === "matched" ? `${observedLabel} matched${verification.checkedAt ? ` ${relativeTime(verification.checkedAt).toLowerCase()}` : ""}. This does not confirm mechanical completion.`
+          : verification.state === "pending" ? `Awaiting ${verification.source === "cloud" ? "cloud" : "device"} readback${verification.nextCheckAt ? ` · next check ${formatDate(verification.nextCheckAt)}` : ""}.`
+          : verification.error ?? (verification.state === "mismatch" ? "Readback differs; one corrective update is waiting for normal delivery capacity." : "API accepted the frame; readback is unavailable.")}
+      </p>}
 
       <AutomaticUpdateCapacity live={status?.updateLimits} pending={status?.pendingDelivery} nextAttemptAt={status?.nextAttemptAt} held={deliveryHeld} />
       <div className="board-workspace">
         <section className="board-stage" aria-label="Board preview">
-          {previewMode === "lastSent" && !preview ? <div className="empty-output" role="status"><h2>No frame sent yet</h2><p>This process has not successfully delivered a frame. Select Desired to see the pending content.</p></div> : <BoardPreview
+          {previewMode === "lastSent" && !preview ? <div className="empty-output" role="status"><h2>No frame sent yet</h2><p>This process has not received API acceptance for a frame. Select Desired to see the pending content.</p></div> : <BoardPreview
             board={board}
             message={preview}
             selectedEntry={selectedEntry}

@@ -68,7 +68,7 @@ test("unchanged frames skip a write without blocking the next changed frame", as
   assert.equal((await delivery.attempt()).outcome, "sent");
   nowMs = 60_000;
   assert.equal((await delivery.attempt()).outcome, "unchanged");
-  assert.deepEqual(infos, ["Sent latest Vestaboard frame."]);
+  assert.deepEqual(infos, ["Transport accepted latest Vestaboard frame."]);
   assert.equal(sends, 1);
   delivery.updateFrame(message("changed"));
   assert.equal((await delivery.attempt()).outcome, "sent");

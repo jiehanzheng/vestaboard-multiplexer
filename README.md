@@ -9,6 +9,7 @@ vbmux is a small service and web interface for arranging Home Assistant and Code
 - **Local or Cloud API:** Send content directly to your Vestaboard over the local network or through Vestaboard’s cloud.
 - **Home Assistant integration:** Build bar and text rows from entity states and attributes, or let Home Assistant supply character-code arrays for custom displays.
 - **Codex quota integration:** Display usage limits, reset timing, and quota pacing alongside your Home Assistant content.
+- **Delivery readback:** Distinguish API acceptance from observed output, with one rate-limited correction after a persistent mismatch. Local readback comes from the device; cloud readback comes from the cloud service.
 - **Flexible layouts:** Preview and arrange content on Note or Flagship, with shared-space priorities and configurable automatic update limits.
 
 ## Install (Docker recommended)
@@ -50,7 +51,7 @@ Then configure content under **Plugins**, arrange it on **Board**, and choose **
   <tbody>
     <tr>
       <td width="50%"><img src="docs/images/web-board.jpg" alt="Board preview and layout editor" width="640"></td>
-      <td width="50%">Compare the desired frame with the last frame sent, preview layout changes before applying them, and see when the next update is allowed.</td>
+      <td width="50%">Compare the desired frame with the last API-accepted frame, preview layout changes before applying them, and see when the next update is allowed.</td>
     </tr>
     <tr>
       <td width="50%"><img src="docs/images/web-row-editor.jpg" alt="Bar and text row editor" width="640"></td>
