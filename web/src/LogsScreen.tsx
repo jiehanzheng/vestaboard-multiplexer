@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LogEntry, LogLevel } from "../../src/contracts/logs.js";
 import { createLogDownloadLifecycle, filterLogEntries, type LogDownloadLifecycle } from "./logUtils";
 
-export function LogsScreen({ entries, source, connected, onBack }: { entries: readonly LogEntry[]; source?: string; connected: boolean; onBack: () => void }): ReactNode {
+export function LogsScreen({ entries, source, connected }: { entries: readonly LogEntry[]; source?: string; connected: boolean }): ReactNode {
   const [sourceFilter, setSourceFilter] = useState(source ?? "all");
   const [level, setLevel] = useState<LogLevel | "all">("all");
   const [text, setText] = useState("");
@@ -39,7 +39,7 @@ export function LogsScreen({ entries, source, connected, onBack }: { entries: re
 
   return <section className="logs-screen" aria-labelledby="logs-heading">
     <div className="page-heading">
-      <div><button className="back-link" type="button" onClick={onBack}>← Back to Settings</button><h1 id="logs-heading">Logs</h1><p>Current run, retaining the latest 200 entries. Docker deployments keep older history in the container logs.</p></div>
+      <div><h1 id="logs-heading">Logs</h1><p>Current run, retaining the latest 200 entries. Docker deployments keep older history in the container logs.</p></div>
       <span className={connected ? "health-badge good" : "health-badge"}>{connected ? "Live" : "Reconnecting"}</span>
     </div>
     <div className="logs-controls" aria-label="Log filters">
